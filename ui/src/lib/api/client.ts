@@ -3,7 +3,15 @@ import { createMissionControlApi } from '$lib/api/missionControl';
 import { createNullTicketsApi, createNullTicketsStoreApi } from '$lib/api/nulltickets';
 import { componentApiPath, encodePathSegment, instanceApiPath } from '$lib/nullstack/path';
 
-const BASE = '/api';
+let resolvedBase: string | null = null;
+
+function apiBases(): string[] {
+  if (resolvedBase) return [resolvedBase];
+  if (typeof window !== 'undefined' && window.location.port === '8787') {
+    return ['/nullhub-api', '/api'];
+  }
+  return ['/api'];
+}
 
 function withQuery(path: string, params: Record<string, string | number | boolean | null | undefined>): string {
   const search = new URLSearchParams();
@@ -70,8 +78,8 @@ export type ApiRequestError = Error & {
   body?: any;
 };
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+async function requestFromBase<T>(base: string, path: string, options?: RequestInit): Promise<T> {
+  const res = await fetch(`${base}${path}`, {
     headers: { 'Content-Type': 'application/json' },
     ...options
   });
@@ -91,7 +99,31 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   if (!text) return undefined as T;
-  return JSON.parse(text);
+  try {
+    return JSON.parse(text);
+  } catch {
+    const error = new Error(`Invalid JSON response from ${base}${path}`) as ApiRequestError;
+    error.status = res.status;
+    error.body = text;
+    throw error;
+  }
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const bases = apiBases();
+  let lastError: ApiRequestError | null = null;
+  for (const base of bases) {
+    try {
+      const result = await requestFromBase<T>(base, path, options);
+      resolvedBase = base;
+      return result;
+    } catch (error) {
+      lastError = error as ApiRequestError;
+      if (base === bases[bases.length - 1]) break;
+      if (lastError.status && lastError.status !== 404 && lastError.status !== 200) break;
+    }
+  }
+  throw lastError || new Error('API request failed');
 }
 
 export const nullTicketsApi = createNullTicketsApi((c, n, payload) =>

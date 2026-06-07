@@ -7,6 +7,7 @@
   let userEmail = $state("Signed in");
   let userInitial = $state("U");
   let accountMenuOpen = $state(false);
+  let statusPollDelay = 750;
 
   let currentTheme = $state("theme-light");
   let effectsEnabled = $state(false);
@@ -51,14 +52,24 @@
       try {
         await api.getStatus();
         hubOk = true;
+        statusPollDelay = 10000;
       } catch {
         hubOk = false;
+        statusPollDelay = 750;
       }
     }
     check();
-    const interval = setInterval(check, 10000);
+    let stopped = false;
+    let timeout: ReturnType<typeof setTimeout> | null = null;
+    async function poll() {
+      if (stopped) return;
+      await check();
+      timeout = setTimeout(poll, statusPollDelay);
+    }
+    timeout = setTimeout(poll, statusPollDelay);
     return () => {
-      clearInterval(interval);
+      stopped = true;
+      if (timeout) clearTimeout(timeout);
       if (closeAccountMenu) document.removeEventListener("click", closeAccountMenu);
     };
   });
@@ -146,6 +157,8 @@
 
 <style>
   .topbar {
+    position: relative;
+    z-index: 100;
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -321,7 +334,7 @@
     position: absolute;
     top: calc(100% + 0.55rem);
     right: 0;
-    z-index: 50;
+    z-index: 101;
     display: grid;
     width: min(20rem, calc(100vw - 2rem));
     gap: 0.65rem;
