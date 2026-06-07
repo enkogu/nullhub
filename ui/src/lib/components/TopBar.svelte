@@ -1,11 +1,11 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
+  import { onMount } from "svelte";
   import { browser } from "$app/environment";
   import { api } from "$lib/api/client";
 
   let hubOk = $state(true);
 
-  let currentTheme = $state("theme-matrix");
+  let currentTheme = $state("theme-light");
   let effectsEnabled = $state(false);
   let initialized = $state(false);
 
@@ -84,6 +84,7 @@
       <span class="status-dot" class:running={hubOk}></span>
       <span>{hubOk ? "Hub Running" : "Hub Unreachable"}</span>
     </div>
+    <a class="sign-out" href="/logout">Sign out</a>
   </div>
 </header>
 
@@ -194,6 +195,33 @@
     color: var(--fg-dim);
     text-transform: uppercase;
     letter-spacing: 1px;
+  }
+
+  .sign-out {
+    display: inline-flex;
+    min-height: 2rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0 0.65rem;
+    background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-decoration: none;
+    text-transform: uppercase;
+    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
+  }
+
+  .sign-out:focus-visible,
+  .sign-out:hover {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-color: var(--accent);
+    box-shadow: 0 0 8px var(--border-glow);
   }
 
   .status-dot {

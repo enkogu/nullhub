@@ -24,13 +24,13 @@
     </noscript>
     %sveltekit.head%
   </head>
-  <body data-sveltekit-prerender="false" class="theme-matrix effects-disabled">
+  <body data-sveltekit-prerender="false" class="theme-light effects-disabled">
     <script>
       try {
         var theme = localStorage.getItem('nullhub-theme');
         var effects = localStorage.getItem('nullhub-effects');
         if (theme) {
-          document.body.classList.replace('theme-matrix', theme);
+          document.body.classList.replace('theme-light', theme);
           document.documentElement.classList.add(theme);
         }
         if (effects === 'true') document.body.classList.remove('effects-disabled');
