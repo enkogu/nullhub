@@ -76,10 +76,23 @@
   </div>
 
   <div class="nav-section">
-    <a
-      href="/configs"
-      class:active={currentPath === "/configs" || currentPath === "/providers" || currentPath === "/channels"}
-    >Configs</a>
+    <h3>Orchestration</h3>
+    <a href="/nullboiler" class:active={currentPath === "/nullboiler"}>Dashboard</a>
+    <a href="/nullboiler/workflows" class:active={currentPath.startsWith("/nullboiler/workflows")}>Workflows</a>
+    <a href="/nullboiler/runs" class:active={currentPath.startsWith("/nullboiler/runs")}>Runs</a>
+    <a href="/nulltickets/store" class:active={currentPath.startsWith("/nulltickets/store")}>Store</a>
+  </div>
+
+  <div class="nav-section">
+    <a href="/providers" class:active={currentPath === "/providers"}>Providers</a>
+  </div>
+
+  <div class="nav-section">
+    <a href="/channels" class:active={currentPath === "/channels"}>Channels</a>
+  </div>
+
+  <div class="nav-section">
+    <a href="/nullwatch" class:active={currentPath.startsWith("/nullwatch")}>Observability</a>
   </div>
 
   <div class="nav-bottom">
