@@ -831,6 +831,14 @@
     }
     // Re-fetch provider health when the instance just became running (stale probe from boot)
     const justBecameRunning = instance?.status === "running" && prevStatus !== "running";
+    // Fetch installed UI modules independently from instance config. Config endpoints can be
+    // slow or unavailable while an instance is booting, but module installation is hub-level.
+    try {
+      const res = await api.getUiModules();
+      uiModules = res.modules || {};
+    } catch {
+      /* ignore */
+    }
     // Fetch config (best-effort)
     let loadedConfig: any = null;
     try {
@@ -854,13 +862,6 @@
     }
     await refreshUsage(forceUsage);
     await refreshIntegration();
-    // Fetch installed UI modules (best-effort)
-    try {
-      const res = await api.getUiModules();
-      uiModules = res.modules || {};
-    } catch {
-      /* ignore */
-    }
   }
 
   $effect(() => {
