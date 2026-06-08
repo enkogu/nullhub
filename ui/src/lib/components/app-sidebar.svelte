@@ -2,7 +2,6 @@
 	import ActivityIcon from "@lucide/svelte/icons/activity";
 	import BotIcon from "@lucide/svelte/icons/bot";
 	import BoxesIcon from "@lucide/svelte/icons/boxes";
-	import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
 	import CircleIcon from "@lucide/svelte/icons/circle";
 	import GalleryVerticalEndIcon from "@lucide/svelte/icons/gallery-vertical-end";
 	import HouseIcon from "@lucide/svelte/icons/house";
@@ -21,10 +20,9 @@
 	import { page } from "$app/stores";
 	import { browser } from "$app/environment";
 	import { onMount } from "svelte";
-	import * as Collapsible from "$lib/components/ui/collapsible/index.js";
 	import * as Sidebar from "$lib/components/ui/sidebar/index.js";
 	import { api } from "$lib/api/client";
-	import { componentInstancesRoute, instanceRoute } from "$lib/nullstack/path";
+	import { instanceRoute } from "$lib/nullstack/path";
 	import type { ComponentProps } from "svelte";
 
 	type NavItem = {
@@ -38,6 +36,13 @@
 		name: string;
 		email: string;
 		initial: string;
+	};
+
+	type InstanceRow = {
+		component: string;
+		name: string;
+		href: string;
+		status: string;
 	};
 
 	const primaryItems: NavItem[] = [
@@ -77,6 +82,18 @@
 	});
 	let currentPath = $derived($page.url.pathname);
 	let componentEntries = $derived(Object.entries(instances));
+	let instanceRows = $derived(
+		componentEntries
+			.flatMap(([component, items]) =>
+				Object.entries(items || {}).map(([name, info]) => ({
+					component,
+					name,
+					href: instanceRoute(component, name),
+					status: instanceStatusLabel(info),
+				}))
+			)
+			.sort((a, b) => `${a.component}/${a.name}`.localeCompare(`${b.component}/${b.name}`))
+	);
 	let instanceCount = $derived(
 		componentEntries.reduce((total, [, items]) => total + Object.keys(items || {}).length, 0)
 	);
@@ -88,17 +105,23 @@
 		return currentPath === item.url;
 	}
 
-	function componentActive(component: string): boolean {
-		const root = componentInstancesRoute(component);
-		if (currentPath === root || currentPath.startsWith(`${root}/`)) return true;
-		if (component === "nullboiler") return currentPath.startsWith("/nullboiler");
-		if (component === "nulltickets") return currentPath.startsWith("/nulltickets");
-		if (component === "nullwatch") return currentPath.startsWith("/nullwatch");
-		return false;
-	}
-
 	function instanceStatusLabel(info: any): string {
 		return typeof info?.status === "string" && info.status.trim() ? info.status : "unknown";
+	}
+
+	function componentLabel(component: string): string {
+		if (component === "nullclaw") return "NullClaw";
+		if (component === "nullboiler") return "NullBoiler";
+		if (component === "nulltickets") return "NullTickets";
+		if (component === "nullwatch") return "NullWatch";
+		return component;
+	}
+
+	function instanceStatusClass(instance: InstanceRow): string {
+		if (instance.status === "running") return "instance-status status-running";
+		if (instance.status === "failed") return "instance-status status-error";
+		if (instance.status === "stopped") return "instance-status status-muted";
+		return "instance-status status-waiting";
 	}
 
 	function readCurrentUser() {
@@ -186,7 +209,7 @@
 		<Sidebar.Group class="p-0">
 			<Sidebar.GroupLabel>Instances</Sidebar.GroupLabel>
 			<Sidebar.Menu>
-				{#if componentEntries.length === 0}
+				{#if instanceRows.length === 0}
 					<Sidebar.MenuItem>
 						<Sidebar.MenuButton tooltipContent="No instances" class="text-sidebar-foreground/65">
 							{#snippet child({ props })}
@@ -198,56 +221,24 @@
 						</Sidebar.MenuButton>
 					</Sidebar.MenuItem>
 				{:else}
-					{#each componentEntries as [component, items] (component)}
-						<Collapsible.Root open={componentActive(component)} class="group/collapsible">
-							{#snippet child({ props })}
-								<Sidebar.MenuItem {...props}>
-									<Collapsible.Trigger>
-										{#snippet child({ props })}
-											<Sidebar.MenuButton
-												{...props}
-												isActive={componentActive(component)}
-												tooltipContent={component}
-											>
-												<ServerIcon />
-												<span>{component}</span>
-												<ChevronRightIcon
-													class="ms-auto transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
-												/>
-											</Sidebar.MenuButton>
-										{/snippet}
-									</Collapsible.Trigger>
-									<Collapsible.Content>
-										<Sidebar.MenuSub>
-											<Sidebar.MenuSubItem>
-												<Sidebar.MenuSubButton
-													href={componentInstancesRoute(component)}
-													isActive={currentPath === componentInstancesRoute(component)}
-												>
-													<span>All {component}</span>
-												</Sidebar.MenuSubButton>
-											</Sidebar.MenuSubItem>
-											{#each Object.entries(items || {}) as [name, info] (name)}
-												<Sidebar.MenuSubItem>
-													<Sidebar.MenuSubButton
-														href={instanceRoute(component, name)}
-														isActive={currentPath === instanceRoute(component, name)}
-														title={instanceStatusLabel(info)}
-													>
-														<CircleIcon
-															class={(info as any)?.status === "running"
-																? "status-icon status-running"
-																: "status-icon status-muted"}
-														/>
-														<span>{name}</span>
-													</Sidebar.MenuSubButton>
-												</Sidebar.MenuSubItem>
-											{/each}
-										</Sidebar.MenuSub>
-									</Collapsible.Content>
-								</Sidebar.MenuItem>
-							{/snippet}
-						</Collapsible.Root>
+					{#each instanceRows as instance (`${instance.component}/${instance.name}`)}
+						<Sidebar.MenuItem>
+							<Sidebar.MenuButton
+								isActive={currentPath === instance.href}
+								tooltipContent={`${componentLabel(instance.component)} / ${instance.name} · ${instance.status}`}
+								class="instance-menu-button"
+							>
+								{#snippet child({ props })}
+									<a href={instance.href} {...props}>
+										<CircleIcon class={instanceStatusClass(instance)} />
+										<span class="min-w-0 truncate">{instance.name}</span>
+										<span class="ms-auto max-w-20 shrink-0 truncate text-xs text-sidebar-foreground/55">
+											{componentLabel(instance.component)}
+										</span>
+									</a>
+								{/snippet}
+							</Sidebar.MenuButton>
+						</Sidebar.MenuItem>
 					{/each}
 				{/if}
 			</Sidebar.Menu>
@@ -335,9 +326,10 @@
 </Sidebar.Root>
 
 <style>
-	:global(.status-icon) {
+	:global(.instance-status) {
 		width: 0.625rem;
 		height: 0.625rem;
+		flex: 0 0 auto;
 	}
 
 	:global(.status-running) {
@@ -345,9 +337,19 @@
 		fill: var(--success);
 	}
 
+	:global(.status-error) {
+		color: var(--error);
+		fill: var(--error);
+	}
+
 	:global(.status-muted) {
 		color: var(--fg-dim);
 		fill: var(--fg-dim);
+	}
+
+	:global(.status-waiting) {
+		color: var(--shadcn-muted-foreground);
+		fill: var(--shadcn-muted-foreground);
 	}
 
 	:global(.hub-online) {

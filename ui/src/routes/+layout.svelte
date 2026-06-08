@@ -62,11 +62,11 @@
 </script>
 
 <div class="shadcn-app">
-  <Sidebar.Provider>
+  <Sidebar.Provider class="app-shell">
     <AppSidebar />
     <Sidebar.Inset>
       <header
-        class="flex h-16 shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
+        class="app-header flex h-16 shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
       >
         <div class="flex min-w-0 items-center gap-2 px-4">
           <Sidebar.Trigger class="-ms-1" />
@@ -98,8 +98,9 @@
 
 <style>
   .shadcn-app {
-    min-height: 100dvh;
-    padding: 1rem 2rem;
+    height: 100dvh;
+    overflow: hidden;
+    padding: 0;
     background: var(--shadcn-background);
     color: var(--shadcn-foreground);
     font-family: var(--shadcn-font-sans);
@@ -107,6 +108,7 @@
 
   .real-content {
     flex: 1;
+    min-height: 0;
     min-width: 0;
     overflow: auto;
     padding: 1.5rem;
@@ -115,10 +117,11 @@
 
   .shadcn-app :global([data-slot="sidebar-wrapper"]) {
     position: relative;
-    min-height: calc(100dvh - 2rem);
+    height: 100dvh;
+    min-height: 100dvh;
     overflow: hidden;
-    border: 1px solid var(--shadcn-border);
-    border-radius: 1rem;
+    border: 0;
+    border-radius: 0;
     --accent: var(--shadcn-foreground);
     --accent-dim: var(--shadcn-muted-foreground);
     --bg: var(--shadcn-background);
@@ -133,6 +136,28 @@
     position: absolute;
     inset-block: 0;
     height: 100%;
+    overflow: hidden;
+  }
+
+  .shadcn-app :global([data-slot="sidebar-inner"]) {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  .shadcn-app :global([data-slot="sidebar-content"]) {
+    overflow: hidden !important;
+  }
+
+  .shadcn-app :global([data-slot="sidebar-inset"]) {
+    height: 100dvh;
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .app-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
   }
 
   .shadcn-app :global([data-slot="sidebar-container"][data-side="left"]) {
