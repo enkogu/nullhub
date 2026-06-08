@@ -8,6 +8,14 @@
     source: string;
   };
 
+  const defaultRoles: RoleRow[] = [
+    { role: "operator", agents: [], source: "Built-in" },
+    { role: "planner", agents: [], source: "Built-in" },
+    { role: "reviewer", agents: [], source: "Built-in" },
+    { role: "integrator", agents: [], source: "Built-in" },
+    { role: "observer", agents: [], source: "Built-in" },
+  ];
+
   let rows = $state<RoleRow[]>([]);
   let loading = $state(false);
   let error = $state<string | null>(null);
@@ -24,7 +32,7 @@
     try {
       const status = await api.getStatus();
       const agents = Object.entries((status?.instances?.nullclaw || {}) as Record<string, any>);
-      const grouped = new Map<string, RoleRow>();
+      const grouped = new Map<string, RoleRow>(defaultRoles.map((row) => [row.role, { ...row }]));
       for (const [name, info] of agents) {
         const config = await api.getConfig("nullclaw", name).catch(() => null);
         const roles = [
@@ -71,7 +79,7 @@
       {#each rows as row (row.role)}
         <div class="table-row">
           <strong>{row.role}</strong>
-          <span>{row.agents.join(", ")}</span>
+          <span>{row.agents.length > 0 ? row.agents.join(", ") : "-"}</span>
           <span>{row.source}</span>
         </div>
       {/each}

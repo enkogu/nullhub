@@ -8,6 +8,14 @@
     source: string;
   };
 
+  const defaultProfiles: ProfileRow[] = [
+    { profile: "default", agents: [], source: "Built-in" },
+    { profile: "engineering", agents: [], source: "Built-in" },
+    { profile: "operations", agents: [], source: "Built-in" },
+    { profile: "research", agents: [], source: "Built-in" },
+    { profile: "support", agents: [], source: "Built-in" },
+  ];
+
   let rows = $state<ProfileRow[]>([]);
   let loading = $state(false);
   let error = $state<string | null>(null);
@@ -25,7 +33,7 @@
     try {
       const status = await api.getStatus();
       const agents = Object.entries((status?.instances?.nullclaw || {}) as Record<string, any>);
-      const grouped = new Map<string, ProfileRow>();
+      const grouped = new Map<string, ProfileRow>(defaultProfiles.map((row) => [row.profile, { ...row }]));
       for (const [name, info] of agents) {
         const config = await api.getConfig("nullclaw", name).catch(() => null);
         const profile = profileFrom(
@@ -36,8 +44,9 @@
           config?.profile,
         );
         if (!profile) continue;
-        const row = grouped.get(profile) || { profile, agents: [], source: "Agent config" };
+        const row = grouped.get(profile) || { profile, agents: [], source: "Built-in" };
         row.agents = [...new Set([...row.agents, name])].sort();
+        row.source = "Agent config";
         grouped.set(profile, row);
       }
       rows = [...grouped.values()].sort((a, b) => a.profile.localeCompare(b.profile));
@@ -70,7 +79,7 @@
       {#each rows as row (row.profile)}
         <div class="table-row">
           <strong>{row.profile}</strong>
-          <span>{row.agents.join(", ")}</span>
+          <span>{row.agents.length > 0 ? row.agents.join(", ") : "-"}</span>
           <span>{row.source}</span>
         </div>
       {/each}
