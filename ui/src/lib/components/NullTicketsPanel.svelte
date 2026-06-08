@@ -71,7 +71,7 @@
   const allPanelViews: PanelView[] = ["tasks", "pipelines", "queue", "runs", "artifacts"];
   const panelViewLabels: Record<PanelView, string> = {
     tasks: "Tasks",
-    pipelines: "Task Flows",
+    pipelines: "Processes",
     queue: "Queue",
     runs: "Runs",
     artifacts: "Artifacts",
@@ -238,6 +238,13 @@
 
   function pipelineName(pipeline: Pipeline | null | undefined): string {
     return String(pipeline?.name || pipeline?.id || "pipeline");
+  }
+
+  function processNameById(id: string | null | undefined): string {
+    const value = String(id || "");
+    if (!value) return "-";
+    const pipeline = pipelines.find((item) => pipelineId(item) === value);
+    return pipeline ? pipelineName(pipeline) : value;
   }
 
   function taskId(task: Task | null | undefined): string {
@@ -481,7 +488,7 @@
       });
       createPipelineName = "";
       createPipelineDefinition = defaultPipelineDefinition;
-      message = `Pipeline ${result?.id || nameValue} created`;
+      message = `Process ${result?.id || nameValue} created`;
       await refreshAll();
       selectedPipelineId = result?.id || result?.name || nameValue || selectedPipelineId;
       filterPipeline = selectedPipelineId;
@@ -909,7 +916,7 @@
           </div>
           <div class="filter-grid">
             <label class="field">
-              <span>Pipeline</span>
+              <span>Process</span>
               <select bind:value={filterPipeline}>
                 <option value="">All</option>
                 {#each pipelines as pipeline}
@@ -940,7 +947,7 @@
                 >
                   <span class="task-title">{taskTitle(task)}</span>
                   <span class="task-meta">
-                    {task.stage || "-"} / {task.pipeline_id || "-"} / p{task.priority ?? 0}
+                    {task.stage || "-"} / {processNameById(task.pipeline_id)} / p{task.priority ?? 0}
                   </span>
                 </button>
               {/each}
@@ -966,7 +973,7 @@
               </div>
               <div class="stats-grid">
                 <div><span>Stage</span><strong>{selectedTask.stage || "-"}</strong></div>
-                <div><span>Pipeline</span><strong>{selectedTask.pipeline_id || "-"}</strong></div>
+                <div><span>Process</span><strong>{processNameById(selectedTask.pipeline_id)}</strong></div>
                 <div><span>Priority</span><strong>{selectedTask.priority ?? 0}</strong></div>
                 <div><span>Version</span><strong>{selectedTask.task_version ?? "-"}</strong></div>
               </div>
@@ -1066,7 +1073,7 @@
           </div>
           <div class="create-grid">
             <label class="field">
-              <span>Pipeline</span>
+              <span>Process</span>
               <select bind:value={createTaskPipeline}>
                 <option value="">Select</option>
                 {#each pipelines as pipeline}
@@ -1123,7 +1130,7 @@
       <div class="tickets-grid">
         <section class="tickets-section">
           <div class="section-header">
-            <h3>Pipelines</h3>
+            <h3>Processes</h3>
             <span>{pipelines.length}</span>
           </div>
           <div class="task-list">
@@ -1142,7 +1149,7 @@
 
         <section class="tickets-section">
           <div class="section-header">
-            <h3>Definition</h3>
+            <h3>Process Definition</h3>
           </div>
           {#if selectedPipeline}
             <div class="detail-stack">
@@ -1153,25 +1160,25 @@
               <pre>{jsonPreview(selectedPipeline.definition)}</pre>
             </div>
           {:else}
-            <div class="empty-row">No pipeline selected</div>
+            <div class="empty-row">No process selected</div>
           {/if}
         </section>
 
         <section class="tickets-section full">
           <div class="section-header">
-            <h3>Create Pipeline</h3>
+            <h3>Create Process</h3>
           </div>
           <div class="create-grid">
             <label class="field">
               <span>Name</span>
-              <input bind:value={createPipelineName} placeholder="pipeline name" />
+              <input bind:value={createPipelineName} placeholder="process name" />
             </label>
             <label class="field wide">
               <span>Definition JSON</span>
               <textarea bind:value={createPipelineDefinition} rows="12"></textarea>
             </label>
             <button class="btn" onclick={createPipeline} disabled={actionLoading || !createPipelineName.trim()}>
-              Create Pipeline
+              Create Process
             </button>
           </div>
         </section>

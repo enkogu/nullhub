@@ -45,7 +45,7 @@
 			items: [
 				{ title: "Board", url: "/work", icon: LayoutDashboardIcon, match: "exact" },
 				{ title: "Tasks", url: "/work/tasks", icon: ListChecksIcon, match: "prefix" },
-				{ title: "Task Flows", url: "/work/task-flows", icon: WorkflowIcon, match: "prefix" },
+				{ title: "Processes", url: "/work/processes", icon: WorkflowIcon, match: "prefix" },
 				{ title: "Planner", url: "/work/planner", icon: WorkflowIcon, match: "prefix" },
 				{ title: "Dependencies", url: "/work/dependencies", icon: BoxesIcon, match: "prefix" },
 			],
