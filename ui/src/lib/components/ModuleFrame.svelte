@@ -23,13 +23,20 @@
     return ['/nullhub-ui', '/ui'];
   }
 
+  function currentModuleTheme() {
+    if (typeof document === 'undefined') return 'light';
+    const explicitTheme = localStorage.getItem('nullhub-theme');
+    const bodyTheme = Array.from(document.body.classList).find((name) => name.startsWith('theme-'));
+    const theme = explicitTheme || bodyTheme || 'theme-light';
+    return theme.includes('light') ? 'light' : 'dark';
+  }
+
   onMount(async () => {
     try {
       let mod: any = null;
       let lastError: unknown = null;
       for (const basePath of moduleBasePaths()) {
-        const cacheKey = moduleVersion === 'dev-local' ? Date.now() : moduleVersion;
-        const moduleUrl = `${basePath}/${moduleName}@${moduleVersion}/module.js?v=${encodeURIComponent(String(cacheKey))}`;
+        const moduleUrl = `${basePath}/${moduleName}@${moduleVersion}/module.js`;
         try {
           mod = await import(/* @vite-ignore */ moduleUrl);
           break;
@@ -41,7 +48,7 @@
       const opts = {
         instanceUrl,
         token,
-        theme: 'dark',
+        theme: currentModuleTheme(),
         ...moduleProps
       };
       if (mod.create && container) {

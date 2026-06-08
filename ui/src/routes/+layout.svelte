@@ -144,10 +144,6 @@
     overflow: hidden;
   }
 
-  .shadcn-app :global([data-slot="sidebar-content"]) {
-    overflow: hidden !important;
-  }
-
   .shadcn-app :global([data-slot="sidebar-inset"]) {
     height: 100dvh;
     min-width: 0;

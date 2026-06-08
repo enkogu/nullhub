@@ -62,118 +62,114 @@
 
 <style>
   .dashboard {
-    padding: 2rem;
-    max-width: 1200px;
-    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding: 0;
+    max-width: none;
+    margin: 0;
   }
+
   .header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 2rem;
     padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--shadcn-border);
   }
+
   h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    text-shadow: var(--text-glow);
-    text-transform: uppercase;
-    letter-spacing: 2px;
+    margin: 0;
+    color: var(--shadcn-foreground);
+    font-size: 1.875rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 1.2;
+    text-shadow: none;
+    text-transform: none;
   }
+
   .install-btn {
-    padding: 0.5rem 1rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: var(--radius);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.25rem;
+    padding: 0.5rem 0.875rem;
+    background: var(--shadcn-background);
+    color: var(--shadcn-foreground);
+    border: 1px solid var(--shadcn-input);
+    border-radius: var(--shadcn-radius);
     font-size: 0.875rem;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
+    font-weight: 500;
+    letter-spacing: 0;
+    line-height: 1;
+    text-shadow: none;
+    text-transform: none;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
+
   .install-btn:hover {
     text-decoration: none;
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    text-shadow: 0 0 8px var(--accent);
+    background: var(--shadcn-accent);
+    border-color: var(--shadcn-border);
+    box-shadow: none;
+    text-shadow: none;
   }
+
   .error-banner {
     padding: 0.75rem 1rem;
-    background: rgba(255, 0, 0, 0.1);
-    color: var(--error);
-    border: 1px solid var(--error);
-    border-radius: var(--radius);
-    margin-bottom: 1.5rem;
+    background: color-mix(in srgb, var(--shadcn-destructive) 8%, transparent);
+    color: var(--shadcn-destructive);
+    border: 1px solid color-mix(in srgb, var(--shadcn-destructive) 25%, var(--shadcn-border));
+    border-radius: var(--shadcn-radius);
     font-size: 0.875rem;
-    font-weight: bold;
-    text-shadow: 0 0 5px var(--error);
-    box-shadow: 0 0 10px rgba(255, 0, 0, 0.2);
-    animation: glitch 3s infinite;
+    font-weight: 500;
+    text-shadow: none;
+    box-shadow: none;
+    animation: none;
   }
+
   .instance-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 1.5rem;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 1rem;
   }
+
   .empty-state {
     text-align: center;
     padding: 4rem 2rem;
-    color: var(--fg-dim);
-    border: 1px dashed var(--border);
-    background: var(--bg-surface);
-    border-radius: var(--radius);
+    color: var(--shadcn-muted-foreground);
+    border: 1px dashed var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
   }
 
-  :global(body.theme-8bit-lobster) .empty-state,
-  :global(body.theme-8bit-lobster-light) .empty-state {
-    border-style: solid;
-  }
   .empty-state p {
     margin-bottom: 1.5rem;
-    font-size: 1.125rem;
-    font-family: var(--font-mono);
+    font-size: 0.9375rem;
+    font-family: var(--shadcn-font-sans);
   }
+
   .empty-state .btn {
     display: inline-block;
-    padding: 0.75rem 1.5rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: var(--radius);
+    padding: 0.625rem 1rem;
+    background: var(--shadcn-background);
+    color: var(--shadcn-foreground);
+    border: 1px solid var(--shadcn-input);
+    border-radius: var(--shadcn-radius);
     font-size: 0.875rem;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
+    font-weight: 500;
+    letter-spacing: 0;
+    text-shadow: none;
+    text-transform: none;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
 
-  :global(body.theme-8bit-lobster:not(.effects-disabled)) .empty-state .btn,
-  :global(body.theme-8bit-lobster-light:not(.effects-disabled)) .empty-state .btn {
-    animation: lobsterPulse 1.5s steps(6, end) infinite;
-  }
-
-  @keyframes lobsterPulse {
-    0%,
-    100% {
-      box-shadow: 0 0 4px transparent;
-      border-color: var(--accent-dim);
-    }
-
-    50% {
-      box-shadow: 0 0 12px var(--border-glow);
-      border-color: var(--accent);
-    }
-  }
   .empty-state .btn:hover {
     text-decoration: none;
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    text-shadow: 0 0 8px var(--accent);
+    background: var(--shadcn-accent);
+    border-color: var(--shadcn-border);
+    box-shadow: none;
+    text-shadow: none;
   }
 </style>

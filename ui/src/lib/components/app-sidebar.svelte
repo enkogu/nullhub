@@ -187,7 +187,7 @@
 		</Sidebar.Menu>
 	</Sidebar.Header>
 
-	<Sidebar.Content class="gap-3 overflow-hidden px-3">
+	<Sidebar.Content class="gap-3 px-3">
 		<Sidebar.Group class="p-0">
 			<Sidebar.GroupLabel>Platform</Sidebar.GroupLabel>
 			<Sidebar.Menu>

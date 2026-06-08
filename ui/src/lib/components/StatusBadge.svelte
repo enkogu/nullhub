@@ -23,25 +23,28 @@
   .badge {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    padding: 0.25rem 0.75rem;
-    border-radius: 2px;
+    gap: 0.375rem;
+    min-height: 1.5rem;
+    padding: 0.125rem 0.5rem;
+    border: 1px solid color-mix(in srgb, var(--badge-color) 18%, var(--shadcn-border));
+    border-radius: calc(var(--shadcn-radius) - 2px);
     font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    background: color-mix(in srgb, var(--badge-color) 10%, transparent);
+    font-weight: 500;
+    letter-spacing: 0;
+    line-height: 1;
+    background: color-mix(in srgb, var(--badge-color) 8%, var(--shadcn-background));
     color: var(--badge-color);
-    box-shadow: inset 0 0 5px
-      color-mix(in srgb, var(--badge-color) 20%, transparent);
-    text-shadow: 0 0 5px var(--badge-color);
+    box-shadow: none;
+    text-shadow: none;
+    text-transform: none;
   }
+
   .badge::before {
     content: "";
-    width: 6px;
-    height: 6px;
-    border-radius: var(--radius);
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: 9999px;
     background: var(--badge-color);
-    box-shadow: 0 0 6px var(--badge-color);
+    box-shadow: none;
   }
 </style>

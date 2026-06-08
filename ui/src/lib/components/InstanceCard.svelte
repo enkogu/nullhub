@@ -90,111 +90,152 @@
   .card {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-    padding: 1.5rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--fg);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    backdrop-filter: blur(4px);
+    gap: 0.875rem;
+    min-height: 12rem;
+    padding: 1rem;
+    background: var(--shadcn-card);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    color: var(--shadcn-card-foreground);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
   }
+
   .card:hover {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 15px var(--border-glow);
-    transform: translateY(-2px);
+    background: var(--shadcn-card);
+    border-color: color-mix(in srgb, var(--shadcn-foreground) 18%, var(--shadcn-border));
+    box-shadow: 0 4px 10px rgb(0 0 0 / 0.05);
   }
+
   .card-main {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.875rem;
     color: inherit;
   }
+
   .card-main:hover {
     text-decoration: none;
   }
+
   .card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-    padding-bottom: 0.75rem;
+    gap: 1rem;
   }
+
   .card-name {
-    font-weight: 700;
-    font-size: 1.125rem;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    text-shadow: var(--text-glow);
-    color: var(--accent);
+    min-width: 0;
+    overflow: hidden;
+    color: var(--shadcn-foreground);
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    line-height: 1.3;
+    text-overflow: ellipsis;
+    text-shadow: none;
+    text-transform: none;
+    white-space: nowrap;
   }
+
   .card-meta {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 0.5rem;
+    min-width: 0;
     font-size: 0.8125rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
   }
+
   .component-tag {
-    padding: 0.25rem 0.5rem;
-    background: color-mix(in srgb, var(--border) 20%, transparent);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    font-family: var(--font-mono);
+    display: inline-flex;
+    align-items: center;
+    min-height: 1.5rem;
+    padding: 0.125rem 0.5rem;
+    background: var(--shadcn-muted);
+    border: 1px solid transparent;
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    color: var(--shadcn-muted-foreground);
+    font-family: var(--shadcn-font-sans);
     font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
   }
+
   .version {
+    color: var(--shadcn-muted-foreground);
     font-family: var(--font-mono);
     font-size: 0.75rem;
-    opacity: 0.8;
+    opacity: 1;
   }
+
   .card-actions {
     display: flex;
-    gap: 0.75rem;
-    margin-top: 0.5rem;
+    gap: 0.5rem;
+    margin-top: auto;
   }
+
   .card-actions button {
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    background: var(--bg-surface);
-    color: var(--accent);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 2.25rem;
+    padding: 0.5rem 0.875rem;
+    border: 1px solid var(--shadcn-input);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-background);
+    color: var(--shadcn-foreground);
     font-size: 0.8125rem;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    font-weight: 500;
+    letter-spacing: 0;
+    line-height: 1;
+    text-shadow: none;
+    text-transform: none;
     cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
+    transition: background-color 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
   }
+
   .card-actions button:hover {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    text-shadow: 0 0 8px var(--accent);
+    background: var(--shadcn-accent);
+    border-color: var(--shadcn-border);
+    box-shadow: none;
+    text-shadow: none;
   }
+
+  .card-actions button:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+  }
+
   .gateway-addr {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    min-width: 0;
     font-size: 0.8125rem;
-    padding: 0.5rem;
-    background: color-mix(in srgb, var(--bg-surface) 84%, var(--accent) 8%);
-    border: 1px solid var(--border);
-    border-radius: 2px;
+    padding: 0.625rem 0.75rem;
+    background: var(--shadcn-muted);
+    border: 1px solid transparent;
+    border-radius: calc(var(--shadcn-radius) - 2px);
   }
+
   .gateway-label {
-    color: var(--fg-dim);
+    flex: 0 0 auto;
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
-    text-transform: uppercase;
+    text-transform: none;
   }
+
   .gateway-addr code {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--shadcn-foreground);
     font-family: var(--font-mono);
     font-size: 0.8rem;
-    color: var(--accent);
-    text-shadow: var(--text-glow);
+    text-overflow: ellipsis;
+    text-shadow: none;
+    white-space: nowrap;
   }
 </style>
