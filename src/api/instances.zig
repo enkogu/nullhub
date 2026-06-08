@@ -3017,6 +3017,10 @@ pub fn handleUsage(allocator: std.mem.Allocator, s: *state_mod.State, paths: pat
 /// GET /api/instances/{component}/{name}/history?limit=N&offset=N
 /// GET /api/instances/{component}/{name}/history?session_id=...&limit=N&offset=N
 pub fn handleHistory(allocator: std.mem.Allocator, s: *state_mod.State, paths: paths_mod.Paths, component: []const u8, name: []const u8, target: []const u8) ApiResponse {
+    if (!std.mem.eql(u8, component, "nullclaw")) {
+        return badRequest("{\"error\":\"history is only supported for nullclaw instances\"}");
+    }
+
     const session_id = query_api.valueAlloc(allocator, target, "session_id") catch return helpers.serverError();
     defer if (session_id) |value| allocator.free(value);
 
@@ -8199,6 +8203,33 @@ test "handleHistory returns CLI JSON and passes instance home" {
     try std.testing.expectEqualStrings("200 OK", show_resp.status);
     try std.testing.expect(std.mem.indexOf(u8, show_resp.body, "\"session_id\":\"s-1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, show_resp.body, "\"role\":\"user\"") != null);
+}
+
+test "handleHistory rejects components without history CLI contract" {
+    const allocator = std.testing.allocator;
+    var state_fixture = try test_helpers.TempPaths.init(allocator);
+    defer state_fixture.deinit();
+    const state_path = try state_fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var s = state_mod.State.init(allocator, state_path);
+    defer s.deinit();
+    var mctx = TestManagerCtx.init(allocator);
+    defer mctx.deinit(allocator);
+
+    try s.addInstance("nulltickets", "default", .{ .version = "1.0.0" });
+
+    const resp = handleHistory(
+        allocator,
+        &s,
+        mctx.paths,
+        "nulltickets",
+        "default",
+        "/api/instances/nulltickets/default/history?limit=1&offset=0",
+    );
+    defer allocator.free(resp.body);
+
+    try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "only supported for nullclaw") != null);
 }
 
 test "dispatch routes GET history action with percent-encoded instance name" {
