@@ -9,6 +9,7 @@ const inflightGets = new Map<string, Promise<any>>();
 const recentGets = new Map<string, { value: any; expiresAt: number }>();
 const GET_DEDUPE_TTL_MS = 500;
 const RECENT_GET_MAX_ENTRIES = 128;
+let getCacheGeneration = 0;
 
 function pruneRecentGets(now = performance.now()) {
   for (const [key, cached] of recentGets) {
@@ -28,7 +29,9 @@ function rememberRecentGet(key: string, value: any) {
   pruneRecentGets(now);
 }
 
-function clearRecentGets() {
+function invalidateGetCaches() {
+  getCacheGeneration += 1;
+  inflightGets.clear();
   recentGets.clear();
 }
 
@@ -254,33 +257,38 @@ async function request<T>(path: string, options?: ApiRequestInit): Promise<T> {
   }
 
   const doRequest = async () => {
-  const bases = apiBases();
-  let lastError: ApiRequestError | null = null;
-  for (const base of bases) {
-    try {
-      const result = await requestFromBase<T>(base, path, options);
-      resolvedBase = base;
-      return result;
-    } catch (error) {
-      lastError = error as ApiRequestError;
-      if (base === bases[bases.length - 1]) break;
-      if (lastError.status && lastError.status !== 404 && lastError.status !== 200) break;
+    const bases = apiBases();
+    let lastError: ApiRequestError | null = null;
+    for (const base of bases) {
+      try {
+        const result = await requestFromBase<T>(base, path, options);
+        resolvedBase = base;
+        return result;
+      } catch (error) {
+        lastError = error as ApiRequestError;
+        if (base === bases[bases.length - 1]) break;
+        if (lastError.status && lastError.status !== 404 && lastError.status !== 200) break;
+      }
     }
-  }
-  throw lastError || new Error('API request failed');
+    throw lastError || new Error('API request failed');
   };
 
   if (!canDedupeGet) {
     const value = await doRequest();
-    if (method !== 'GET') clearRecentGets();
+    if (method !== 'GET') invalidateGetCaches();
     return value;
   }
 
+  const requestGeneration = getCacheGeneration;
   const pending = doRequest().then((value) => {
-    rememberRecentGet(cacheKey, value);
+    if (requestGeneration === getCacheGeneration) {
+      rememberRecentGet(cacheKey, value);
+    }
     return value;
   }).finally(() => {
-    inflightGets.delete(cacheKey);
+    if (inflightGets.get(cacheKey) === pending) {
+      inflightGets.delete(cacheKey);
+    }
   });
   inflightGets.set(cacheKey, pending);
   return pending;
