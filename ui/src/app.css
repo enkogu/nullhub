@@ -186,9 +186,9 @@ body.theme-8bit-lobster {
   --fx-accent-glow: #777777;
 }
 
-*:not(.prototype-content *),
-*:not(.prototype-content *)::before,
-*:not(.prototype-content *)::after {
+*:not(.prototype-content *):not(.shadcn-app *),
+*:not(.prototype-content *):not(.shadcn-app *)::before,
+*:not(.prototype-content *):not(.shadcn-app *)::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;

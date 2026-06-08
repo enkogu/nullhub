@@ -321,7 +321,6 @@
 			</Sidebar.MenuItem>
 		</Sidebar.Menu>
 	</Sidebar.Footer>
-	<Sidebar.Rail />
 </Sidebar.Root>
 
 <style>

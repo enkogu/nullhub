@@ -87,6 +87,17 @@ body.theme-light {
 		color: var(--shadcn-foreground);
 	}
 
+	[data-slot="sidebar-header"],
+	[data-slot="sidebar-content"],
+	[data-slot="sidebar-footer"] {
+		padding-left: 1rem !important;
+		padding-right: 0.75rem !important;
+	}
+
+	[data-slot="sidebar-header"] {
+		padding-top: 0.9rem !important;
+	}
+
 	[data-slot="sidebar-menu-button"],
 	[data-slot="sidebar-menu-sub-button"],
 	[data-slot="sidebar-trigger"] {
