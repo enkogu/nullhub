@@ -265,14 +265,54 @@
       .replace(/>/g, '&gt;');
   }
 
+  function decodeHtmlEntities(value: string): string {
+    const named: Record<string, string> = {
+      amp: '&',
+      colon: ':',
+      lt: '<',
+      gt: '>',
+      quot: '"',
+      apos: "'",
+    };
+    return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/giu, (match, entity: string) => {
+      const lower = entity.toLowerCase();
+      if (lower.startsWith('#x')) {
+        const codePoint = Number.parseInt(lower.slice(2), 16);
+        return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+      }
+      if (lower.startsWith('#')) {
+        const codePoint = Number.parseInt(lower.slice(1), 10);
+        return Number.isInteger(codePoint) && codePoint >= 0 && codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : match;
+      }
+      return named[lower] ?? match;
+    });
+  }
+
+  function isUnsafeUrlAttribute(value: string): boolean {
+    const normalized = decodeHtmlEntities(value)
+      .trim()
+      .replace(/[\u0000-\u001f\u007f\s]+/gu, '')
+      .toLowerCase();
+    if (normalized.startsWith('javascript:')) return true;
+    if (normalized.startsWith('data:')) {
+      return !/^data:image\/(?:png|jpeg|gif|webp)(?:[;,]|$)/iu.test(normalized);
+    }
+    return false;
+  }
+
+  function sanitizeUrlAttribute(match: string, attr: string, quote: string, value: string): string {
+    if (isUnsafeUrlAttribute(value)) return `${attr}=${quote}#${quote}`;
+    return match;
+  }
+
   function sanitizeHtml(html: string): string {
     return html
       .replace(/<\/?(?:script|iframe|object|embed|style|link|meta|base)\b[^>]*>/giu, '')
       .replace(/\son[a-z]+\s*=\s*"[^"]*"/giu, '')
       .replace(/\son[a-z]+\s*=\s*'[^']*'/giu, '')
       .replace(/\son[a-z]+\s*=\s*[^\s>]+/giu, '')
-      .replace(/(href|src)\s*=\s*"(?:\s*javascript:|\s*data:(?!image\/(?:png|jpeg|gif|webp)))[^"]*"/giu, '$1="#"')
-      .replace(/(href|src)\s*=\s*'(?:\s*javascript:|\s*data:(?!image\/(?:png|jpeg|gif|webp)))[^']*'/giu, "$1='#'");
+      .replace(/\b(href|src)\s*=\s*(")([^"]*)"/giu, sanitizeUrlAttribute)
+      .replace(/\b(href|src)\s*=\s*(')([^']*)'/giu, sanitizeUrlAttribute);
   }
 
   $effect(() => {

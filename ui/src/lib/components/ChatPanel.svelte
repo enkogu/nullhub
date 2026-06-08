@@ -274,12 +274,13 @@
 
 <style>
   .chat-panel {
-    height: 600px;
-    border: 1px solid var(--border);
-    border-radius: 2px;
+    height: min(720px, calc(100vh - 260px));
+    min-height: 560px;
+    border: 0;
+    border-radius: 0;
     overflow: hidden;
-    background: var(--bg-surface);
-    box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+    background: #ffffff;
+    box-shadow: none;
   }
   .chat-unavailable {
     display: flex;
