@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { marked } from 'marked';
   import {
     deleteMarkdownDocument,
     getMarkdownDocument,
@@ -37,6 +38,7 @@
   let message = $state('');
   let loadKey = $state('');
   let deleteConfirmKey = $state('');
+  let viewMode = $state<'preview' | 'source'>('preview');
 
   const normalizedDraftPath = $derived(normalizeMarkdownPath(draftPath));
   const draftTagsList = $derived(parseTags(draftTags));
@@ -49,9 +51,12 @@
   }));
   const dirty = $derived(draftSnapshot !== lastSavedSnapshot);
   const pathValid = $derived(isValidMarkdownPath(draftPath));
-  const canSave = $derived(pathValid && draftContent.length <= 512 * 1024 && !saving);
+  const overEditLimit = $derived(draftContent.length > 512 * 1024);
+  const canSave = $derived(pathValid && !overEditLimit && dirty && !saving);
   const storeTicketsInstance = $derived(component === 'nulltickets' ? name : '');
   const softStoreError = $derived(error.trim().toLowerCase() === 'not found');
+  const renderedMarkdown = $derived(renderMarkdown(draftContent));
+  const displayName = $derived(draftTitle.trim() || titleFromPath(normalizedDraftPath || 'untitled.md'));
 
   function parseTags(value: string): string[] {
     return value
@@ -89,6 +94,11 @@
     return candidate;
   }
 
+  function titleFromPath(path: string): string {
+    const file = path.split('/').pop() || path;
+    return file.replace(/\.(md|markdown)$/i, '').replaceAll('-', ' ').replaceAll('_', ' ');
+  }
+
   function emptySnapshot(): string {
     return JSON.stringify({
       title: '',
@@ -109,6 +119,7 @@
       lastSavedSnapshot = emptySnapshot();
       selectedKey = '';
       deleteConfirmKey = '';
+      viewMode = 'preview';
       return;
     }
     selectedKey = entry.key;
@@ -119,6 +130,7 @@
     draftArtifactId = entry.document.artifact_id || null;
     lastSavedSnapshot = entry.key ? documentSnapshot(entry.document) : '';
     deleteConfirmKey = '';
+    viewMode = 'preview';
   }
 
   async function refresh() {
@@ -167,6 +179,7 @@
       artifact_id: null,
     };
     loadDraft({ key: '', document, created_at_ms: null, updated_at_ms: null });
+    viewMode = 'source';
   }
 
   async function saveDraft(): Promise<boolean> {
@@ -237,6 +250,27 @@
     }
   }
 
+  function renderMarkdown(markdown: string): string {
+    return sanitizeHtml(marked.parse(escapeRawHtml(markdown), { gfm: true, async: false }) as string);
+  }
+
+  function escapeRawHtml(markdown: string): string {
+    return markdown
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function sanitizeHtml(html: string): string {
+    return html
+      .replace(/<\/?(?:script|iframe|object|embed|style|link|meta|base)\b[^>]*>/giu, '')
+      .replace(/\son[a-z]+\s*=\s*"[^"]*"/giu, '')
+      .replace(/\son[a-z]+\s*=\s*'[^']*'/giu, '')
+      .replace(/\son[a-z]+\s*=\s*[^\s>]+/giu, '')
+      .replace(/(href|src)\s*=\s*"(?:\s*javascript:|\s*data:(?!image\/(?:png|jpeg|gif|webp)))[^"]*"/giu, '$1="#"')
+      .replace(/(href|src)\s*=\s*'(?:\s*javascript:|\s*data:(?!image\/(?:png|jpeg|gif|webp)))[^']*'/giu, "$1='#'");
+  }
+
   $effect(() => {
     const key = `${component}/${name}/${active}`;
     if (!active || loadKey === key) return;
@@ -247,17 +281,18 @@
 </script>
 
 <div class="markdown-manager">
-  {#if error && !softStoreError}
-    <div class="error-banner">{error}</div>
-  {/if}
-  {#if message}
-    <div class="message-banner">{message}</div>
-  {/if}
-
   <section class="editor-shell" aria-label="Markdown editor">
     <div class="fields-row">
       <input aria-label="Title" bind:value={draftTitle} placeholder="Title" />
       <input aria-label="Path" class:invalid={!pathValid && draftPath.trim()} bind:value={draftPath} placeholder="docs/runbook.md" />
+      <div class="mode-switch" aria-label="File view mode">
+        <button type="button" class:active={viewMode === 'preview'} onclick={() => (viewMode = 'preview')}>
+          Preview
+        </button>
+        <button type="button" class:active={viewMode === 'source'} onclick={() => (viewMode = 'source')}>
+          Source
+        </button>
+      </div>
       <button class="btn" onclick={newDocument}>New</button>
       <button class="btn danger" onclick={removeDraft} disabled={!selectedKey || deleting}>
         {selectedKey && deleteConfirmKey === selectedKey ? 'Confirm' : 'Delete'}
@@ -268,7 +303,32 @@
       {/if}
     </div>
 
-    <textarea aria-label="Markdown" bind:value={draftContent} onkeydown={handleEditorKeydown} spellcheck="false"></textarea>
+    {#if error && !softStoreError}
+      <div class="inline-error">{error}</div>
+    {:else if overEditLimit}
+      <div class="inline-error">Read-only - this Markdown document is over the 512 KB edit limit.</div>
+    {:else if message}
+      <div class="inline-message">{message}</div>
+    {/if}
+
+    <div class="document-surface">
+      {#if viewMode === 'preview'}
+        <div class="preview-pane" aria-label="Rendered Markdown">
+          {#if draftContent.trim()}
+            <div class="preview-title">{displayName}</div>
+            <div class="prose-preview">
+              {@html renderedMarkdown}
+            </div>
+          {:else}
+            <div class="empty-preview">
+              <span>No Markdown content</span>
+            </div>
+          {/if}
+        </div>
+      {:else}
+        <textarea aria-label="Markdown source" bind:value={draftContent} onkeydown={handleEditorKeydown} spellcheck="false"></textarea>
+      {/if}
+    </div>
   </section>
   {#if documents.length > 0}
     <section class="document-strip" aria-label="Markdown documents">
@@ -355,25 +415,85 @@
     line-height: 1.5;
   }
 
-  .error-banner,
-  .message-banner {
-    position: fixed;
-    right: 18px;
-    bottom: 18px;
-    z-index: 20;
+  .inline-error,
+  .inline-message {
+    margin-bottom: 5px;
     border-radius: 6px;
-    padding: 7px 10px;
+    padding: 7px 9px;
     font-size: 12px;
   }
 
-  .error-banner {
+  .inline-error {
     border: 1px solid color-mix(in srgb, var(--error), transparent 68%);
     color: var(--error);
   }
 
-  .message-banner {
-    border: 1px solid var(--success);
+  .inline-message {
+    border: 1px solid color-mix(in srgb, var(--success), transparent 70%);
     color: var(--success);
+  }
+
+  .mode-switch {
+    display: inline-grid;
+    grid-template-columns: 1fr 1fr;
+    min-width: 132px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+  }
+
+  .mode-switch button {
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+  }
+
+  .document-surface {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .preview-pane {
+    height: 100%;
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    padding: 12px;
+  }
+
+  .preview-title {
+    margin-bottom: 12px;
+    color: var(--fg);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .prose-preview {
+    color: var(--fg);
+    line-height: 1.55;
+  }
+
+  .prose-preview :global(a) {
+    color: var(--accent);
+  }
+
+  .prose-preview :global(pre) {
+    overflow: auto;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    background: var(--bg-hover);
+  }
+
+  .empty-preview {
+    display: grid;
+    height: 100%;
+    place-items: center;
+    color: var(--fg-dim);
   }
 
   .document-strip,
@@ -428,7 +548,7 @@
 
   .fields-row {
     display: grid;
-    grid-template-columns: minmax(160px, 1fr) minmax(220px, 2fr) auto auto auto auto;
+    grid-template-columns: minmax(160px, 1fr) minmax(220px, 2fr) auto auto auto auto auto;
     gap: 5px;
     margin-bottom: 5px;
   }
