@@ -97,6 +97,17 @@ body.theme-light {
 		padding-right: 0.75rem !important;
 	}
 
+	[data-slot="sidebar-content"] {
+		-ms-overflow-style: none;
+		scrollbar-width: none;
+	}
+
+	[data-slot="sidebar-content"]::-webkit-scrollbar {
+		display: none;
+		height: 0;
+		width: 0;
+	}
+
 	[data-slot="sidebar-header"] {
 		padding-top: 0.9rem !important;
 	}
