@@ -15,6 +15,39 @@
     href?: string;
   };
 
+  const hookTemplates = [
+    { id: "input-command-guard", title: "Input Command Guard", category: "Input", event: "input", goal: "Block unsafe user requests before they reach the model.", command: "bash hooks/input-command-guard.sh", on_error: "block", timeout_ms: 1000, output: "decision:block" },
+    { id: "input-router", title: "Input Router", category: "Input", event: "input", goal: "Rewrite user input into a normalized routing envelope.", command: "bash hooks/input-router.sh", on_error: "warn", timeout_ms: 1000, output: "replace_input" },
+    { id: "input-context-hints", title: "Input Context Hints", category: "Input", event: "input", goal: "Add repo or ticket hints derived from the prompt.", command: "bash hooks/input-context-hints.sh", on_error: "warn", timeout_ms: 1500, output: "append_context" },
+    { id: "context-rag-inject", title: "RAG Context Inject", category: "Context", event: "context", goal: "Inject local search or memory snippets into the provider prompt.", command: "bash hooks/context-rag-inject.sh", on_error: "warn", timeout_ms: 2000, output: "append_context" },
+    { id: "context-token-killer", title: "Rust Token Killer", category: "Context", event: "context", goal: "Compress or replace bulky context before the LLM call.", command: "rust-token-killer --hook", on_error: "block", timeout_ms: 5000, output: "append_context" },
+    { id: "context-policy-banner", title: "Policy Banner", category: "Context", event: "context", goal: "Attach workspace policy and deployment guardrails.", command: "bash hooks/context-policy-banner.sh", on_error: "warn", timeout_ms: 1000, output: "append_context" },
+    { id: "tool-shell-allowlist", title: "Shell Allowlist", category: "Tool Call", event: "tool_call", goal: "Block dangerous shell commands before execution.", command: "bash hooks/tool-shell-allowlist.sh", on_error: "block", timeout_ms: 1000, output: "decision:block" },
+    { id: "tool-git-protect", title: "Git Protect", category: "Tool Call", event: "tool_call", goal: "Prevent destructive git operations unless explicitly allowed.", command: "bash hooks/tool-git-protect.sh", on_error: "block", timeout_ms: 1000, output: "decision:block" },
+    { id: "tool-cwd-fence", title: "CWD Fence", category: "Tool Call", event: "tool_call", goal: "Reject tool calls outside the current workspace.", command: "bash hooks/tool-cwd-fence.sh", on_error: "block", timeout_ms: 1000, output: "decision:block" },
+    { id: "tool-args-normalize", title: "Tool Args Normalize", category: "Tool Call", event: "tool_call", goal: "Patch tool arguments into a canonical JSON shape.", command: "bash hooks/tool-args-normalize.sh", on_error: "warn", timeout_ms: 1000, output: "replace_input" },
+    { id: "tool-browser-gate", title: "Browser Tool Gate", category: "Tool Call", event: "tool_call", goal: "Gate browser or external automation tools by channel.", command: "bash hooks/tool-browser-gate.sh", on_error: "block", timeout_ms: 1000, output: "decision:block" },
+    { id: "tool-result-summarize", title: "Tool Result Summarize", category: "Tool Result", event: "tool_result", goal: "Collapse noisy command output before it returns to the model.", command: "bash hooks/tool-result-summarize.sh", on_error: "warn", timeout_ms: 2000, output: "patch_result.content" },
+    { id: "tool-result-secret-scan", title: "Secret Scan Result", category: "Tool Result", event: "tool_result", goal: "Redact tokens or keys from tool output.", command: "bash hooks/tool-result-secret-scan.sh", on_error: "block", timeout_ms: 1500, output: "patch_result.content" },
+    { id: "tool-result-test-parser", title: "Test Result Parser", category: "Tool Result", event: "tool_result", goal: "Convert test logs into structured pass/fail feedback.", command: "bash hooks/tool-result-test-parser.sh", on_error: "warn", timeout_ms: 2000, output: "feedback" },
+    { id: "tool-result-artifact-index", title: "Artifact Index", category: "Tool Result", event: "tool_result", goal: "Extract generated file paths from tool output.", command: "bash hooks/tool-result-artifact-index.sh", on_error: "ignore", timeout_ms: 1500, output: "feedback" },
+    { id: "stop-review-gate", title: "Stop Review Gate", category: "Stop", event: "stop", goal: "Block final responses that skipped tests or verification.", command: "bash hooks/stop-review-gate.sh", on_error: "block", timeout_ms: 2000, output: "decision:block" },
+    { id: "stop-continue-if-unfinished", title: "Continue If Unfinished", category: "Stop", event: "stop", goal: "Ask the agent to continue when a required checklist is incomplete.", command: "bash hooks/stop-continue-if-unfinished.sh", on_error: "warn", timeout_ms: 2000, output: "continue.prompt" },
+    { id: "stop-final-redactor", title: "Final Redactor", category: "Stop", event: "stop", goal: "Redact sensitive content from the final answer.", command: "bash hooks/stop-final-redactor.sh", on_error: "block", timeout_ms: 1500, output: "handled_response" },
+    { id: "turn-end-metrics", title: "Turn Metrics", category: "Turn End", event: "turn_end", goal: "Emit usage, duration, and status metrics after a turn.", command: "bash hooks/turn-end-metrics.sh", on_error: "ignore", timeout_ms: 1000, output: "status" },
+    { id: "turn-end-memory-save", title: "Memory Save", category: "Turn End", event: "turn_end", goal: "Persist final response summaries to an external memory system.", command: "bash hooks/turn-end-memory-save.sh", on_error: "warn", timeout_ms: 2000, output: "status" },
+    { id: "file-changed-fmt", title: "File Changed Format", category: "Files", event: "file.changed", goal: "Run formatter checks on changed files.", command: "bash hooks/file-changed-fmt.sh", on_error: "warn", timeout_ms: 5000, output: "feedback" },
+    { id: "file-changed-doc-index", title: "Doc Index Refresh", category: "Files", event: "file.changed", goal: "Update a local documentation index after docs change.", command: "bash hooks/file-changed-doc-index.sh", on_error: "ignore", timeout_ms: 3000, output: "status" },
+    { id: "before-agent-start-env", title: "Startup Env Check", category: "Lifecycle", event: "before_agent_start", goal: "Validate required env vars and local binaries before launch.", command: "bash hooks/before-agent-start-env.sh", on_error: "block", timeout_ms: 2000, output: "decision:block" },
+    { id: "session-start-brief", title: "Session Brief", category: "Lifecycle", event: "session_start", goal: "Inject a short session brief when a new session opens.", command: "bash hooks/session-start-brief.sh", on_error: "warn", timeout_ms: 1500, output: "append_context" },
+    { id: "session-end-archive", title: "Session Archive", category: "Lifecycle", event: "session_end", goal: "Archive session metadata for audit and analytics.", command: "bash hooks/session-end-archive.sh", on_error: "ignore", timeout_ms: 2000, output: "status" },
+    { id: "pre-compact-snapshot", title: "Pre Compact Snapshot", category: "Compaction", event: "pre_compact", goal: "Save raw context before compaction runs.", command: "bash hooks/pre-compact-snapshot.sh", on_error: "ignore", timeout_ms: 2000, output: "status" },
+    { id: "post-compact-qa", title: "Post Compact QA", category: "Compaction", event: "post_compact", goal: "Check compacted context for missing task state.", command: "bash hooks/post-compact-qa.sh", on_error: "warn", timeout_ms: 2000, output: "feedback" },
+    { id: "tool-batch-summary", title: "Tool Batch Summary", category: "Tool Result", event: "tool_batch_result", goal: "Summarize multi-tool batches into a compact result.", command: "bash hooks/tool-batch-summary.sh", on_error: "warn", timeout_ms: 3000, output: "patch_result.content" },
+    { id: "notification-slack", title: "Notification Sink", category: "Notifications", event: "notification", goal: "Forward notifications to Slack, Telegram, or a local webhook.", command: "bash hooks/notification-sink.sh", on_error: "ignore", timeout_ms: 2000, output: "status" },
+    { id: "notification-priority", title: "Priority Notification", category: "Notifications", event: "notification", goal: "Escalate only high-priority notifications.", command: "bash hooks/notification-priority.sh", on_error: "ignore", timeout_ms: 1000, output: "status" },
+  ];
+
   let {
     kind,
     title,
@@ -162,6 +195,17 @@
     }));
   }
 
+  function loadHookTemplates(): RegistryRow[] {
+    return hookTemplates.map((hook) => ({
+      id: registryKey("hook", hook.id),
+      name: hook.title,
+      source: "Template",
+      status: "available",
+      detail: hook.goal,
+      meta: compact([hook.category, hook.event, hook.output, hook.on_error, `${hook.timeout_ms}ms`]),
+    }));
+  }
+
   async function loadInstructions(agent: string): Promise<RegistryRow[]> {
     const docs = await listMarkdownDocuments("nullclaw", agent);
     return docs.map((entry) => ({
@@ -221,11 +265,12 @@
     try {
       const agents = await agentNames();
       const results = await Promise.allSettled(agents.map((agent) => loadForAgent(agent)));
-      rows = mergeRows(results.flatMap((result, index) => {
+      const loadedRows = results.flatMap((result, index) => {
         if (result.status === "fulfilled") return result.value;
         errors = [...errors, `${agents[index]}: ${result.reason?.message || "failed to load"}`];
         return [];
-      }));
+      });
+      rows = mergeRows(kind === "hooks" ? [...loadedRows, ...loadHookTemplates()] : loadedRows);
     } catch (error) {
       rows = [];
       errors = [(error as Error).message || "Failed to load registry."];
