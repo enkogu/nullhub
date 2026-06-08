@@ -1,7 +1,7 @@
 ---
 name: nullhub-admin
-version: 0.1.0
-description: Teach managed nullclaw agents to discover NullHub routes first and then use nullhub api for instance, provider, component, and NullBoiler workflow tasks.
+version: 0.1.1
+description: Teach managed nullclaw agents to discover NullHub routes first and then use nullhub api for instance, provider, component, NullTickets task, and NullBoiler workflow tasks.
 always: true
 requires_bins:
   - nullhub
@@ -47,3 +47,42 @@ Shorthand paths are allowed:
 nullhub api GET instances
 nullhub api POST providers/2/validate
 ```
+
+## NullTickets Tasks
+
+Use this section whenever the user asks about NullTickets tasks, tickets, work queues, assignments, pipelines, or backlog.
+
+NullTickets is accessed through the managed NullHub action route. Do not call `nulltickets history`; history is only for NullClaw conversation history.
+
+List tasks without claiming work:
+
+```bash
+nullhub api POST /api/instances/nulltickets/default/tickets --body '{"method":"GET","path":"/tasks?limit=25"}' --pretty
+```
+
+Filter the task list:
+
+```bash
+nullhub api POST /api/instances/nulltickets/default/tickets --body '{"method":"GET","path":"/tasks?stage=todo&limit=25"}' --pretty
+nullhub api POST /api/instances/nulltickets/default/tickets --body '{"method":"GET","path":"/tasks?pipeline_id=PIPELINE_ID&limit=25"}' --pretty
+```
+
+Inspect one task:
+
+```bash
+nullhub api POST /api/instances/nulltickets/default/tickets --body '{"method":"GET","path":"/tasks/TASK_ID"}' --pretty
+```
+
+Inspect queue/claimable roles:
+
+```bash
+nullhub api POST /api/instances/nulltickets/default/tickets --body '{"method":"GET","path":"/ops/queue"}' --pretty
+```
+
+Claim work only when the user asks to execute or take a task:
+
+```bash
+nullhub api POST /api/instances/nulltickets/default/tickets --body '{"method":"POST","path":"/leases/claim","payload":{"agent_id":"AGENT_ID","agent_role":"coder","lease_ttl_ms":60000}}' --pretty
+```
+
+When claiming returns `lease_id` and `lease_token`, use the returned lease token for heartbeat, run events, transition, or fail operations. Reading tasks does not require claiming them.
