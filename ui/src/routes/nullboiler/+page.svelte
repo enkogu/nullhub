@@ -1,14 +1,55 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { goto } from '$app/navigation';
   import { nullBoilerApi } from '$lib/api/client';
   import { nullboilerUiRoutes } from '$lib/nullboiler/routes';
   import BoilerInstanceSelector from '$lib/components/nullboiler/BoilerInstanceSelector.svelte';
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+    type EntityViewAction,
+  } from '$lib/entity-view';
 
   let runs = $state<any[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let stats = $state({ active: 0, completed: 0, failed: 0, interrupted: 0 });
+
+  const runColumns: EntityColumn[] = [
+    { id: 'workflow', label: 'Workflow', type: 'text', width: 'minmax(180px,.75fr)' },
+    { id: 'status', label: 'Status', type: 'status', width: 'minmax(120px,.38fr)' },
+    { id: 'duration', label: 'Duration', type: 'mono', width: 'minmax(110px,.34fr)' },
+    { id: 'created', label: 'Created', type: 'date', width: 'minmax(150px,.55fr)' },
+  ];
+  const runViews = createViewSet({
+    kanban: { groupBy: 'status' },
+    tree: { parentField: 'workflow' },
+    timeline: { dateField: 'created' },
+    calendar: { dateField: 'created' },
+  });
+  const runActions: EntityViewAction[] = [
+    { id: 'open', label: 'Open', variant: 'default', href: (record) => record.href || '#' },
+  ];
+  let runRecords = $derived(
+    runs.slice(0, 20).map((run) => ({
+      id: `run:${run.id}`,
+      title: String(run.id || '').slice(0, 8) || 'run',
+      type: 'run',
+      status: run.status || 'unknown',
+      subtitle: run.workflow_name || run.workflow_id || '-',
+      description: formatDuration(run),
+      href: runHref(run.id),
+      date: run.created_at || '',
+      fields: {
+        workflow: run.workflow_name || run.workflow_id || '-',
+        status: run.status || 'unknown',
+        duration: formatDuration(run),
+        created: run.created_at || '',
+      },
+      raw: run,
+    })) satisfies EntityRecord[],
+  );
 
   async function loadRuns() {
     try {
@@ -34,15 +75,6 @@
   });
   onDestroy(() => clearInterval(interval));
 
-  const statusColors: Record<string, string> = {
-    running: 'var(--accent)',
-    pending: 'var(--accent)',
-    completed: 'var(--success)',
-    failed: 'var(--error)',
-    interrupted: 'var(--warning)',
-    cancelled: 'var(--fg-dim)',
-  };
-
   function formatDuration(run: any): string {
     if (!run.created_at) return '-';
     const start = new Date(run.created_at).getTime();
@@ -53,24 +85,8 @@
     return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
   }
 
-  function formatTime(ts: string): string {
-    if (!ts) return '-';
-    return new Date(ts).toLocaleString();
-  }
-
   function runHref(id: string): string {
     return nullboilerUiRoutes.run(id);
-  }
-
-  function openRun(id: string) {
-    void goto(runHref(id));
-  }
-
-  function handleRunRowKeydown(e: KeyboardEvent, id: string) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      openRun(id);
-    }
   }
 </script>
 
@@ -107,56 +123,27 @@
     </div>
   </div>
 
-  {#if loading && runs.length === 0}
-    <div class="loading">Loading runs...</div>
-  {:else if runs.length === 0}
-    <div class="empty-state">
-      <p>> No NullBoiler runs yet.</p>
-      <a href={nullboilerUiRoutes.workflows()} class="btn">Create a Workflow</a>
-    </div>
-  {:else}
-    <div class="table-section">
-      <h2>Recent Runs</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Workflow</th>
-              <th>Status</th>
-              <th>Duration</th>
-              <th>Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each runs.slice(0, 20) as run}
-              <tr
-                onclick={() => openRun(run.id)}
-                onkeydown={(e) => handleRunRowKeydown(e, run.id)}
-                class="clickable"
-                role="link"
-                tabindex="0"
-              >
-                <td class="mono">{(run.id || '').slice(0, 8)}</td>
-                <td>{run.workflow_name || run.workflow_id || '-'}</td>
-                <td>
-                  <span
-                    class="status-badge"
-                    style="--badge-color: {statusColors[run.status] || 'var(--fg-dim)'}"
-                  >{run.status}</span>
-                </td>
-                <td class="mono">{formatDuration(run)}</td>
-                <td>{formatTime(run.created_at)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      {#if runs.length > 20}
-        <div class="more-link">
-          <a href={nullboilerUiRoutes.runs()}>View all {runs.length} runs</a>
-        </div>
-      {/if}
+  <UniversalEntityView
+    title="Recent Runs"
+    description="Latest NullBoiler executions, grouped and browsable by status, workflow, and time."
+    records={runRecords}
+    columns={runColumns}
+    views={runViews}
+    defaultViewId="table"
+    {loading}
+    actions={runActions}
+    emptyTitle="No NullBoiler runs"
+    emptyDescription="Create a workflow to produce runs."
+    onRefresh={loadRuns}
+  />
+
+  {#if !loading && runs.length === 0}
+    <a href={nullboilerUiRoutes.workflows()} class="btn">Create a Workflow</a>
+  {/if}
+
+  {#if runs.length > 20}
+    <div class="more-link">
+      <a href={nullboilerUiRoutes.runs()}>View all {runs.length} runs</a>
     </div>
   {/if}
 </div>
@@ -186,14 +173,6 @@
     text-shadow: var(--text-glow);
     text-transform: uppercase;
     letter-spacing: 2px;
-  }
-  h2 {
-    font-size: 1rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 1rem;
-    color: var(--fg-dim);
   }
   .action-btn {
     padding: 0.5rem 1rem;
@@ -239,76 +218,6 @@
     font-weight: 700;
     font-family: var(--font-mono);
   }
-  .table-section {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1.5rem;
-  }
-  .table-wrap {
-    overflow-x: auto;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.8125rem;
-  }
-  th {
-    text-align: left;
-    padding: 0.625rem 0.75rem;
-    font-size: 0.6875rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-  }
-  td {
-    padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-    color: var(--fg);
-  }
-  td.mono {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-  }
-  tr.clickable {
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
-  tr.clickable:hover td {
-    background: var(--bg-hover);
-  }
-  tr.clickable:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-  }
-  tr.clickable:focus-visible td {
-    background: var(--bg-hover);
-  }
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.2rem 0.5rem;
-    border-radius: 2px;
-    font-size: 0.6875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--badge-color);
-    background: color-mix(in srgb, var(--badge-color) 10%, transparent);
-    box-shadow: inset 0 0 5px color-mix(in srgb, var(--badge-color) 20%, transparent);
-    text-shadow: 0 0 4px var(--badge-color);
-  }
-  .status-badge::before {
-    content: '';
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--badge-color);
-    box-shadow: 0 0 4px var(--badge-color);
-  }
   .error-banner {
     padding: 0.75rem 1rem;
     background: color-mix(in srgb, var(--error) 10%, transparent);
@@ -321,27 +230,9 @@
     text-shadow: 0 0 5px var(--error);
     box-shadow: 0 0 10px color-mix(in srgb, var(--error) 20%, transparent);
   }
-  .loading {
-    text-align: center;
-    padding: 4rem 2rem;
-    color: var(--fg-dim);
-    font-size: 1rem;
-  }
-  .empty-state {
-    text-align: center;
-    padding: 4rem 2rem;
-    color: var(--fg-dim);
-    border: 1px dashed var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
-  }
-  .empty-state p {
-    margin-bottom: 1.5rem;
-    font-size: 1.125rem;
-    font-family: var(--font-mono);
-  }
-  .empty-state .btn {
+  .btn {
     display: inline-block;
+    align-self: flex-start;
     padding: 0.75rem 1.5rem;
     background: var(--bg-surface);
     color: var(--accent);
@@ -354,7 +245,7 @@
     transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
     text-shadow: var(--text-glow);
   }
-  .empty-state .btn:hover {
+  .btn:hover {
     text-decoration: none;
     background: var(--bg-hover);
     border-color: var(--accent);

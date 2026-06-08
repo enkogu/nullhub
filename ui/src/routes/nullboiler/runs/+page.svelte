@@ -1,8 +1,14 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
-  import { nullBoilerApi } from '$lib/api/client';
-  import { nullboilerUiRoutes } from '$lib/nullboiler/routes';
-  import BoilerInstanceSelector from '$lib/components/nullboiler/BoilerInstanceSelector.svelte';
+  import { nullBoilerApi } from "$lib/api/client";
+  import { nullboilerUiRoutes } from "$lib/nullboiler/routes";
+  import BoilerInstanceSelector from "$lib/components/nullboiler/BoilerInstanceSelector.svelte";
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+    type EntityViewAction,
+  } from "$lib/entity-view";
 
   let runs = $state<any[]>([]);
   let workflows = $state<any[]>([]);
@@ -10,14 +16,57 @@
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
 
-  let filterStatus = $state('');
-  let filterWorkflow = $state('');
-  let runLimit = $state('50');
+  let filterStatus = $state("");
+  let filterWorkflow = $state("");
+  let runLimit = $state("50");
   let hasMore = $state(false);
   let nextOffset = $state<number | null>(null);
-  let runsQueryKey = $state('');
+  let runsQueryKey = $state("");
 
-  const statuses = ['', 'running', 'pending', 'completed', 'failed', 'interrupted', 'cancelled'];
+  const statuses = ["", "running", "pending", "completed", "failed", "interrupted", "cancelled"];
+  const runColumns: EntityColumn[] = [
+    { id: "workflow", label: "Workflow", type: "select", width: "minmax(180px,.72fr)" },
+    { id: "status", label: "Status", type: "status", width: "minmax(120px,.4fr)" },
+    { id: "duration", label: "Duration", type: "mono", width: "minmax(110px,.36fr)" },
+    { id: "created", label: "Created", type: "date", width: "minmax(150px,.56fr)" },
+    { id: "completed", label: "Completed", type: "date", width: "minmax(150px,.56fr)" },
+  ];
+  const runViews = createViewSet({
+    kanban: { groupBy: "status" },
+    tree: { parentField: "workflow_id" },
+    timeline: { dateField: "created" },
+    calendar: { dateField: "created" },
+  });
+  const runActions: EntityViewAction[] = [
+    { id: "open", label: "Open", variant: "default", href: (record) => record.href || "#" },
+  ];
+
+  const runRecords = $derived(
+    runs.map((run) => {
+      const id = String(run.id || "");
+      const workflowName = run.workflow_name || run.workflow_id || "-";
+      return {
+        id: `run:${id}`,
+        title: id.slice(0, 12) || "run",
+        type: "run",
+        status: run.status || "unknown",
+        subtitle: workflowName,
+        description: formatDuration(run),
+        href: runHref(id),
+        date: run.created_at || "",
+        fields: {
+          id,
+          workflow: workflowName,
+          workflow_id: run.workflow_id || workflowName,
+          status: run.status || "unknown",
+          duration: formatDuration(run),
+          created: run.created_at || "",
+          completed: run.completed_at || "",
+        },
+        raw: run,
+      };
+    }) satisfies EntityRecord[],
+  );
 
   function boundedInt(raw: string, fallback: number, min: number, max: number): number {
     const value = Number.parseInt(raw || String(fallback), 10);
@@ -27,8 +76,8 @@
 
   function queryKey(): string {
     return JSON.stringify({
-      status: filterStatus || '',
-      workflow: filterWorkflow || '',
+      status: filterStatus || "",
+      workflow: filterWorkflow || "",
       limit: boundedInt(runLimit, 50, 1, 250),
     });
   }
@@ -56,7 +105,7 @@
         runs = nextItems;
       }
       runsQueryKey = key;
-      hasMore = Boolean(page?.hasMore && typeof page?.nextOffset === 'number');
+      hasMore = Boolean(page?.hasMore && typeof page?.nextOffset === "number");
       nextOffset = hasMore ? page.nextOffset || 0 : null;
       workflows = w || [];
       error = null;
@@ -69,328 +118,151 @@
   }
 
   $effect(() => {
-    // Re-load when filters change (also runs on initial mount)
     filterStatus;
     filterWorkflow;
     runLimit;
     void loadData();
   });
 
-  const statusColors: Record<string, string> = {
-    running: 'var(--accent)',
-    pending: 'var(--accent)',
-    completed: 'var(--success)',
-    failed: 'var(--error)',
-    interrupted: 'var(--warning)',
-    cancelled: 'var(--fg-dim)',
-  };
-
   function formatDuration(run: any): string {
-    if (!run.created_at) return '-';
+    if (!run.created_at) return "-";
     const start = new Date(run.created_at).getTime();
     const end = run.completed_at ? new Date(run.completed_at).getTime() : Date.now();
-    const secs = Math.floor((end - start) / 1000);
+    const secs = Math.max(0, Math.floor((end - start) / 1000));
     if (secs < 60) return `${secs}s`;
     if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
     return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
   }
 
-  function formatTime(ts: string): string {
-    if (!ts) return '-';
-    return new Date(ts).toLocaleString();
-  }
-
   function runHref(id: string): string {
     return nullboilerUiRoutes.run(id);
-  }
-
-  function openRun(id: string) {
-    void goto(runHref(id));
-  }
-
-  function handleRunRowKeydown(e: KeyboardEvent, id: string) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      openRun(id);
-    }
   }
 </script>
 
 <div class="page">
-  <div class="header">
-    <h1>Runs</h1>
-    <BoilerInstanceSelector onChange={() => { loading = true; error = null; void loadData(); }} />
+  <div class="topbar">
+    <BoilerInstanceSelector onChange={() => { error = null; void loadData(); }} />
   </div>
-
-  {#if error}
-    <div class="error-banner">ERR: {error}</div>
-  {/if}
 
   <div class="filter-bar">
-    <div class="filter-group">
-      <label class="filter-label" for="status-filter">Status</label>
-      <select id="status-filter" class="filter-select" bind:value={filterStatus}>
-        {#each statuses as s}
-          <option value={s}>{s || 'All'}</option>
+    <label>
+      <span>Status</span>
+      <select bind:value={filterStatus}>
+        {#each statuses as status}
+          <option value={status}>{status || "All"}</option>
         {/each}
       </select>
-    </div>
-    <div class="filter-group">
-      <label class="filter-label" for="workflow-filter">Workflow</label>
-      <select id="workflow-filter" class="filter-select" bind:value={filterWorkflow}>
+    </label>
+    <label>
+      <span>Workflow</span>
+      <select bind:value={filterWorkflow}>
         <option value="">All</option>
-        {#each workflows as wf}
-          <option value={wf.id}>{wf.name || wf.id}</option>
+        {#each workflows as workflow}
+          <option value={workflow.id}>{workflow.name || workflow.id}</option>
         {/each}
       </select>
-    </div>
-    <div class="filter-group">
-      <label class="filter-label" for="limit-filter">Limit</label>
-      <input id="limit-filter" class="filter-input" bind:value={runLimit} inputmode="numeric" />
-    </div>
+    </label>
+    <label>
+      <span>Limit</span>
+      <input bind:value={runLimit} inputmode="numeric" />
+    </label>
   </div>
 
-  {#if loading}
-    <div class="loading">Loading runs...</div>
-  {:else if runs.length === 0}
-    <div class="empty-state">
-      <p>> No runs match the current filter.</p>
-    </div>
-  {:else}
-    <div class="table-section">
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>ID</th>
-              <th>Workflow</th>
-              <th>Status</th>
-              <th>Duration</th>
-              <th>Created</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each runs as run}
-              <tr
-                onclick={() => openRun(run.id)}
-                onkeydown={(e) => handleRunRowKeydown(e, run.id)}
-                class="clickable"
-                role="link"
-                tabindex="0"
-              >
-                <td class="mono">{(run.id || '').slice(0, 8)}</td>
-                <td>{run.workflow_name || run.workflow_id || '-'}</td>
-                <td>
-                  <span
-                    class="status-badge"
-                    style="--badge-color: {statusColors[run.status] || 'var(--fg-dim)'}"
-                  >{run.status}</span>
-                </td>
-                <td class="mono">{formatDuration(run)}</td>
-                <td>{formatTime(run.created_at)}</td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-      {#if hasMore}
-        <div class="table-actions">
-          <button class="load-more" onclick={() => loadData(true)} disabled={loadingMore}>
-            {loadingMore ? 'Loading...' : 'Load More'}
-          </button>
-        </div>
-      {/if}
+  <UniversalEntityView
+    title="Runs"
+    description="Execution history from the selected NullBoiler instance."
+    records={runRecords}
+    columns={runColumns}
+    views={runViews}
+    defaultViewId="table"
+    {loading}
+    {error}
+    actions={runActions}
+    emptyTitle="No runs"
+    emptyDescription="No runs match the current filter."
+    onRefresh={loadData}
+  />
+
+  {#if hasMore}
+    <div class="load-more-row">
+      <button type="button" class="load-more" onclick={() => loadData(true)} disabled={loadingMore}>
+        {loadingMore ? "Loading" : "Load More"}
+      </button>
     </div>
   {/if}
 </div>
 
 <style>
   .page {
-    padding: 2rem;
-    max-width: 1400px;
-    margin: 0 auto;
-  }
-  .header {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 2rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
+    min-width: 0;
+    flex-direction: column;
+    gap: 1rem;
   }
-  h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    text-shadow: var(--text-glow);
-    text-transform: uppercase;
-    letter-spacing: 2px;
+
+  .topbar {
+    display: flex;
+    justify-content: flex-end;
   }
+
   .filter-bar {
     display: flex;
-    gap: 1rem;
-    margin-bottom: 1.5rem;
-    padding: 0.75rem 1rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    padding: 0.75rem;
+    background: var(--shadcn-card);
   }
-  .filter-group {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
+
+  .filter-bar label {
+    display: grid;
+    gap: 0.35rem;
+    min-width: 10rem;
   }
-  .filter-label {
-    font-size: 0.6875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
+
+  .filter-bar span {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 600;
   }
-  .filter-select {
-    padding: 0.375rem 0.625rem;
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    font-size: 0.8125rem;
-    font-family: var(--font-mono);
-    cursor: pointer;
+
+  .filter-bar select,
+  .filter-bar input {
+    min-height: 2.25rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    padding: 0 0.625rem;
+    background: var(--shadcn-background);
+    color: var(--shadcn-foreground);
+    font: inherit;
+    font-size: 0.875rem;
   }
-  .filter-select:focus {
-    border-color: var(--accent-dim);
-    box-shadow: 0 0 4px var(--border-glow);
-  }
-  .filter-input {
+
+  .filter-bar input {
     width: 6rem;
-    padding: 0.375rem 0.625rem;
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    font-size: 0.8125rem;
-    font-family: var(--font-mono);
   }
-  .filter-input:focus {
-    border-color: var(--accent-dim);
-    box-shadow: 0 0 4px var(--border-glow);
-  }
-  .table-section {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1rem;
-  }
-  .table-actions {
+
+  .load-more-row {
     display: flex;
     justify-content: center;
-    padding-top: 1rem;
   }
+
   .load-more {
-    padding: 0.5rem 1rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-  }
-  .load-more:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-  .table-wrap {
-    overflow-x: auto;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.8125rem;
-  }
-  th {
-    text-align: left;
-    padding: 0.625rem 0.75rem;
-    font-size: 0.6875rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-  }
-  td {
-    padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-    color: var(--fg);
-  }
-  td.mono {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-  }
-  tr.clickable {
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
-  tr.clickable:hover td {
-    background: var(--bg-hover);
-  }
-  tr.clickable:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-  }
-  tr.clickable:focus-visible td {
-    background: var(--bg-hover);
-  }
-  .status-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    padding: 0.2rem 0.5rem;
-    border-radius: 2px;
-    font-size: 0.6875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--badge-color);
-    background: color-mix(in srgb, var(--badge-color) 10%, transparent);
-    box-shadow: inset 0 0 5px color-mix(in srgb, var(--badge-color) 20%, transparent);
-    text-shadow: 0 0 4px var(--badge-color);
-  }
-  .status-badge::before {
-    content: '';
-    width: 5px;
-    height: 5px;
-    border-radius: 50%;
-    background: var(--badge-color);
-    box-shadow: 0 0 4px var(--badge-color);
-  }
-  .error-banner {
-    padding: 0.75rem 1rem;
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-    color: var(--error);
-    border: 1px solid var(--error);
-    border-radius: 4px;
-    margin-bottom: 1.5rem;
+    min-height: 2.25rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    padding: 0 0.875rem;
+    background: var(--shadcn-secondary);
+    color: var(--shadcn-secondary-foreground);
+    font: inherit;
     font-size: 0.875rem;
-    font-weight: bold;
-    text-shadow: 0 0 5px var(--error);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error) 20%, transparent);
+    font-weight: 600;
+    cursor: pointer;
   }
-  .loading {
-    text-align: center;
-    padding: 4rem 2rem;
-    color: var(--fg-dim);
-  }
-  .empty-state {
-    text-align: center;
-    padding: 4rem 2rem;
-    color: var(--fg-dim);
-    border: 1px dashed var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
-  }
-  .empty-state p {
-    font-family: var(--font-mono);
+
+  .load-more:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
   }
 </style>

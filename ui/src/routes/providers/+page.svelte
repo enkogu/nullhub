@@ -2,7 +2,13 @@
   import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
   import { PROVIDER_OPTIONS, OPENAI_COMPATIBLE_VALUE, LOCAL_PROVIDERS, KNOWN_PROVIDER_VALUES } from "$lib/providers";
-
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+    type EntityViewAction,
+  } from "$lib/entity-view";
 
   let providers = $state<any[]>([]);
   let loading = $state(true);
@@ -32,6 +38,67 @@
 
   // Re-validate state
   let revalidatingId = $state<string | null>(null);
+
+  const providerColumns: EntityColumn[] = [
+    { id: "provider", label: "Provider", type: "select", width: "minmax(150px,.55fr)" },
+    { id: "validation", label: "Validation", type: "status", width: "minmax(130px,.45fr)" },
+    { id: "model", label: "Model", type: "mono", width: "minmax(220px,1fr)" },
+    { id: "base_url", label: "Base URL", type: "mono", width: "minmax(220px,1fr)" },
+    { id: "last_validation", label: "Last Validation", type: "date", width: "minmax(150px,.55fr)" },
+    { id: "local", label: "Local", type: "select", width: "minmax(90px,.3fr)", cardHidden: true },
+  ];
+  const providerViews = createViewSet({
+    kanban: { groupBy: "validation" },
+    tree: { parentField: "provider_key" },
+    timeline: { dateField: "last_validation" },
+    calendar: { dateField: "last_validation" },
+  });
+  const providerActions: EntityViewAction[] = [
+    {
+      id: "revalidate",
+      label: "Re-validate",
+      run: async (record) => {
+        if (revalidatingId) return;
+        await handleRevalidate(String((record.raw as any)?.id || record.id.replace("provider:", "")));
+      },
+    },
+    { id: "edit", label: "Edit", run: (record) => startEdit(record.raw) },
+    {
+      id: "delete",
+      label: "Delete",
+      variant: "destructive",
+      run: async (record) => handleDelete(String((record.raw as any)?.id || record.id.replace("provider:", ""))),
+    },
+  ];
+
+  let editingProvider = $derived(providers.find((provider) => provider.id === editingId) || null);
+  let providerRecords = $derived(
+    providers.map((provider) => {
+      const validation = providerValidationLabel(providerIndicatorState(provider));
+      const lastValidation = lastValidationAt(provider);
+      return {
+        id: `provider:${provider.id}`,
+        title: provider.name,
+        type: getProviderLabel(provider.provider),
+        status: validation,
+        subtitle: provider.model || "No default model",
+        description: provider.base_url || "Saved model provider",
+        date: lastValidation,
+        fields: {
+          provider: getProviderLabel(provider.provider),
+          provider_key: provider.provider,
+          validation,
+          api_key: provider.api_key,
+          model: provider.model || "No default model",
+          base_url: provider.base_url || "-",
+          last_successful: provider.validated_at || "",
+          last_validation: lastValidation,
+          local: isLocal(provider.provider) ? "yes" : "no",
+        },
+        raw: provider,
+      };
+    }) satisfies EntityRecord[],
+  );
 
   onMount(async () => {
     await loadProviders();
@@ -232,6 +299,13 @@
     return "needs-validation";
   }
 
+  function providerValidationLabel(state: "live-ok" | "live-error" | "has-history" | "needs-validation") {
+    if (state === "live-ok") return "connected";
+    if (state === "live-error") return "failed";
+    if (state === "has-history") return "validated";
+    return "pending";
+  }
+
   function lastValidationAt(provider: any) {
     return provider.last_validation_at || provider.validated_at || "";
   }
@@ -332,383 +406,225 @@
     </div>
   {/if}
 
-  {#if loading}
-    <p class="loading">Loading providers...</p>
-  {:else if providers.length === 0}
-    <div class="empty-state">
-      <p>No saved providers yet. Add one above or install a component — providers are saved automatically during setup.</p>
-    </div>
-  {:else}
-    <div class="provider-grid">
-      {#each providers as p}
-        <div class="provider-card">
-          {#if editingId === p.id}
-            <div class="edit-form">
-              <div class="field">
-                <label for="edit-name-{p.id}">Name</label>
-                <input id="edit-name-{p.id}" type="text" bind:value={editForm.name} />
-              </div>
-              {#if isCustomProvider(p)}
-                <div class="field">
-                  <label for="edit-base-url-{p.id}">Base URL</label>
-                  <input id="edit-base-url-{p.id}" type="text" bind:value={editForm.base_url} placeholder="https://api.example.com/v1" />
-                </div>
-              {/if}
-              {#if !isLocal(p.provider)}
-                <div class="field">
-                  <label for="edit-key-{p.id}">API Key (leave empty to keep current)</label>
-                  <input id="edit-key-{p.id}" type="password" bind:value={editForm.api_key} placeholder="Leave empty to keep current" />
-                </div>
-              {/if}
-              <div class="field">
-                <label for="edit-model-{p.id}">Model</label>
-                {#if isCustomProvider(p)}
-                  <div class="model-input-row">
-                    <input id="edit-model-{p.id}" type="text" bind:value={editForm.model} placeholder="e.g. gpt-4" />
-                    <button
-                      class="btn fetch-models-btn"
-                      onclick={fetchEditModels}
-                      disabled={editProbing || !editForm.base_url.trim()}
-                      title="Fetch available models from this endpoint"
-                    >
-                      {editProbing ? "Fetching..." : "Fetch Models"}
-                    </button>
-                  </div>
-                  {#if editProbeError}
-                    <div class="probe-error">{editProbeError}</div>
-                  {/if}
-                  {#if editProbedModels.length > 0}
-                    <div class="model-list">
-                      {#each editProbedModels as m}
-                        <button
-                          class="model-chip"
-                          class:selected={editForm.model === m}
-                          onclick={() => { editForm.model = m; }}
-                        >{m}</button>
-                      {/each}
-                    </div>
-                  {/if}
-                {:else}
-                  <input id="edit-model-{p.id}" type="text" bind:value={editForm.model} placeholder="e.g. anthropic/claude-sonnet-4" />
-                {/if}
-              </div>
-              {#if editError}
-                <div class="error-message">{editError}</div>
-              {/if}
-              <div class="edit-actions">
-                <button class="primary-btn" onclick={() => saveEdit(p.id)} disabled={editValidating}>
-                  {editValidating ? "Saving..." : "Save"}
-                </button>
-                <button class="btn" onclick={cancelEdit}>Cancel</button>
-              </div>
-            </div>
-          {:else}
-            {@const indicator = providerIndicatorState(p)}
-            <div class="card-header">
-              <div class="card-title">
-                <span
-                  class="status-dot"
-                  class:live-ok={indicator === "live-ok"}
-                  class:live-error={indicator === "live-error"}
-                  class:has-history={indicator === "has-history"}
-                  class:needs-validation={indicator === "needs-validation"}
-                ></span>
-                <h3>{p.name}</h3>
-              </div>
-              <span class="provider-type">{getProviderLabel(p.provider)}</span>
-            </div>
-            <div class="card-body">
-              <div class="card-field">
-                <span class="label">API Key</span>
-                <code>{p.api_key}</code>
-              </div>
-              {#if p.base_url}
-                <div class="card-field">
-                  <span class="label">Base URL</span>
-                  <code>{p.base_url}</code>
-                </div>
-              {/if}
-              <div class="card-field">
-                <span class="label">Model</span>
-                <code>{p.model || "No default model"}</code>
-              </div>
-              {#if p.validated_at}
-                <div class="card-field">
-                  <span class="label">Last Successful Validation</span>
-                  <span>{formatDate(p.validated_at)}</span>
-                </div>
-              {/if}
-              <div class="card-field">
-                <span class="label">Last Validation</span>
-                <span>{formatDate(lastValidationAt(p)) || "Never"}</span>
-              </div>
-              {#if !lastValidationAt(p)}
-                <div class="card-note">Not validated yet. Use Re-validate to run a live auth check.</div>
-              {/if}
-            </div>
-            <div class="card-actions">
-              <button class="btn" onclick={() => handleRevalidate(p.id)} disabled={revalidatingId === p.id}>
-                {revalidatingId === p.id ? "Validating..." : "Re-validate"}
+  <UniversalEntityView
+    title="Saved Providers"
+    description="Configured model providers with validation history, models, and endpoints."
+    records={providerRecords}
+    columns={providerColumns}
+    views={providerViews}
+    defaultViewId="cards"
+    {loading}
+    actions={providerActions}
+    emptyTitle="No saved providers"
+    emptyDescription="Add a provider above or install a component to save provider credentials automatically."
+    onRefresh={loadProviders}
+  />
+
+  {#if editingProvider}
+    <section class="edit-panel">
+      <div class="edit-panel-header">
+        <div>
+          <p>Edit Provider</p>
+          <h2>{editingProvider.name}</h2>
+        </div>
+        <button class="btn" onclick={cancelEdit}>Cancel</button>
+      </div>
+      <div class="edit-form">
+        <div class="field">
+          <label for="edit-name-{editingProvider.id}">Name</label>
+          <input id="edit-name-{editingProvider.id}" type="text" bind:value={editForm.name} />
+        </div>
+        {#if isCustomProvider(editingProvider)}
+          <div class="field">
+            <label for="edit-base-url-{editingProvider.id}">Base URL</label>
+            <input id="edit-base-url-{editingProvider.id}" type="text" bind:value={editForm.base_url} placeholder="https://api.example.com/v1" />
+          </div>
+        {/if}
+        {#if !isLocal(editingProvider.provider)}
+          <div class="field">
+            <label for="edit-key-{editingProvider.id}">API Key (leave empty to keep current)</label>
+            <input id="edit-key-{editingProvider.id}" type="password" bind:value={editForm.api_key} placeholder="Leave empty to keep current" />
+          </div>
+        {/if}
+        <div class="field">
+          <label for="edit-model-{editingProvider.id}">Model</label>
+          {#if isCustomProvider(editingProvider)}
+            <div class="model-input-row">
+              <input id="edit-model-{editingProvider.id}" type="text" bind:value={editForm.model} placeholder="e.g. gpt-4" />
+              <button
+                class="btn fetch-models-btn"
+                onclick={fetchEditModels}
+                disabled={editProbing || !editForm.base_url.trim()}
+                title="Fetch available models from this endpoint"
+              >
+                {editProbing ? "Fetching..." : "Fetch Models"}
               </button>
-              <button class="btn" onclick={() => startEdit(p)}>Edit</button>
-              <button class="btn danger" onclick={() => handleDelete(p.id)}>Delete</button>
             </div>
+            {#if editProbeError}
+              <div class="probe-error">{editProbeError}</div>
+            {/if}
+            {#if editProbedModels.length > 0}
+              <div class="model-list">
+                {#each editProbedModels as m}
+                  <button
+                    class="model-chip"
+                    class:selected={editForm.model === m}
+                    onclick={() => { editForm.model = m; }}
+                  >{m}</button>
+                {/each}
+              </div>
+            {/if}
+          {:else}
+            <input id="edit-model-{editingProvider.id}" type="text" bind:value={editForm.model} placeholder="e.g. anthropic/claude-sonnet-4" />
           {/if}
         </div>
-      {/each}
-    </div>
+        {#if editError}
+          <div class="error-message">{editError}</div>
+        {/if}
+        <div class="edit-actions">
+          <button class="primary-btn" onclick={() => saveEdit(editingProvider.id)} disabled={editValidating}>
+            {editValidating ? "Saving..." : "Save"}
+          </button>
+          <button class="btn" onclick={cancelEdit}>Cancel</button>
+        </div>
+      </div>
+    </section>
   {/if}
 </div>
 
 <style>
   .providers-page {
-    max-width: 800px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
     margin: 0 auto;
-    padding: 2rem;
+    max-width: 1120px;
+    padding: 1.5rem;
   }
 
   .page-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 2rem;
+    justify-content: space-between;
+    gap: 1rem;
   }
 
   h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    color: var(--accent);
-    text-shadow: var(--text-glow);
+    color: var(--shadcn-foreground);
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: 0;
   }
 
   h2 {
-    font-size: 1.125rem;
+    color: var(--shadcn-foreground);
+    font-size: 1rem;
     font-weight: 700;
-    margin-bottom: 1rem;
-    color: var(--accent-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 0;
   }
 
-  .add-form, .provider-card {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
+  .add-form,
+  .edit-panel {
+    background: var(--shadcn-card);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    color: var(--shadcn-card-foreground);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
     padding: 1.25rem;
-    margin-bottom: 1rem;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-  }
-
-  .add-form {
-    margin-bottom: 2rem;
   }
 
   .field {
-    margin-bottom: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
   }
 
   .field label {
-    display: block;
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
-    color: var(--fg-dim);
-    margin-bottom: 0.35rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
     font-weight: 700;
+    letter-spacing: 0;
   }
 
-  .field input, .field select {
-    width: 100%;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
+  .field input,
+  .field select {
+    background: var(--shadcn-background);
+    border: 1px solid var(--shadcn-input);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    color: var(--shadcn-foreground);
+    font: inherit;
+    min-height: 2.25rem;
+    outline: none;
     padding: 0.5rem 0.75rem;
-    color: var(--fg);
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+    width: 100%;
   }
 
-  .field input:focus, .field select:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
+  .field input:focus,
+  .field select:focus {
+    border-color: var(--shadcn-ring);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--shadcn-ring) 18%, transparent);
   }
 
-  .card-header {
+  .edit-panel-header,
+  .edit-actions {
     display: flex;
+    align-items: center;
+    gap: 0.75rem;
     justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
   }
 
-  .card-title {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .card-title h3 {
-    font-size: 1rem;
+  .edit-panel-header p {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
     font-weight: 700;
-    color: var(--fg);
-  }
-
-  .provider-type {
-    font-size: 0.75rem;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .status-dot.live-ok {
-    background: var(--success, #4a4);
-    box-shadow: 0 0 6px var(--success, #4a4);
-  }
-
-  .status-dot.live-error {
-    background: var(--error, #e55);
-    box-shadow: 0 0 6px var(--error, #e55);
-  }
-
-  .status-dot.has-history {
-    background: var(--accent, #4af);
-    box-shadow: 0 0 6px var(--accent, #4af);
-  }
-
-  .status-dot.needs-validation {
-    background: var(--warning, #ca0);
-    box-shadow: 0 0 6px var(--warning, #ca0);
-  }
-
-  :global(body.theme-8bit-lobster) .status-dot,
-  :global(body.theme-8bit-lobster-light) .status-dot {
-    border-radius: var(--radius) !important;
-  }
-
-  :global(body.theme-8bit-lobster) .status-dot.live-ok,
-  :global(body.theme-8bit-lobster-light) .status-dot.live-ok {
-    background: var(--success) !important;
-    box-shadow: 0 0 8px var(--success) !important;
-  }
-
-  :global(body.theme-8bit-lobster) .status-dot.live-error,
-  :global(body.theme-8bit-lobster-light) .status-dot.live-error {
-    background: var(--error) !important;
-    box-shadow: 0 0 8px var(--error) !important;
-  }
-
-  :global(body.theme-8bit-lobster) .status-dot.has-history,
-  :global(body.theme-8bit-lobster-light) .status-dot.has-history {
-    background: var(--accent) !important;
-    box-shadow: 0 0 8px var(--accent) !important;
-  }
-
-  .card-body {
-    margin-bottom: 1rem;
-  }
-
-  .card-note {
-    margin-top: 0.75rem;
-    font-size: 0.75rem;
-    color: var(--fg-dim);
-    line-height: 1.5;
-  }
-
-  .card-field {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.375rem 0;
-    border-bottom: 1px dashed color-mix(in srgb, var(--border) 40%, transparent);
-  }
-
-  .card-field:last-child {
-    border-bottom: none;
-  }
-
-  .card-field .label {
-    font-size: 0.75rem;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
-  }
-
-  .card-field code {
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    color: var(--fg);
-  }
-
-  .card-actions, .edit-actions {
-    display: flex;
-    gap: 0.5rem;
   }
 
   .btn {
-    padding: 0.375rem 0.875rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    align-items: center;
+    background: var(--shadcn-secondary);
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    color: var(--shadcn-secondary-foreground);
     cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
+    display: inline-flex;
+    font-size: 0.75rem;
+    font-weight: 600;
+    justify-content: center;
+    min-height: 2rem;
+    padding: 0.375rem 0.75rem;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+    white-space: nowrap;
   }
 
   .btn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
+    background: var(--shadcn-accent);
   }
 
   .btn:disabled {
-    opacity: 0.5;
     cursor: not-allowed;
-  }
-
-  .btn.danger {
-    color: var(--error, #e55);
-    border-color: color-mix(in srgb, var(--error, #e55) 50%, transparent);
-  }
-
-  .btn.danger:hover:not(:disabled) {
-    border-color: var(--error, #e55);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error, #e55) 30%, transparent);
+    opacity: 0.5;
   }
 
   .primary-btn {
-    padding: 0.5rem 1.25rem;
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    color: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 2px;
-    font-size: 0.875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    align-items: center;
+    background: var(--shadcn-primary) !important;
+    border: 1px solid var(--shadcn-primary);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    color: var(--shadcn-primary-foreground, #fff) !important;
     cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
+    display: inline-flex;
+    font-size: 0.875rem;
+    font-weight: 600;
+    justify-content: center;
+    min-height: 2.25rem;
+    padding: 0.5rem 1rem;
+    white-space: nowrap;
   }
 
   .primary-btn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    box-shadow: 0 0 15px var(--border-glow);
+    background: color-mix(in srgb, var(--shadcn-primary) 88%, var(--shadcn-background));
   }
 
   .primary-btn:disabled {
@@ -717,63 +633,37 @@
   }
 
   .message {
-    padding: 0.875rem 1.25rem;
-    border-radius: 2px;
+    border-radius: calc(var(--shadcn-radius) - 2px);
     font-size: 0.875rem;
     font-weight: bold;
-    margin-bottom: 1.5rem;
+    padding: 0.875rem 1.25rem;
   }
 
   .message.success {
     background: color-mix(in srgb, var(--success) 10%, transparent);
-    border: 1px solid var(--success);
+    border: 1px solid color-mix(in srgb, var(--success) 45%, transparent);
     color: var(--success);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--success) 30%, transparent);
   }
 
   .message.error {
-    background: color-mix(in srgb, var(--error, #e55) 10%, transparent);
-    border: 1px solid var(--error, #e55);
-    color: var(--error, #e55);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error, #e55) 30%, transparent);
+    background: color-mix(in srgb, var(--shadcn-destructive) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--shadcn-destructive) 45%, transparent);
+    color: var(--shadcn-destructive);
   }
 
   .error-message {
-    padding: 0.875rem 1.25rem;
-    background: color-mix(in srgb, var(--error, #e55) 10%, transparent);
-    border: 1px solid var(--error, #e55);
-    border-radius: 2px;
+    background: color-mix(in srgb, var(--shadcn-destructive) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--shadcn-destructive) 45%, transparent);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    color: var(--shadcn-destructive);
     font-size: 0.875rem;
-    color: var(--error, #e55);
-    margin-bottom: 1rem;
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 3rem;
-    color: var(--fg-dim);
-  }
-
-  .empty-state p {
-    margin-bottom: 1rem;
-    font-family: var(--font-mono);
-  }
-
-  .loading {
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    text-align: center;
-    padding: 2rem;
-  }
-
-  .provider-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
+    padding: 0.875rem 1.25rem;
   }
 
   .edit-form {
-    padding: 0.5rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
   }
 
   .model-input-row {
@@ -799,32 +689,43 @@
   }
 
   .model-chip {
-    padding: 0.25rem 0.625rem;
-    background: var(--bg-surface);
-    color: var(--fg-dim);
-    border: 1px solid var(--border);
-    border-radius: 2px;
+    background: var(--shadcn-secondary);
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
-    font-family: var(--font-mono);
     cursor: pointer;
-    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, transform 0.15s ease, text-shadow 0.15s ease;
+    padding: 0.25rem 0.625rem;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
 
   .model-chip:hover {
-    border-color: var(--accent-dim);
-    color: var(--fg);
+    color: var(--shadcn-foreground);
   }
 
   .model-chip.selected {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    border-color: var(--accent);
-    color: var(--accent);
-    text-shadow: var(--text-glow);
+    background: var(--shadcn-primary);
+    border-color: var(--shadcn-primary);
+    color: var(--shadcn-primary-foreground);
   }
 
   .probe-error {
+    color: var(--shadcn-destructive);
     margin-top: 0.375rem;
     font-size: 0.75rem;
-    color: var(--error, #e55);
+  }
+
+  @media (max-width: 720px) {
+    .providers-page {
+      padding: 1rem;
+    }
+
+    .page-header,
+    .edit-panel-header,
+    .edit-actions,
+    .model-input-row {
+      align-items: stretch;
+      flex-direction: column;
+    }
   }
 </style>

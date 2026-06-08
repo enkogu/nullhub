@@ -5,11 +5,45 @@ import { componentApiPath, encodePathSegment, instanceApiPath } from '$lib/nulls
 import { normalizeMojibakeText, normalizeMojibakeValue } from '$lib/textEncoding';
 
 let resolvedBase: string | null = null;
+const inflightGets = new Map<string, Promise<any>>();
+const recentGets = new Map<string, { value: any; expiresAt: number }>();
+const GET_DEDUPE_TTL_MS = 500;
+const RECENT_GET_MAX_ENTRIES = 128;
+
+function pruneRecentGets(now = performance.now()) {
+  for (const [key, cached] of recentGets) {
+    if (cached.expiresAt <= now) recentGets.delete(key);
+  }
+  while (recentGets.size > RECENT_GET_MAX_ENTRIES) {
+    const oldestKey = recentGets.keys().next().value;
+    if (!oldestKey) break;
+    recentGets.delete(oldestKey);
+  }
+}
+
+function rememberRecentGet(key: string, value: any) {
+  const now = performance.now();
+  recentGets.delete(key);
+  recentGets.set(key, { value, expiresAt: now + GET_DEDUPE_TTL_MS });
+  pruneRecentGets(now);
+}
+
+function clearRecentGets() {
+  recentGets.clear();
+}
+
+function prefersDirectApiBase(): boolean {
+  if (typeof window === 'undefined') return true;
+  if (import.meta.env.DEV) return true;
+  const port = window.location.port;
+  const host = window.location.hostname;
+  return port === '19800' || host === 'nullhub.localhost' || host === 'nullhub.local';
+}
 
 function apiBases(): string[] {
   if (resolvedBase) return [resolvedBase];
   if (typeof window !== 'undefined') {
-    return ['/nullhub-api', '/api'];
+    return prefersDirectApiBase() ? ['/api', '/nullhub-api'] : ['/nullhub-api', '/api'];
   }
   return ['/api'];
 }
@@ -204,6 +238,22 @@ async function requestFromBase<T>(base: string, path: string, options?: ApiReque
 }
 
 async function request<T>(path: string, options?: ApiRequestInit): Promise<T> {
+  const method = (options?.method || 'GET').toUpperCase();
+  const canDedupeGet = method === 'GET' && !options?.signal;
+  const cacheKey = canDedupeGet ? path : '';
+  if (canDedupeGet) {
+    pruneRecentGets();
+    const cached = recentGets.get(cacheKey);
+    if (cached) {
+      recentGets.delete(cacheKey);
+      recentGets.set(cacheKey, cached);
+      return cached.value as T;
+    }
+    const pending = inflightGets.get(cacheKey);
+    if (pending) return pending as Promise<T>;
+  }
+
+  const doRequest = async () => {
   const bases = apiBases();
   let lastError: ApiRequestError | null = null;
   for (const base of bases) {
@@ -218,6 +268,22 @@ async function request<T>(path: string, options?: ApiRequestInit): Promise<T> {
     }
   }
   throw lastError || new Error('API request failed');
+  };
+
+  if (!canDedupeGet) {
+    const value = await doRequest();
+    if (method !== 'GET') clearRecentGets();
+    return value;
+  }
+
+  const pending = doRequest().then((value) => {
+    rememberRecentGet(cacheKey, value);
+    return value;
+  }).finally(() => {
+    inflightGets.delete(cacheKey);
+  });
+  inflightGets.set(cacheKey, pending);
+  return pending;
 }
 
 export const nullTicketsApi = createNullTicketsApi((c, n, payload) =>

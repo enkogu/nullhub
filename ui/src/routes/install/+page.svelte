@@ -1,20 +1,120 @@
 <script lang="ts">
-  import { afterNavigate } from "$app/navigation";
-  import ComponentCard from "$lib/components/ComponentCard.svelte";
+  import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
+  import { encodePathSegment } from "$lib/nullstack/path";
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+    type EntityViewAction,
+  } from "$lib/entity-view";
 
-  let components = $state<any[]>([]);
+  const fallbackComponents = [
+    {
+      name: "nullclaw",
+      display_name: "NullClaw",
+      description: "Autonomous AI agent runtime. Connects to LLM providers, runs tools, manages memory, and exposes a gateway API.",
+      alpha: false,
+      stage: "",
+      installable: true,
+      instance_count: 0,
+    },
+    {
+      name: "nullboiler",
+      display_name: "NullBoiler",
+      description: "DAG-based workflow orchestrator for multi-step agent pipelines.",
+      alpha: false,
+      stage: "beta",
+      installable: true,
+      instance_count: 0,
+    },
+    {
+      name: "nulltickets",
+      display_name: "NullTickets",
+      description: "Task and issue tracker for AI agents.",
+      alpha: false,
+      stage: "beta",
+      installable: true,
+      instance_count: 0,
+    },
+    {
+      name: "nullwatch",
+      display_name: "NullWatch",
+      description: "Headless tracing, evals, and run intelligence for agent infrastructure.",
+      alpha: true,
+      stage: "alpha",
+      installable: true,
+      instance_count: 0,
+    },
+  ];
+
+  let components = $state<any[]>(fallbackComponents);
+  let loadTimer: ReturnType<typeof setTimeout> | null = null;
+  let loading = $state(false);
+
+  const componentColumns: EntityColumn[] = [
+    { id: "stage", label: "Stage", type: "select", width: "minmax(110px,.36fr)" },
+    { id: "installed", label: "Installed", type: "status", width: "minmax(130px,.42fr)" },
+    { id: "instances", label: "Instances", type: "number", width: "minmax(110px,.32fr)" },
+    { id: "installable", label: "Installable", type: "select", width: "minmax(120px,.36fr)" },
+  ];
+  const componentViews = createViewSet({
+    kanban: { groupBy: "stage" },
+    tree: { parentField: "stage" },
+  });
+  const componentActions: EntityViewAction[] = [
+    {
+      id: "install",
+      label: "Install",
+      variant: "default",
+      visible: (record) => record.fields?.installable !== "coming soon",
+      href: (record) => `/install/${encodePathSegment(String(record.fields?.name || record.title))}`,
+    },
+  ];
+  let componentRecords = $derived(
+    components.map((component) => {
+      const stage = String(component.stage || (component.alpha ? "alpha" : "stable")).toLowerCase();
+      const instanceCount = Number(component.instance_count || 0);
+      return {
+        id: `component:${component.name}`,
+        title: component.display_name || component.name,
+        type: "component",
+        status: instanceCount > 0 ? "active" : component.installable === false ? "disabled" : "available",
+        subtitle: stage,
+        description: component.description,
+        href: component.installable === false && instanceCount === 0 ? undefined : `/install/${encodePathSegment(component.name)}`,
+        fields: {
+          name: component.name,
+          stage,
+          installed: instanceCount > 0 ? "active" : "not installed",
+          instances: instanceCount,
+          installable: component.installable === false && instanceCount === 0 ? "coming soon" : "yes",
+        },
+        raw: component,
+      };
+    }) satisfies EntityRecord[],
+  );
 
   async function loadPageData() {
+    loading = true;
     try {
       const data = await api.getComponents();
       components = data.components || [];
     } catch (e) {
       console.error(e);
+    } finally {
+      loading = false;
     }
   }
 
-  afterNavigate(loadPageData);
+  onMount(() => {
+    loadTimer = setTimeout(() => void loadPageData(), 350);
+  });
+
+  onDestroy(() => {
+    if (loadTimer) clearTimeout(loadTimer);
+  });
 </script>
 
 <div class="install-page">
@@ -25,53 +125,49 @@
     </div>
   </div>
 
-  <div class="catalog-grid">
-    {#each components as comp}
-      <ComponentCard
-        name={comp.name}
-        displayName={comp.display_name}
-        description={comp.description}
-        alpha={Boolean(comp.alpha)}
-        stage={comp.stage || ""}
-        installable={comp.installable !== false}
-        installed={comp.instance_count > 0}
-        instanceCount={comp.instance_count}
-      />
-    {/each}
-  </div>
+  <UniversalEntityView
+    title="Component Catalog"
+    description="Installable NullStack components and their local instance coverage."
+    records={componentRecords}
+    columns={componentColumns}
+    views={componentViews}
+    defaultViewId="cards"
+    {loading}
+    actions={componentActions}
+    emptyTitle="No components"
+    emptyDescription="Component catalog data is not available."
+    onRefresh={loadPageData}
+  />
 </div>
 
 <style>
   .install-page {
-    max-width: 900px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-width: 1120px;
   }
+
   .page-header {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
-    margin-bottom: 2rem;
   }
+
   h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    margin-bottom: 0.5rem;
-    color: var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    text-shadow: var(--text-glow);
+    color: var(--shadcn-foreground);
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: 0;
   }
+
   .subtitle {
+    color: var(--shadcn-muted-foreground);
     font-size: 0.875rem;
-    color: var(--fg-dim);
-    margin-bottom: 2rem;
-    font-family: var(--font-mono);
+    margin-top: 0.25rem;
   }
-  .catalog-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 1.5rem;
-  }
+
   @media (max-width: 640px) {
     .page-header {
       flex-direction: column;

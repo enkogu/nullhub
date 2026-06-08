@@ -1,18 +1,88 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { goto } from '$app/navigation';
-  import { nullBoilerApi } from '$lib/api/client';
-  import { nullboilerUiRoutes } from '$lib/nullboiler/routes';
-  import BoilerInstanceSelector from '$lib/components/nullboiler/BoilerInstanceSelector.svelte';
+  import { onMount } from "svelte";
+  import { nullBoilerApi } from "$lib/api/client";
+  import { nullboilerUiRoutes } from "$lib/nullboiler/routes";
+  import BoilerInstanceSelector from "$lib/components/nullboiler/BoilerInstanceSelector.svelte";
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+    type EntityViewAction,
+  } from "$lib/entity-view";
 
   let workflows = $state<any[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let deleteConfirm = $state<string | null>(null);
 
+  const workflowColumns: EntityColumn[] = [
+    { id: "nodes", label: "Nodes", type: "number", width: "minmax(96px,.32fr)" },
+    { id: "id", label: "ID", type: "mono", width: "minmax(180px,.7fr)" },
+    { id: "updated", label: "Updated", type: "date", width: "minmax(150px,.52fr)" },
+  ];
+  const workflowViews = createViewSet({
+    kanban: { groupBy: "node_range" },
+    tree: { parentField: "node_range" },
+    timeline: { dateField: "updated" },
+    calendar: { dateField: "updated" },
+  });
+  const workflowActions: EntityViewAction[] = [
+    { id: "edit", label: "Edit", variant: "default", href: (record) => record.href || "#" },
+    {
+      id: "delete",
+      label: "Delete",
+      variant: "destructive",
+      visible: (record) => deleteConfirm !== workflowId(record),
+      run: (record) => {
+        deleteConfirm = workflowId(record);
+      },
+    },
+    {
+      id: "confirm-delete",
+      label: "Confirm",
+      variant: "destructive",
+      visible: (record) => deleteConfirm === workflowId(record),
+      run: async (record) => deleteWorkflow(workflowId(record)),
+    },
+    {
+      id: "cancel-delete",
+      label: "Cancel",
+      visible: (record) => deleteConfirm === workflowId(record),
+      run: () => {
+        deleteConfirm = null;
+      },
+    },
+  ];
+
+  const workflowRecords = $derived(
+    workflows.map((workflow) => {
+      const id = String(workflow.id || workflow.name || "");
+      const nodes = nodeCount(workflow);
+      return {
+        id: `workflow:${id}`,
+        title: workflow.name || id,
+        type: "workflow",
+        subtitle: id,
+        description: `${nodes} nodes`,
+        href: workflowHref(id),
+        date: workflow.updated_at || workflow.created_at || "",
+        fields: {
+          id,
+          nodes,
+          node_range: nodeRange(nodes),
+          updated: workflow.updated_at || workflow.created_at || "",
+          created: workflow.created_at || "",
+        },
+        raw: workflow,
+      };
+    }) satisfies EntityRecord[],
+  );
+
   async function loadWorkflows() {
+    loading = true;
     try {
-      workflows = await nullBoilerApi.listWorkflows() || [];
+      workflows = (await nullBoilerApi.listWorkflows()) || [];
       error = null;
     } catch (e) {
       error = (e as Error).message;
@@ -21,9 +91,12 @@
     }
   }
 
-  onMount(() => { void loadWorkflows(); });
+  onMount(() => {
+    void loadWorkflows();
+  });
 
   async function deleteWorkflow(id: string) {
+    if (!id) return;
     try {
       await nullBoilerApi.deleteWorkflow(id);
       deleteConfirm = null;
@@ -33,271 +106,82 @@
     }
   }
 
-  function nodeCount(wf: any): number {
-    if (!wf.nodes) return 0;
-    return Object.keys(wf.nodes).length;
+  function nodeCount(workflow: any): number {
+    if (!workflow?.nodes) return 0;
+    return Object.keys(workflow.nodes).length;
+  }
+
+  function nodeRange(count: number): string {
+    if (count === 0) return "empty";
+    if (count < 5) return "small";
+    if (count < 12) return "medium";
+    return "large";
   }
 
   function workflowHref(id: string): string {
     return nullboilerUiRoutes.workflow(id);
   }
+
+  function workflowId(record: EntityRecord): string {
+    return String(record.fields?.id || record.id.replace(/^workflow:/, ""));
+  }
 </script>
 
 <div class="page">
-  <div class="header">
-    <h1>Workflows</h1>
-    <div class="header-actions">
-      <BoilerInstanceSelector onChange={() => { loading = true; error = null; void loadWorkflows(); }} />
-      <a href={nullboilerUiRoutes.newWorkflow()} class="action-btn">+ New Workflow</a>
-    </div>
+  <div class="topbar">
+    <BoilerInstanceSelector onChange={() => { error = null; void loadWorkflows(); }} />
+    <a href={nullboilerUiRoutes.newWorkflow()} class="primary-link">New Workflow</a>
   </div>
 
-  {#if error}
-    <div class="error-banner">ERR: {error}</div>
-  {/if}
-
-  {#if loading}
-    <div class="loading">Loading workflows...</div>
-  {:else if workflows.length === 0}
-    <div class="empty-state">
-      <p>> No workflows defined yet.</p>
-      <a href={nullboilerUiRoutes.newWorkflow()} class="btn">Create Workflow</a>
-    </div>
-  {:else}
-    <div class="workflow-grid">
-      {#each workflows as wf}
-        <div class="wf-card">
-          <div class="wf-header">
-            <span class="wf-name">{wf.name || wf.id}</span>
-            <span class="wf-nodes">{nodeCount(wf)} nodes</span>
-          </div>
-          {#if wf.id}
-            <div class="wf-id">{wf.id}</div>
-          {/if}
-          <div class="wf-actions">
-            <a href={workflowHref(wf.id)} class="btn-edit">Edit</a>
-            <button class="btn-run" onclick={() => goto(workflowHref(wf.id))}>Run</button>
-            {#if deleteConfirm === wf.id}
-              <button class="btn-confirm-delete" onclick={() => deleteWorkflow(wf.id)}>Confirm</button>
-              <button class="btn-cancel" onclick={() => deleteConfirm = null}>Cancel</button>
-            {:else}
-              <button class="btn-delete" onclick={() => deleteConfirm = wf.id}>Delete</button>
-            {/if}
-          </div>
-        </div>
-      {/each}
-    </div>
-  {/if}
+  <UniversalEntityView
+    title="Workflows"
+    description="Reusable automation definitions from the selected NullBoiler instance."
+    records={workflowRecords}
+    columns={workflowColumns}
+    views={workflowViews}
+    defaultViewId="cards"
+    {loading}
+    {error}
+    actions={workflowActions}
+    emptyTitle="No workflows"
+    emptyDescription="Create a workflow to populate this collection."
+    onRefresh={loadWorkflows}
+  />
 </div>
 
 <style>
   .page {
-    padding: 2rem;
-    max-width: 1400px;
-    margin: 0 auto;
-  }
-  .header {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 2rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-  h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    text-shadow: var(--text-glow);
-    text-transform: uppercase;
-    letter-spacing: 2px;
-  }
-  .action-btn {
-    padding: 0.5rem 1rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
-  }
-  .action-btn:hover {
-    text-decoration: none;
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    text-shadow: 0 0 8px var(--accent);
-  }
-  .workflow-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 1.5rem;
-  }
-  .wf-card {
-    display: flex;
+    min-width: 0;
     flex-direction: column;
-    gap: 0.75rem;
-    padding: 1.5rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
+    gap: 1rem;
   }
-  .wf-card:hover {
-    border-color: var(--accent-dim);
-    box-shadow: 0 0 12px var(--border-glow);
-  }
-  .wf-header {
+
+  .topbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    justify-content: space-between;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+    justify-content: flex-end;
+    gap: 0.75rem;
   }
-  .wf-name {
-    font-weight: 700;
-    font-size: 1.125rem;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    color: var(--accent);
-    text-shadow: var(--text-glow);
-  }
-  .wf-nodes {
-    font-size: 0.75rem;
-    font-family: var(--font-mono);
-    color: var(--fg-dim);
-    padding: 0.2rem 0.5rem;
-    background: color-mix(in srgb, var(--border) 20%, transparent);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-  }
-  .wf-id {
-    font-size: 0.6875rem;
-    font-family: var(--font-mono);
-    color: var(--fg-dim);
-    opacity: 0.7;
-  }
-  .wf-actions {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.25rem;
-  }
-  .btn-edit,
-  .btn-run,
-  .btn-delete,
-  .btn-confirm-delete,
-  .btn-cancel {
-    padding: 0.375rem 0.75rem;
-    border-radius: 2px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-  .btn-edit {
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    text-shadow: var(--text-glow);
-  }
-  .btn-edit:hover {
-    text-decoration: none;
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
-  }
-  .btn-run {
-    background: color-mix(in srgb, var(--success) 10%, transparent);
-    color: var(--success);
-    border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
-  }
-  .btn-run:hover {
-    background: color-mix(in srgb, var(--success) 20%, transparent);
-    border-color: var(--success);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--success) 30%, transparent);
-  }
-  .btn-delete {
-    background: transparent;
-    color: var(--fg-dim);
-    border: 1px solid var(--border);
-    margin-left: auto;
-  }
-  .btn-delete:hover {
-    color: var(--error);
-    border-color: var(--error);
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-  }
-  .btn-confirm-delete {
-    background: color-mix(in srgb, var(--error) 15%, transparent);
-    color: var(--error);
-    border: 1px solid var(--error);
-    margin-left: auto;
-    text-shadow: 0 0 4px var(--error);
-  }
-  .btn-cancel {
-    background: transparent;
-    color: var(--fg-dim);
-    border: 1px solid var(--border);
-  }
-  .error-banner {
-    padding: 0.75rem 1rem;
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-    color: var(--error);
-    border: 1px solid var(--error);
-    border-radius: 4px;
-    margin-bottom: 1.5rem;
+
+  .primary-link {
+    display: inline-flex;
+    min-height: 2.25rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    padding: 0 0.875rem;
+    background: var(--shadcn-primary);
+    color: var(--shadcn-primary-foreground);
     font-size: 0.875rem;
-    font-weight: bold;
-    text-shadow: 0 0 5px var(--error);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error) 20%, transparent);
-  }
-  .loading {
-    text-align: center;
-    padding: 4rem 2rem;
-    color: var(--fg-dim);
-  }
-  .empty-state {
-    text-align: center;
-    padding: 4rem 2rem;
-    color: var(--fg-dim);
-    border: 1px dashed var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
-  }
-  .empty-state p {
-    margin-bottom: 1.5rem;
-    font-size: 1.125rem;
-    font-family: var(--font-mono);
-  }
-  .empty-state .btn {
-    display: inline-block;
-    padding: 0.75rem 1.5rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
-  }
-  .empty-state .btn:hover {
+    font-weight: 600;
     text-decoration: none;
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    text-shadow: 0 0 8px var(--accent);
+  }
+
+  .primary-link:hover,
+  .primary-link:focus-visible {
+    opacity: 0.92;
   }
 </style>

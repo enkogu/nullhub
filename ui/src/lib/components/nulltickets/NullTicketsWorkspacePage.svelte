@@ -9,6 +9,7 @@
   import TicketsInstanceSelector from "./TicketsInstanceSelector.svelte";
 
   type PanelView = "tasks" | "pipelines" | "queue" | "runs" | "artifacts";
+  type WorkMode = "tasks" | "planner" | "dependencies";
 
   let {
     title,
@@ -16,12 +17,14 @@
     initialView = "tasks",
     initialArtifactScope = "selected",
     views = [],
+    workMode = "tasks",
   } = $props<{
     title: string;
     subtitle?: string;
     initialView?: PanelView;
     initialArtifactScope?: "selected" | "custom" | "all";
     views?: readonly PanelView[];
+    workMode?: WorkMode;
   }>();
 
   let status = $state<any>(null);
@@ -29,6 +32,7 @@
   let loading = $state(true);
   let selectedInstance = $state("");
   let interval: ReturnType<typeof setInterval> | null = null;
+  let statusLoading = false;
 
   const panelViews = $derived(
     views.length ? [...views] : ["tasks", "pipelines", "queue", "runs", "artifacts"],
@@ -49,6 +53,8 @@
   }
 
   async function refreshStatus(showLoading = false) {
+    if (statusLoading) return;
+    statusLoading = true;
     if (showLoading || !status) loading = true;
     try {
       const nextStatus = await api.getStatus();
@@ -66,6 +72,7 @@
       error = (e as Error).message;
     } finally {
       loading = false;
+      statusLoading = false;
     }
   }
 
@@ -111,6 +118,7 @@
       {subtitle}
       {initialView}
       {initialArtifactScope}
+      {workMode}
       views={panelViews}
     />
   {/if}

@@ -3755,10 +3755,14 @@ fn handleMcpMutation(allocator: std.mem.Allocator, s: *state_mod.State, paths: p
     if (!managed_cli.supports(component)) return badRequest("{\"error\":\"mcp mutation is only supported for nullclaw instances\"}");
     _ = s.getInstance(component, name) orelse return notFound();
 
-    var parsed_config = readMcpConfig(allocator, paths, component, name) catch return badRequest("{\"error\":\"invalid config JSON\"}");
+    var mutation_arena = std.heap.ArenaAllocator.init(allocator);
+    defer mutation_arena.deinit();
+    const mutation_allocator = mutation_arena.allocator();
+
+    var parsed_config = readMcpConfig(mutation_allocator, paths, component, name) catch return badRequest("{\"error\":\"invalid config JSON\"}");
     defer parsed_config.deinit();
 
-    const servers = ensureMcpServersObject(allocator, &parsed_config.value) catch |err| switch (err) {
+    const servers = ensureMcpServersObject(mutation_allocator, &parsed_config.value) catch |err| switch (err) {
         error.InvalidConfig => return badRequest("{\"error\":\"config root must be an object\"}"),
         error.InvalidMcpServers => return badRequest("{\"error\":\"mcp_servers must be an object\"}"),
         else => return helpers.serverError(),
@@ -3775,7 +3779,7 @@ fn handleMcpMutation(allocator: std.mem.Allocator, s: *state_mod.State, paths: p
         return mcpMutationOk(allocator, "delete", value, true);
     }
 
-    const parsed_body = std.json.parseFromSlice(std.json.Value, allocator, body, .{
+    const parsed_body = std.json.parseFromSlice(std.json.Value, mutation_allocator, body, .{
         .allocate = .alloc_always,
         .ignore_unknown_fields = true,
     }) catch return badRequest("{\"error\":\"invalid JSON body\"}");
@@ -3795,7 +3799,7 @@ fn handleMcpMutation(allocator: std.mem.Allocator, s: *state_mod.State, paths: p
         const patch_validation = validateMcpPatchObject(obj);
         if (!std.mem.eql(u8, patch_validation.status, "200 OK")) return patch_validation;
         if (existing_server == null) return notFound();
-        mergeMcpDraftIntoExisting(allocator, existing_server.?, obj) catch |err| switch (err) {
+        mergeMcpDraftIntoExisting(mutation_allocator, existing_server.?, obj) catch |err| switch (err) {
             error.InvalidMcpServer => return badRequest("{\"error\":\"existing MCP server config must be an object\"}"),
             else => return helpers.serverError(),
         };
@@ -3806,8 +3810,8 @@ fn handleMcpMutation(allocator: std.mem.Allocator, s: *state_mod.State, paths: p
         const validation = validateMcpDraftObject(obj, false);
         if (!std.mem.eql(u8, validation.status, "200 OK")) return validation;
         if (existing_server != null) return conflict("{\"error\":\"MCP server already exists\"}");
-        const cloned = cloneMcpDraftForStorage(allocator, obj) catch return helpers.serverError();
-        servers.put(allocator, server_name, cloned) catch return helpers.serverError();
+        const cloned = cloneMcpDraftForStorage(mutation_allocator, obj) catch return helpers.serverError();
+        servers.put(mutation_allocator, server_name, cloned) catch return helpers.serverError();
     }
     saveMcpConfig(allocator, paths, component, name, parsed_config.value) catch return helpers.serverError();
     return mcpMutationOk(allocator, if (std.mem.eql(u8, method, "POST")) "create" else "update", server_name, true);

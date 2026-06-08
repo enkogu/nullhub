@@ -6,6 +6,8 @@
 
 <NullTicketsWorkspacePage
   title="Dependencies"
+  subtitle="Inspect blockers, ready work, and dependency edges."
   initialView="tasks"
+  workMode="dependencies"
   {views}
 />

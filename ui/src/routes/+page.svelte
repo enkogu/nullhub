@@ -6,6 +6,7 @@
   let status = $state<any>(null);
   let error = $state<string | null>(null);
   let interval: ReturnType<typeof setInterval>;
+  let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function refresh() {
     try {
@@ -17,11 +18,14 @@
   }
 
   onMount(() => {
-    refresh();
+    refreshTimer = setTimeout(() => void refresh(), 350);
     interval = setInterval(refresh, 5000);
   });
 
-  onDestroy(() => clearInterval(interval));
+  onDestroy(() => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    clearInterval(interval);
+  });
 </script>
 
 <div class="dashboard">

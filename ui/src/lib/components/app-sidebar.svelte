@@ -114,6 +114,7 @@
 	}: ComponentProps<typeof Sidebar.Root> = $props();
 
 	let hubOk = $state(true);
+	let statusLoading = false;
 	let user = $state<UserInfo>({
 		name: "NullHub",
 		email: "Signed in",
@@ -148,20 +149,27 @@
 	}
 
 	async function loadStatus() {
+		if (statusLoading) return;
+		statusLoading = true;
 		try {
 			await api.getStatus();
 			hubOk = true;
 		} catch (error) {
 			hubOk = false;
 			console.error(error);
+		} finally {
+			statusLoading = false;
 		}
 	}
 
 	onMount(() => {
 		readCurrentUser();
-		void loadStatus();
+		const statusTimer = setTimeout(() => void loadStatus(), 500);
 		const interval = setInterval(loadStatus, 5000);
-		return () => clearInterval(interval);
+		return () => {
+			clearTimeout(statusTimer);
+			clearInterval(interval);
+		};
 	});
 </script>
 
@@ -215,10 +223,10 @@
 			<Sidebar.MenuItem>
 				<Sidebar.MenuButton tooltipContent={hubOk ? "Hub online" : "Hub offline"}>
 					{#snippet child({ props })}
-						<div {...props}>
+						<a href="/dashboard" {...props}>
 							<ActivityIcon class={hubOk ? "hub-online" : "hub-offline"} />
 							<span>{hubOk ? "Hub online" : "Hub offline"}</span>
-						</div>
+						</a>
 					{/snippet}
 				</Sidebar.MenuButton>
 			</Sidebar.MenuItem>

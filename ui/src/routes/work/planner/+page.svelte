@@ -6,6 +6,8 @@
 
 <NullTicketsWorkspacePage
   title="Planner"
+  subtitle="Prioritize visible work by process, stage, and priority."
   initialView="tasks"
+  workMode="planner"
   {views}
 />

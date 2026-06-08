@@ -1,7 +1,14 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
   import { listMarkdownDocuments } from "$lib/api/markdownDocuments";
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+    type EntityViewAction,
+  } from "$lib/entity-view";
 
   type RegistryKind = "skills" | "mcp" | "hooks" | "instructions" | "memory" | "schedules";
 
@@ -59,17 +66,40 @@
   let rows = $state<RegistryRow[]>([]);
   let errors = $state<string[]>([]);
   let loading = $state(false);
-  let query = $state("");
+  let refreshToken = 0;
+  let detailLoadTimer: ReturnType<typeof setTimeout> | null = null;
 
-  const filteredRows = $derived(
-    rows.filter((row) => {
-      const q = query.trim().toLowerCase();
-      if (!q) return true;
-      return [row.name, row.source, row.status, row.detail, row.meta]
-        .join(" ")
-        .toLowerCase()
-        .includes(q);
-    }),
+  const registryColumns: EntityColumn[] = [
+    { id: "status", label: "Status", type: "status", width: "minmax(120px,.42fr)" },
+    { id: "source", label: "Scope", type: "select", width: "minmax(170px,.68fr)" },
+    { id: "detail", label: "Detail", type: "text", width: "minmax(260px,1.2fr)" },
+    { id: "meta", label: "Meta", type: "tags", width: "minmax(220px,1fr)" },
+  ];
+  const registryViews = createViewSet({
+    kanban: { groupBy: "status" },
+    tree: { parentField: "source" },
+  });
+  const registryActions: EntityViewAction[] = [
+    { id: "open", label: "Open", variant: "default", href: (record) => record.href || "", visible: (record) => Boolean(record.href) },
+  ];
+  const registryError = $derived(errors.length > 0 ? errors.join("\n") : null);
+  const registryRecords = $derived(
+    rows.map((row) => ({
+      id: row.id,
+      title: row.name,
+      type: kind,
+      status: row.status,
+      subtitle: row.source,
+      description: row.detail || row.meta,
+      href: row.href,
+      fields: {
+        status: row.status,
+        source: row.source,
+        detail: row.detail,
+        meta: row.meta ? row.meta.split(" / ").map((entry) => entry.trim()).filter(Boolean) : [],
+      },
+      raw: row,
+    })) satisfies EntityRecord[],
   );
 
   async function agentNames(): Promise<string[]> {
@@ -141,7 +171,11 @@
   }
 
   async function loadSkills(agent: string): Promise<RegistryRow[]> {
-    const installed = asList(await api.getSkills("nullclaw", agent)).map((skill: any) => ({
+    const [installedResult, catalogResult] = await Promise.all([
+      api.getSkills("nullclaw", agent),
+      api.getSkillCatalog("nullclaw", agent).catch(() => []),
+    ]);
+    const installed = asList(installedResult).map((skill: any) => ({
       id: registryKey("skill", skill.name || skill.path),
       name: String(skill.name || skill.path || "Unnamed skill"),
       source: `Installed: ${agent}`,
@@ -152,7 +186,7 @@
     }));
 
     const installedNames = new Set(installed.map((row) => row.name));
-    const catalog = asList(await api.getSkillCatalog("nullclaw", agent).catch(() => [])).map((skill: any) => ({
+    const catalog = asList(catalogResult).map((skill: any) => ({
       id: registryKey("skill", skill.name || skill.clawhub_slug),
       name: String(skill.name || skill.clawhub_slug || "Unnamed skill"),
       source: "Catalog",
@@ -259,214 +293,84 @@
     return loadSchedules(agent);
   }
 
+  function pendingRow(agent: string): RegistryRow {
+    return {
+      id: registryKey("pending", `${kind}:${agent}`),
+      name: `${title} / ${agent}`,
+      source: `Configured: ${agent}`,
+      status: "loading",
+      detail: "Loading live data",
+      meta: "",
+      href: `/instances/nullclaw/${encodeURIComponent(agent)}`,
+    };
+  }
+
+  async function loadAgentRows(agents: string[], token: number) {
+    const results = await Promise.allSettled(agents.map((agent) => loadForAgent(agent)));
+    if (token !== refreshToken) return;
+
+    const loadedRows = results.flatMap((result, index) => {
+      if (result.status === "fulfilled") return result.value;
+      errors = [...errors, `${agents[index]}: ${result.reason?.message || "failed to load"}`];
+      return [];
+    });
+    const pendingIds = new Set(agents.map((agent) => pendingRow(agent).id));
+    const existingRows = rows.filter((row) => !pendingIds.has(row.id));
+    rows = mergeRows(kind === "hooks" ? [...existingRows, ...loadedRows, ...loadHookTemplates()] : [...existingRows, ...loadedRows]);
+  }
+
   async function refresh() {
+    const token = ++refreshToken;
     loading = true;
     errors = [];
     try {
       const agents = await agentNames();
-      const results = await Promise.allSettled(agents.map((agent) => loadForAgent(agent)));
-      const loadedRows = results.flatMap((result, index) => {
-        if (result.status === "fulfilled") return result.value;
-        errors = [...errors, `${agents[index]}: ${result.reason?.message || "failed to load"}`];
-        return [];
-      });
-      rows = mergeRows(kind === "hooks" ? [...loadedRows, ...loadHookTemplates()] : loadedRows);
+      if (token !== refreshToken) return;
+      rows = mergeRows(kind === "hooks" ? [...agents.map(pendingRow), ...loadHookTemplates()] : agents.map(pendingRow));
+      loading = false;
+      if (detailLoadTimer) clearTimeout(detailLoadTimer);
+      detailLoadTimer = setTimeout(() => void loadAgentRows(agents, token), 350);
     } catch (error) {
       rows = [];
       errors = [(error as Error).message || "Failed to load registry."];
-    } finally {
       loading = false;
+    } finally {
+      if (token === refreshToken && rows.length === 0) loading = false;
     }
   }
 
   onMount(() => {
     void refresh();
   });
+
+  onDestroy(() => {
+    refreshToken += 1;
+    if (detailLoadTimer) clearTimeout(detailLoadTimer);
+  });
 </script>
 
 <div class="page">
-  <div class="header">
-    <h1>{title}</h1>
-    <div class="actions">
-      <input bind:value={query} placeholder="Search" />
-      <button class="btn" onclick={refresh} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</button>
-    </div>
-  </div>
-
-  {#each errors as error}
-    <div class="error-banner">ERR: {error}</div>
-  {/each}
-
-  <div class="table-card">
-    <div class="table-head">
-      <span>Name</span>
-      <span>Status</span>
-      <span>Detail</span>
-      <span>Scope</span>
-      <span></span>
-    </div>
-    {#if filteredRows.length === 0}
-      <div class="empty-row">{loading ? "Loading..." : "No items"}</div>
-    {:else}
-      {#each filteredRows as row (row.id)}
-        <div class="table-row">
-          <div>
-            <strong>{row.name}</strong>
-            {#if row.meta}<span>{row.meta}</span>{/if}
-          </div>
-          <span>{row.status}</span>
-          <span>{row.detail || "-"}</span>
-          <span>{row.source}</span>
-          {#if row.href}
-            <a class="btn subtle" href={row.href}>Open</a>
-          {:else}
-            <span></span>
-          {/if}
-        </div>
-      {/each}
-    {/if}
-  </div>
+  <UniversalEntityView
+    {title}
+    description={`Registry entries for ${kind}.`}
+    records={registryRecords}
+    columns={registryColumns}
+    views={registryViews}
+    defaultViewId="table"
+    {loading}
+    error={registryError}
+    actions={registryActions}
+    emptyTitle="No items"
+    emptyDescription="No registry entries are available for the current agents."
+    onRefresh={refresh}
+  />
 </div>
 
 <style>
   .page {
     display: flex;
-    flex-direction: column;
-    gap: 1.25rem;
-  }
-
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--shadcn-border);
-  }
-
-  h1 {
-    margin: 0;
-    color: var(--shadcn-foreground);
-    font-size: 1.875rem;
-    font-weight: 600;
-    letter-spacing: 0;
-  }
-
-  .actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  input {
-    min-height: 2.25rem;
-    width: min(16rem, 36vw);
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--shadcn-input);
-    border-radius: var(--shadcn-radius);
-    background: var(--shadcn-background);
-    color: var(--shadcn-foreground);
-  }
-
-  .table-card {
-    border: 1px solid var(--shadcn-border);
-    border-radius: var(--shadcn-radius);
-    background: var(--shadcn-card);
-    overflow: hidden;
-  }
-
-  .table-head,
-  .table-row {
-    display: grid;
-    grid-template-columns: minmax(180px, 1.2fr) 0.55fr minmax(220px, 1.4fr) 0.7fr auto;
-    gap: 1rem;
-    align-items: center;
-  }
-
-  .table-head {
-    padding: 0.75rem 1rem;
-    color: var(--shadcn-muted-foreground);
-    border-bottom: 1px solid var(--shadcn-border);
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-  }
-
-  .table-row {
-    padding: 0.875rem 1rem;
-    border-bottom: 1px solid var(--shadcn-border);
-  }
-
-  .table-row:last-child {
-    border-bottom: 0;
-  }
-
-  .table-row div {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
     min-width: 0;
-  }
-
-  .table-row strong,
-  .table-row span {
-    overflow-wrap: anywhere;
-  }
-
-  .table-row div span {
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.8125rem;
-  }
-
-  .btn {
-    min-height: 2.25rem;
-    padding: 0.5rem 0.875rem;
-    border: 1px solid var(--shadcn-input);
-    border-radius: var(--shadcn-radius);
-    background: var(--shadcn-background);
-    color: var(--shadcn-foreground);
-    font-size: 0.875rem;
-    font-weight: 500;
-    text-decoration: none;
-  }
-
-  .btn:hover {
-    background: var(--shadcn-accent);
-  }
-
-  .error-banner,
-  .empty-row {
-    padding: 1rem;
-  }
-
-  .error-banner {
-    color: var(--shadcn-destructive);
-    border: 1px solid color-mix(in srgb, var(--shadcn-destructive) 25%, var(--shadcn-border));
-    border-radius: var(--shadcn-radius);
-  }
-
-  .empty-row {
-    color: var(--shadcn-muted-foreground);
-  }
-
-  @media (max-width: 900px) {
-    .header,
-    .actions {
-      align-items: stretch;
-      flex-direction: column;
-    }
-
-    input {
-      width: 100%;
-    }
-
-    .table-head {
-      display: none;
-    }
-
-    .table-row {
-      grid-template-columns: 1fr;
-      gap: 0.5rem;
-    }
+    flex-direction: column;
+    gap: 1rem;
   }
 </style>

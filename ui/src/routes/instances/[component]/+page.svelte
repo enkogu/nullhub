@@ -1,11 +1,18 @@
 <script lang="ts">
   import { page } from "$app/stores";
   import { onDestroy, onMount } from "svelte";
-  import InstanceCard from "$lib/components/InstanceCard.svelte";
   import { api } from "$lib/api/client";
   import { nullboilerUiRoutes } from "$lib/nullboiler/routes";
   import { nullticketsUiRoutes } from "$lib/nulltickets/routes";
-  import { encodePathSegment } from "$lib/nullstack/path";
+  import { canStartInstanceStatus, canStopInstanceStatus } from "$lib/nullstack/instanceStatus";
+  import { encodePathSegment, instanceRoute } from "$lib/nullstack/path";
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+    type EntityViewAction,
+  } from "$lib/entity-view";
 
   type ComponentAction = {
     label: string;
@@ -15,6 +22,7 @@
   let component = $derived($page.params.component);
   let status = $state<any>(null);
   let error = $state<string | null>(null);
+  let loading = $state(true);
   let interval: ReturnType<typeof setInterval>;
 
   let componentInstances = $derived((status?.instances?.[component] || {}) as Record<string, any>);
@@ -29,12 +37,70 @@
   let stoppedCount = $derived(Math.max(instanceEntries.length - runningCount, 0));
   let actions = $derived(componentActions(component));
 
+  const instanceColumns: EntityColumn[] = [
+    { id: "status", label: "Status", type: "status", width: "minmax(112px,.4fr)" },
+    { id: "version", label: "Version", type: "mono", width: "minmax(110px,.36fr)" },
+    { id: "port", label: "Port", type: "number", width: "minmax(90px,.3fr)" },
+    { id: "auto_start", label: "Auto start", type: "select", width: "minmax(112px,.36fr)" },
+  ];
+  const instanceViews = createViewSet({
+    kanban: { groupBy: "status" },
+    tree: { parentField: "status" },
+    timeline: { dateField: "updated" },
+    calendar: { dateField: "updated" },
+  });
+  const instanceActions: EntityViewAction[] = [
+    { id: "open", label: "Open", variant: "default", href: (record) => record.href || "#" },
+    {
+      id: "start",
+      label: "Start",
+      visible: (record) => canStartInstanceStatus(record.status),
+      run: async (record) => {
+        await api.startInstance(component, String(record.fields?.name || ""));
+        await refresh();
+      },
+    },
+    {
+      id: "stop",
+      label: "Stop",
+      variant: "destructive",
+      visible: (record) => canStopInstanceStatus(record.status),
+      run: async (record) => {
+        await api.stopInstance(component, String(record.fields?.name || ""));
+        await refresh();
+      },
+    },
+  ];
+  let instanceRecords = $derived(
+    instanceEntries.map(([name, info]) => ({
+      id: `instance:${component}:${name}`,
+      title: name,
+      type: "instance",
+      status: info?.status || "stopped",
+      subtitle: displayName,
+      description: info?.port ? `127.0.0.1:${info.port}` : `Version ${info?.version || "-"}`,
+      href: instanceRoute(component, name),
+      parentId: info?.status || "stopped",
+      fields: {
+        name,
+        status: info?.status || "stopped",
+        version: info?.version || "-",
+        port: info?.port || 0,
+        auto_start: info?.auto_start ? "yes" : "no",
+        updated: info?.updated_at || info?.updated || "",
+      },
+    })) satisfies EntityRecord[],
+  );
+
   async function refresh() {
+    loading = true;
     try {
       status = await api.getStatus();
       error = null;
     } catch (e) {
       error = (e as Error).message;
+    } finally {
+      loading = false;
     }
   }
 
@@ -74,233 +140,133 @@
 </script>
 
 <div class="component-page">
-  <div class="header">
-    <div>
-      <h1>{displayName}</h1>
-      <p class="subtitle">{instanceEntries.length} installed instances</p>
+  <div class="top-row">
+    <div class="stats">
+      <div class="stat">
+        <span>Running</span>
+        <strong>{runningCount}</strong>
+      </div>
+      <div class="stat">
+        <span>Stopped</span>
+        <strong>{stoppedCount}</strong>
+      </div>
+      <div class="stat">
+        <span>Total</span>
+        <strong>{instanceEntries.length}</strong>
+      </div>
     </div>
     <div class="header-actions">
       {#each actions as action}
         <a href={action.href} class="action-btn">{action.label}</a>
       {/each}
-      <a href={installHref} class="action-btn">Install Instance</a>
+      <a href={installHref} class="action-btn primary">Install Instance</a>
     </div>
   </div>
 
-  {#if error}
-    <div class="error-banner">ERR: {error}</div>
-  {/if}
-
-  <div class="stats">
-    <div class="stat">
-      <span class="stat-label">Running</span>
-      <span class="stat-value running">{runningCount}</span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Stopped</span>
-      <span class="stat-value stopped">{stoppedCount}</span>
-    </div>
-    <div class="stat">
-      <span class="stat-label">Total</span>
-      <span class="stat-value">{instanceEntries.length}</span>
-    </div>
-  </div>
-
-  {#if status}
-    {#if instanceEntries.length > 0}
-      <div class="instance-grid">
-        {#each instanceEntries as [name, info]}
-          <InstanceCard
-            {component}
-            {name}
-            version={info.version}
-            status={info.status || "stopped"}
-            autoStart={info.auto_start}
-            port={info.port || 0}
-            onAction={refresh}
-          />
-        {/each}
-      </div>
-    {:else}
-      <div class="empty-state">
-        <p>> No {displayName} instances installed.</p>
-        <a href={installHref} class="btn">Install {displayName}</a>
-      </div>
-    {/if}
-  {/if}
+  <UniversalEntityView
+    title={displayName}
+    description={`${instanceEntries.length} installed instances for ${displayName}.`}
+    records={instanceRecords}
+    columns={instanceColumns}
+    views={instanceViews}
+    defaultViewId="cards"
+    {loading}
+    {error}
+    actions={instanceActions}
+    emptyTitle={`No ${displayName} instances`}
+    emptyDescription={`Install ${displayName} to populate this collection.`}
+    onRefresh={refresh}
+  />
 </div>
 
 <style>
   .component-page {
-    padding: 2rem;
-    max-width: 1200px;
-    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
   }
 
-  .header {
+  .top-row {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
-    margin-bottom: 2rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    text-shadow: var(--text-glow);
-    text-transform: uppercase;
-    letter-spacing: 2px;
-  }
-
-  .subtitle {
-    margin-top: 0.35rem;
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-  }
-
-  .action-btn,
-  .empty-state .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 2.35rem;
-    padding: 0.5rem 1rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: var(--radius);
-    font-size: 0.8125rem;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
-  }
-
-  .action-btn:hover,
-  .empty-state .btn:hover {
-    text-decoration: none;
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    text-shadow: 0 0 8px var(--accent);
-  }
-
-  .error-banner {
-    padding: 0.75rem 1rem;
-    background: rgba(255, 0, 0, 0.1);
-    color: var(--error);
-    border: 1px solid var(--error);
-    border-radius: var(--radius);
-    margin-bottom: 1.5rem;
-    font-size: 0.875rem;
-    font-weight: bold;
-    text-shadow: 0 0 5px var(--error);
-    box-shadow: 0 0 10px rgba(255, 0, 0, 0.2);
-    animation: glitch 3s infinite;
   }
 
   .stats {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 1rem;
-    margin-bottom: 1.5rem;
+    gap: 0.75rem;
+    width: min(100%, 32rem);
   }
 
   .stat {
     display: flex;
+    min-height: 4rem;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
-    padding: 1rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    gap: 0.75rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    padding: 0.75rem;
+    background: var(--shadcn-card);
   }
 
-  .stat-label {
-    color: var(--fg-dim);
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+  .stat span {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.8125rem;
   }
 
-  .stat-value {
-    color: var(--accent);
+  .stat strong {
+    color: var(--shadcn-foreground);
     font-family: var(--font-mono);
-    font-size: 1.5rem;
-    font-weight: 700;
-    text-shadow: var(--text-glow);
+    font-size: 1.35rem;
   }
 
-  .stat-value.running {
-    color: var(--success);
-    text-shadow: 0 0 8px var(--success);
+  .header-actions {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
 
-  .stat-value.stopped {
-    color: var(--fg-dim);
-    text-shadow: none;
+  .action-btn {
+    display: inline-flex;
+    min-height: 2.25rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--shadcn-input);
+    border-radius: var(--shadcn-radius);
+    padding: 0 0.875rem;
+    background: var(--shadcn-background);
+    color: var(--shadcn-foreground);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    text-decoration: none;
   }
 
-  .instance-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-    gap: 1.5rem;
+  .action-btn:hover {
+    background: var(--shadcn-accent);
   }
 
-  .empty-state {
-    text-align: center;
-    padding: 4rem 2rem;
-    color: var(--fg-dim);
-    border: 1px dashed var(--border);
-    background: var(--bg-surface);
-    border-radius: var(--radius);
+  .action-btn.primary {
+    border-color: color-mix(in srgb, var(--shadcn-foreground) 18%, var(--shadcn-border));
+    background: var(--shadcn-foreground);
+    color: var(--shadcn-background);
   }
 
-  :global(body.theme-8bit-lobster) .empty-state,
-  :global(body.theme-8bit-lobster-light) .empty-state {
-    border-style: solid;
-  }
-
-  .empty-state p {
-    margin-bottom: 1.5rem;
-    font-size: 1.125rem;
-    font-family: var(--font-mono);
-  }
-
-  @media (max-width: 760px) {
-    .component-page {
-      padding: 1rem;
+  @media (max-width: 860px) {
+    .top-row {
+      flex-direction: column;
     }
 
-    .header {
-      flex-direction: column;
-      align-items: stretch;
+    .stats {
+      width: 100%;
+      grid-template-columns: 1fr;
     }
 
     .header-actions {
       justify-content: flex-start;
-    }
-
-    .stats {
-      grid-template-columns: 1fr;
-    }
-
-    .instance-grid {
-      grid-template-columns: 1fr;
     }
   }
 </style>

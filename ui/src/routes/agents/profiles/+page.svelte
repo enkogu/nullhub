@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
+  import { UniversalEntityView, createViewSet, type EntityColumn, type EntityRecord } from "$lib/entity-view";
 
   type ProfileRow = {
     profile: string;
@@ -16,9 +17,38 @@
     { profile: "support", agents: [], source: "Built-in" },
   ];
 
-  let rows = $state<ProfileRow[]>([]);
+  let rows = $state<ProfileRow[]>(defaultProfiles.map((row) => ({ ...row })));
   let loading = $state(false);
   let error = $state<string | null>(null);
+  let refreshToken = 0;
+  let detailLoadTimer: ReturnType<typeof setTimeout> | null = null;
+  const profileColumns: EntityColumn[] = [
+    { id: "agent_count", label: "Agents", type: "number", width: "minmax(96px,.35fr)" },
+    { id: "agents", label: "Assigned agents", type: "tags", width: "minmax(220px,1fr)" },
+    { id: "source", label: "Source", type: "status", width: "minmax(140px,.5fr)" },
+  ];
+  const profileViews = createViewSet({
+    kanban: { groupBy: "source" },
+    tree: { parentField: "source" },
+    timeline: { dateField: "updated" },
+    calendar: { dateField: "updated" },
+  });
+  let profileRecords = $derived<EntityRecord[]>(
+    rows.map((row) => ({
+      id: `profile:${row.profile}`,
+      title: row.profile,
+      type: "profile",
+      status: row.source || "Ad hoc",
+      subtitle: `${row.agents.length} assigned agents`,
+      description: row.agents.length > 0 ? row.agents.join(", ") : "Built-in profile with no assigned agents yet.",
+      fields: {
+        agent_count: row.agents.length,
+        agents: row.agents.length > 0 ? row.agents : ["-"],
+        source: row.source || "Ad hoc",
+        updated: "",
+      },
+    })),
+  );
 
   function profileFrom(...values: any[]): string {
     for (const value of values) {
@@ -27,15 +57,16 @@
     return "";
   }
 
-  async function refresh() {
-    loading = true;
-    error = null;
-    try {
-      const status = await api.getStatus();
-      const agents = Object.entries((status?.instances?.nullclaw || {}) as Record<string, any>);
-      const grouped = new Map<string, ProfileRow>(defaultProfiles.map((row) => [row.profile, { ...row }]));
-      for (const [name, info] of agents) {
-        const config = await api.getConfig("nullclaw", name).catch(() => null);
+  async function loadAgentProfiles(agents: [string, any][], token: number) {
+    const grouped = new Map<string, ProfileRow>(defaultProfiles.map((row) => [row.profile, { ...row }]));
+      const configs = await Promise.all(
+        agents.map(async ([name, info]) => ({
+          name,
+          info,
+          config: await api.getConfig("nullclaw", name).catch(() => null),
+        })),
+      );
+      for (const { name, info, config } of configs) {
         const profile = profileFrom(
           info?.profile,
           info?.metadata?.profile,
@@ -49,57 +80,61 @@
         row.source = "Agent config";
         grouped.set(profile, row);
       }
+    if (token === refreshToken) {
       rows = [...grouped.values()].sort((a, b) => a.profile.localeCompare(b.profile));
-    } catch (err) {
-      rows = [];
-      error = (err as Error).message || "Failed to load profiles.";
-    } finally {
+    }
+  }
+
+  async function refresh() {
+    const token = ++refreshToken;
+    loading = true;
+    error = null;
+    rows = defaultProfiles.map((row) => ({ ...row }));
+    try {
+      const status = await api.getStatus();
+      if (token !== refreshToken) return;
+      const agents = Object.entries((status?.instances?.nullclaw || {}) as Record<string, any>);
       loading = false;
+      if (detailLoadTimer) clearTimeout(detailLoadTimer);
+      detailLoadTimer = setTimeout(() => void loadAgentProfiles(agents, token), 350);
+    } catch (err) {
+      error = (err as Error).message || "Failed to load profiles.";
+      loading = false;
+    } finally {
+      if (token === refreshToken && rows.length === 0) loading = false;
     }
   }
 
   onMount(() => {
     void refresh();
   });
+
+  onDestroy(() => {
+    refreshToken += 1;
+    if (detailLoadTimer) clearTimeout(detailLoadTimer);
+  });
 </script>
 
 <div class="page">
-  <div class="header">
-    <h1>Profiles</h1>
-    <button class="btn" onclick={refresh} disabled={loading}>{loading ? "Refreshing..." : "Refresh"}</button>
-  </div>
-
-  {#if error}<div class="error-banner">ERR: {error}</div>{/if}
-
-  <div class="table-card">
-    <div class="table-head"><span>Profile</span><span>Agents</span><span>Source</span></div>
-    {#if rows.length === 0}
-      <div class="empty-row">{loading ? "Loading..." : "No profiles"}</div>
-    {:else}
-      {#each rows as row (row.profile)}
-        <div class="table-row">
-          <strong>{row.profile}</strong>
-          <span>{row.agents.length > 0 ? row.agents.join(", ") : "-"}</span>
-          <span>{row.source}</span>
-        </div>
-      {/each}
-    {/if}
-  </div>
+  <UniversalEntityView
+    title="Profiles"
+    description="Reusable agent profile groupings from defaults and live config."
+    records={profileRecords}
+    columns={profileColumns}
+    views={profileViews}
+    defaultViewId="table"
+    {loading}
+    {error}
+    emptyTitle="No profiles"
+    emptyDescription="Profiles appear here from built-ins and agent configuration."
+    onRefresh={refresh}
+  />
 </div>
 
 <style>
-  .page { display: flex; flex-direction: column; gap: 1.25rem; }
-  .header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--shadcn-border); }
-  h1 { margin: 0; font-size: 1.875rem; font-weight: 600; letter-spacing: 0; }
-  .table-card { border: 1px solid var(--shadcn-border); border-radius: var(--shadcn-radius); background: var(--shadcn-card); overflow: hidden; }
-  .table-head, .table-row { display: grid; grid-template-columns: 1fr 1.5fr 1fr; gap: 1rem; align-items: center; }
-  .table-head { padding: 0.75rem 1rem; color: var(--shadcn-muted-foreground); border-bottom: 1px solid var(--shadcn-border); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
-  .table-row { padding: 0.875rem 1rem; border-bottom: 1px solid var(--shadcn-border); }
-  .table-row:last-child { border-bottom: 0; }
-  .table-row span, .table-row strong { overflow-wrap: anywhere; }
-  .btn { min-height: 2.25rem; padding: 0.5rem 0.875rem; border: 1px solid var(--shadcn-input); border-radius: var(--shadcn-radius); background: var(--shadcn-background); color: var(--shadcn-foreground); font-size: 0.875rem; font-weight: 500; }
-  .btn:hover { background: var(--shadcn-accent); }
-  .error-banner, .empty-row { padding: 1rem; }
-  .error-banner { color: var(--shadcn-destructive); border: 1px solid color-mix(in srgb, var(--shadcn-destructive) 25%, var(--shadcn-border)); border-radius: var(--shadcn-radius); }
-  .empty-row { color: var(--shadcn-muted-foreground); }
+  .page {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+  }
 </style>

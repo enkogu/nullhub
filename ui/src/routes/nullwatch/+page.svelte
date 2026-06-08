@@ -2,6 +2,12 @@
   import { page } from '$app/stores';
   import { onDestroy, onMount } from 'svelte';
   import { api, nullWatchApi } from '$lib/api/client';
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+  } from '$lib/entity-view';
 
   let summary = $state<any>(null);
   let runs = $state<any[]>([]);
@@ -14,6 +20,7 @@
   let loadingRun = $state(false);
   let error = $state<string | null>(null);
   let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let overviewTimer: ReturnType<typeof setTimeout> | null = null;
 
   type WatchOption = {
     name: string;
@@ -33,6 +40,42 @@
     (selectedRun?.evals || []).slice().sort((a: any, b: any) => (a.recorded_at_ms || 0) - (b.recorded_at_ms || 0)),
   );
   const requestedRunId = $derived($page.url.searchParams.get('run_id') || '');
+  const runColumns: EntityColumn[] = [
+    { id: 'verdict', label: 'Verdict', type: 'select', width: 'minmax(100px,.34fr)' },
+    { id: 'duration', label: 'Duration', type: 'mono', width: 'minmax(110px,.36fr)' },
+    { id: 'tokens', label: 'Tokens', type: 'mono', width: 'minmax(120px,.4fr)' },
+    { id: 'cost', label: 'Cost', type: 'mono', width: 'minmax(100px,.32fr)' },
+    { id: 'first_seen', label: 'First Seen', type: 'date', width: 'minmax(150px,.55fr)' },
+  ];
+  const runViews = createViewSet({
+    kanban: { groupBy: 'verdict' },
+    tree: { parentField: 'verdict' },
+    timeline: { dateField: 'first_seen' },
+    calendar: { dateField: 'first_seen' },
+  });
+  const runRecords = $derived(
+    runs.map((run) => {
+      const tokenCount = (run.total_input_tokens || 0) + (run.total_output_tokens || 0);
+      return {
+        id: `nullwatch-run:${run.run_id}`,
+        title: run.run_id,
+        type: 'run',
+        status: run.overall_verdict === 'pass' ? 'success' : run.overall_verdict === 'fail' ? 'failed' : 'pending',
+        subtitle: `${formatDuration(run.total_duration_ms)} · ${formatTokens(run.total_input_tokens, run.total_output_tokens)} tokens`,
+        description: `${formatCost(run.total_cost_usd)} · ${formatTime(run.first_seen_ms)}`,
+        date: run.first_seen_ms ? new Date(run.first_seen_ms).toISOString() : '',
+        fields: {
+          run_id: run.run_id,
+          verdict: run.overall_verdict || 'unknown',
+          duration: formatDuration(run.total_duration_ms),
+          tokens: tokenCount > 0 ? tokenCount.toLocaleString() : '-',
+          cost: formatCost(run.total_cost_usd),
+          first_seen: run.first_seen_ms ? new Date(run.first_seen_ms).toISOString() : '',
+        },
+        raw: run,
+      };
+    }) satisfies EntityRecord[],
+  );
 
   function extractWatchOptions(value: any): WatchOption[] {
     const instances = value?.instances?.nullwatch || {};
@@ -147,11 +190,12 @@
   }
 
   onMount(() => {
-    void loadOverview();
+    overviewTimer = setTimeout(() => void loadOverview(), 350);
     pollInterval = setInterval(loadOverview, 5000);
   });
 
   onDestroy(() => {
+    if (overviewTimer) clearTimeout(overviewTimer);
     if (pollInterval) clearInterval(pollInterval);
   });
 
@@ -255,29 +299,20 @@
   {:else}
     <div class="workspace">
       <section class="runs-panel">
-        <div class="panel-title">
-          <h2>Runs</h2>
-          <span>{selectedWatch ? `${selectedWatch.name} / ${runs.length}` : runs.length}</span>
-        </div>
-        {#if runs.length === 0}
-          <div class="empty-state">No NullWatch runs found.</div>
-        {:else}
-          <div class="run-list">
-            {#each runs as run}
-              <button
-                class="run-row"
-                class:selected={selectedRunId === run.run_id}
-                onclick={() => selectRun(run.run_id)}
-              >
-                <span class="run-main">
-                  <span class="mono">{run.run_id}</span>
-                  <span class="muted">{formatDuration(run.total_duration_ms)} · {formatTokens(run.total_input_tokens, run.total_output_tokens)} tokens</span>
-                </span>
-                <span class="pill {verdictClass(run.overall_verdict)}">{run.overall_verdict}</span>
-              </button>
-            {/each}
-          </div>
-        {/if}
+        <UniversalEntityView
+          title="Runs"
+          description={selectedWatch ? `${selectedWatch.name} / ${runs.length}` : `${runs.length} runs`}
+          records={runRecords}
+          columns={runColumns}
+          views={runViews}
+          defaultViewId="list"
+          loading={loading && runs.length === 0}
+          emptyTitle="No NullWatch runs"
+          emptyDescription="No flight recorder runs found for the selected instance."
+          onRefresh={loadOverview}
+          onSelect={(record) => selectRun(String(record.fields?.run_id || record.title))}
+          onOpen={(record) => selectRun(String(record.fields?.run_id || record.title))}
+        />
       </section>
 
       <section class="detail-panel">
@@ -371,8 +406,7 @@
   }
 
   .header,
-  .detail-header,
-  .panel-title {
+  .detail-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -519,7 +553,7 @@
 
   .workspace {
     display: grid;
-    grid-template-columns: minmax(280px, 390px) minmax(0, 1fr);
+    grid-template-columns: minmax(560px, 0.95fr) minmax(0, 1.05fr);
     gap: 1rem;
     align-items: start;
   }
@@ -538,48 +572,6 @@
 
   .detail-panel {
     padding: 1rem;
-  }
-
-  .panel-title {
-    padding: 0.9rem 1rem;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .panel-title span {
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-  }
-
-  .run-list {
-    display: flex;
-    flex-direction: column;
-  }
-
-  .run-row {
-    width: 100%;
-    border: 0;
-    border-bottom: 1px solid var(--border);
-    background: transparent;
-    color: var(--fg);
-    padding: 0.85rem 1rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    text-align: left;
-    cursor: pointer;
-  }
-
-  .run-row:hover,
-  .run-row.selected {
-    background: var(--bg-hover);
-  }
-
-  .run-main {
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
   }
 
   .mono {

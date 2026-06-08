@@ -1,6 +1,13 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+    type EntityViewAction,
+  } from "$lib/entity-view";
 
   type ConfigCard = {
     title: string;
@@ -14,7 +21,8 @@
   let channels = $state<any[]>([]);
   let providerError = $state("");
   let channelError = $state("");
-  let loading = $state(true);
+  let loading = $state(false);
+  let loadTimer: ReturnType<typeof setTimeout> | null = null;
 
   let validProviders = $derived(
     providers.filter((provider) => provider.last_validation_ok || provider.validated_at).length,
@@ -38,10 +46,53 @@
       tone: channelError ? "warn" : channels.length > 0 ? "ok" : "neutral",
     },
   ]);
+  const configColumns: EntityColumn[] = [
+    { id: "saved", label: "Saved", type: "number", width: "minmax(110px,.35fr)" },
+    { id: "validated", label: "Validated", type: "number", width: "minmax(120px,.38fr)" },
+    { id: "status", label: "Status", type: "status", width: "minmax(120px,.38fr)" },
+    { id: "detail", label: "Detail", type: "text", width: "minmax(220px,1fr)" },
+  ];
+  const configViews = createViewSet({
+    kanban: { groupBy: "status" },
+    tree: { parentField: "status" },
+  });
+  const configActions: EntityViewAction[] = [
+    { id: "open", label: "Open", variant: "default", href: (record) => record.href || "#" },
+  ];
+  let configRecords = $derived(
+    cards.map((card) => {
+      const saved = Number(card.primary.match(/\d+/)?.[0] || 0);
+      const validated = Number(card.secondary.match(/\d+/)?.[0] || 0);
+      const status = card.tone === "warn" ? "failed" : card.tone === "ok" ? "active" : "pending";
+      return {
+        id: `config:${card.title.toLowerCase()}`,
+        title: card.title,
+        type: "config",
+        status,
+        subtitle: loading ? "Loading" : card.primary,
+        description: loading ? "-" : card.secondary,
+        href: card.href,
+        fields: {
+          saved,
+          validated,
+          status,
+          detail: loading ? "-" : card.secondary,
+        },
+        raw: card,
+      };
+    }) satisfies EntityRecord[],
+  );
 
-  onMount(async () => {
-    await Promise.all([loadProviders(), loadChannels()]);
-    loading = false;
+  onMount(() => {
+    loadTimer = setTimeout(async () => {
+      loading = true;
+      await Promise.all([loadProviders(), loadChannels()]);
+      loading = false;
+    }, 350);
+  });
+
+  onDestroy(() => {
+    if (loadTimer) clearTimeout(loadTimer);
   });
 
   async function loadProviders() {
@@ -70,121 +121,51 @@
     <h1>Configs</h1>
   </div>
 
-  <div class="config-grid">
-    {#each cards as card}
-      <a href={card.href} class="config-card {card.tone}">
-        <div>
-          <h2>{card.title}</h2>
-        </div>
-        <div class="card-meta">
-          <strong>{loading ? "Loading..." : card.primary}</strong>
-          <span>{loading ? "-" : card.secondary}</span>
-        </div>
-      </a>
-    {/each}
-  </div>
+  <UniversalEntityView
+    title="Config Sections"
+    description="Saved provider and channel configuration areas with validation coverage."
+    records={configRecords}
+    columns={configColumns}
+    views={configViews}
+    defaultViewId="cards"
+    {loading}
+    actions={configActions}
+    emptyTitle="No config sections"
+    emptyDescription="Configuration sections are unavailable."
+    onRefresh={async () => {
+      loading = true;
+      await Promise.all([loadProviders(), loadChannels()]);
+      loading = false;
+    }}
+  />
 </div>
 
 <style>
   .configs-page {
-    padding: 2rem;
-    max-width: 1000px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
     margin: 0 auto;
+    max-width: 1120px;
+    padding: 1.5rem;
   }
 
   .page-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 2rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
   }
 
   h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    text-shadow: var(--text-glow);
-    text-transform: uppercase;
-    letter-spacing: 2px;
-  }
-
-  .config-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 1.5rem;
-  }
-
-  .config-card {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    min-height: 180px;
-    gap: 1.5rem;
-    padding: 1.5rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--fg);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    backdrop-filter: blur(4px);
-  }
-
-  .config-card:hover,
-  .config-card:focus-visible {
-    text-decoration: none;
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 15px var(--border-glow);
-    transform: translateY(-2px);
-  }
-
-  .config-card.ok {
-    border-color: color-mix(in srgb, var(--success) 35%, var(--border));
-  }
-
-  .config-card.warn {
-    border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
-  }
-
-  h2 {
-    color: var(--accent);
-    font-size: 1.25rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    text-shadow: var(--text-glow);
-  }
-
-  .card-meta {
-    display: flex;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-  }
-
-  .card-meta strong {
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 1rem;
-  }
-
-  .card-meta span {
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    text-align: right;
+    color: var(--shadcn-foreground);
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: 0;
   }
 
   @media (max-width: 760px) {
     .configs-page {
       padding: 1rem;
-    }
-
-    .config-grid {
-      grid-template-columns: 1fr;
     }
   }
 </style>

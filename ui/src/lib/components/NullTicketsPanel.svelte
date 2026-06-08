@@ -1,5 +1,12 @@
 <script lang="ts">
   import { api } from "$lib/api/client";
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+    type EntityViewAction,
+  } from "$lib/entity-view";
 
   type Pipeline = {
     id?: string;
@@ -67,6 +74,20 @@
 
   type PanelView = "tasks" | "pipelines" | "queue" | "runs" | "artifacts";
   type ArtifactScope = "selected" | "custom" | "all";
+  type WorkMode = "tasks" | "planner" | "dependencies";
+  type PlanningGroup = {
+    id: string;
+    name: string;
+    tasks: Task[];
+    stages: { stage: string; count: number }[];
+    maxPriority: number;
+  };
+  type DependencyEdge = {
+    task: Task;
+    dependsOnId: string;
+    dependsOnTitle: string;
+    satisfied: boolean;
+  };
 
   const allPanelViews: PanelView[] = ["tasks", "pipelines", "queue", "runs", "artifacts"];
   const panelViewLabels: Record<PanelView, string> = {
@@ -85,6 +106,7 @@
     initialView = "tasks",
     initialArtifactScope = "selected",
     views = allPanelViews,
+    workMode = "tasks",
     title = "NullTickets",
     subtitle = "",
   } = $props<{
@@ -95,6 +117,7 @@
     initialView?: PanelView;
     initialArtifactScope?: ArtifactScope;
     views?: PanelView[];
+    workMode?: WorkMode;
     title?: string;
     subtitle?: string;
   }>();
@@ -144,6 +167,10 @@
   let selectedTaskId = $state("");
   let selectedTask = $state<Task | null>(null);
   let selectedTaskLoading = $state(false);
+  let taskDetailsById = $state<Record<string, Task>>({});
+  let taskDetailsLoadKey = $state("");
+  let taskDetailsLoadToken = 0;
+  let dependencyLoading = $state(false);
 
   let createTaskPipeline = $state("");
   let createTaskTitle = $state("");
@@ -219,6 +246,214 @@
       (view, index, list) => allPanelViews.includes(view) && list.indexOf(view) === index,
     ),
   );
+  const taskColumns: EntityColumn[] = [
+    { id: "stage", label: "Stage", type: "status", width: "minmax(120px,.42fr)" },
+    { id: "process", label: "Process", type: "select", width: "minmax(170px,.62fr)" },
+    { id: "priority", label: "Priority", type: "number", width: "minmax(96px,.28fr)" },
+    { id: "assignments", label: "Assignments", type: "tags", width: "minmax(170px,.72fr)" },
+    { id: "dependencies", label: "Deps", type: "number", width: "minmax(86px,.24fr)" },
+    { id: "updated", label: "Updated", type: "date", width: "minmax(150px,.52fr)" },
+  ];
+  const taskViews = createViewSet({
+    kanban: { groupBy: "stage" },
+    tree: { parentField: "process" },
+    timeline: { dateField: "updated" },
+    calendar: { dateField: "updated" },
+  });
+  const taskActions: EntityViewAction[] = [
+    { id: "select", label: "Select", variant: "default", run: (record) => selectTask(taskRecordId(record)) },
+    {
+      id: "run-controls",
+      label: "Run",
+      visible: (record) => canShowPanelView("runs") && Boolean(record.fields?.run_id),
+      run: async (record) => {
+        await selectTask(taskRecordId(record));
+        setPanelView("runs");
+      },
+    },
+    {
+      id: "artifacts",
+      label: "Artifacts",
+      visible: () => canShowPanelView("artifacts"),
+      run: async (record) => {
+        await selectTask(taskRecordId(record));
+        openSelectedArtifacts();
+      },
+    },
+  ];
+  const taskRecords = $derived(
+    tasks.map((task) => {
+      const detail = taskDetail(task) || task;
+      const id = taskId(task);
+      const assignments = Array.isArray(detail.assignments)
+        ? detail.assignments
+            .filter((assignment: any) => assignment?.active !== false)
+            .map((assignment: any) => String(assignment.agent_id || ""))
+            .filter(Boolean)
+        : [];
+      const dependencies = taskDependencyList(task);
+      const latestRun = detail.latest_run;
+      return {
+        id: `task:${id}`,
+        title: taskTitle(task),
+        type: "task",
+        status: taskStage(task),
+        subtitle: processNameById(task.pipeline_id),
+        description: task.description || "",
+        parentId: String(task.pipeline_id || ""),
+        date: msIso(task.updated_at_ms || task.created_at_ms),
+        fields: {
+          task_id: id,
+          stage: taskStage(task),
+          process: processNameById(task.pipeline_id),
+          process_id: String(task.pipeline_id || ""),
+          priority: taskPriority(task),
+          assignments,
+          dependencies: dependencies.length,
+          run_id: runId(latestRun),
+          run_status: latestRun?.status || "",
+          updated: msIso(task.updated_at_ms || task.created_at_ms),
+        },
+        raw: task,
+      };
+    }) satisfies EntityRecord[],
+  );
+  const pipelineColumns: EntityColumn[] = [
+    { id: "id", label: "ID", type: "mono", width: "minmax(180px,.8fr)" },
+    { id: "states", label: "States", type: "number", width: "minmax(96px,.3fr)" },
+    { id: "created", label: "Created", type: "date", width: "minmax(150px,.5fr)" },
+  ];
+  const pipelineViews = createViewSet({
+    kanban: { groupBy: "state_range" },
+    tree: { parentField: "state_range" },
+    timeline: { dateField: "created" },
+    calendar: { dateField: "created" },
+  });
+  const pipelineActions: EntityViewAction[] = [
+    { id: "select", label: "Select", variant: "default", run: (record) => (selectedPipelineId = pipelineRecordId(record)) },
+  ];
+  const pipelineRecords = $derived(
+    pipelines.map((pipeline) => {
+      const id = pipelineId(pipeline);
+      const states = pipelineStateCount(pipeline);
+      return {
+        id: `process:${id}`,
+        title: pipelineName(pipeline),
+        type: "process",
+        subtitle: id,
+        description: `${states} states`,
+        date: msIso(pipeline.created_at_ms),
+        fields: {
+          id,
+          states,
+          state_range: stateRange(states),
+          created: msIso(pipeline.created_at_ms),
+        },
+        raw: pipeline,
+      };
+    }) satisfies EntityRecord[],
+  );
+  const queueColumns: EntityColumn[] = [
+    { id: "claimable", label: "Claimable", type: "number", width: "minmax(110px,.35fr)" },
+    { id: "failed", label: "Failed", type: "number", width: "minmax(96px,.3fr)" },
+    { id: "stuck", label: "Stuck", type: "number", width: "minmax(96px,.3fr)" },
+    { id: "oldest", label: "Oldest", type: "mono", width: "minmax(120px,.4fr)" },
+  ];
+  const queueViews = createViewSet({
+    kanban: { groupBy: "status" },
+    tree: { parentField: "status" },
+  });
+  const queueActions: EntityViewAction[] = [
+    { id: "use-role", label: "Use Role", variant: "default", run: (record) => (claimRole = String(record.fields?.role || "coder")) },
+  ];
+  const queueRecords = $derived(
+    queueRoles.map((role) => {
+      const name = String(role.role || "coder");
+      const failed = Number(role.failed_count || 0);
+      const stuck = Number(role.stuck_count || 0);
+      const claimable = Number(role.claimable_count || 0);
+      return {
+        id: `queue:${name}`,
+        title: name,
+        type: "queue role",
+        status: failed > 0 || stuck > 0 ? "attention" : claimable > 0 ? "claimable" : "idle",
+        description: `${claimable} claimable`,
+        fields: {
+          role: name,
+          status: failed > 0 || stuck > 0 ? "attention" : claimable > 0 ? "claimable" : "idle",
+          claimable,
+          failed,
+          stuck,
+          oldest: formatDuration(role.oldest_claimable_age_ms),
+        },
+        raw: role,
+      };
+    }) satisfies EntityRecord[],
+  );
+  const eventColumns: EntityColumn[] = [
+    { id: "kind", label: "Kind", type: "select", width: "minmax(130px,.45fr)" },
+    { id: "time", label: "Time", type: "date", width: "minmax(150px,.52fr)" },
+    { id: "preview", label: "Preview", type: "text", width: "minmax(260px,1.2fr)" },
+    { id: "payload", label: "Payload", type: "mono", width: "minmax(360px,1.6fr)", cardHidden: true, sortable: false },
+  ];
+  const eventViews = createViewSet({
+    kanban: { groupBy: "kind" },
+    tree: { parentField: "kind" },
+    timeline: { dateField: "time" },
+    calendar: { dateField: "time" },
+  });
+  const eventRecords = $derived(
+    runEvents.map((event) => {
+      const payload = jsonPreview(event.data);
+      return {
+        id: `event:${event.id ?? event.ts_ms ?? Math.random()}`,
+        title: event.kind || "event",
+        type: "run event",
+        subtitle: `#${event.id ?? "-"}`,
+        description: shortPreview(event.data),
+        date: msIso(event.ts_ms),
+        fields: {
+          kind: event.kind || "event",
+          time: msIso(event.ts_ms),
+          preview: shortPreview(event.data),
+          payload,
+        },
+        raw: event,
+      };
+    }) satisfies EntityRecord[],
+  );
+  const artifactColumns: EntityColumn[] = [
+    { id: "kind", label: "Kind", type: "select", width: "minmax(110px,.35fr)" },
+    { id: "task", label: "Task", type: "mono", width: "minmax(150px,.55fr)" },
+    { id: "run", label: "Run", type: "mono", width: "minmax(150px,.55fr)" },
+    { id: "size", label: "Size", type: "number", width: "minmax(100px,.32fr)" },
+    { id: "created", label: "Created", type: "date", width: "minmax(150px,.52fr)" },
+  ];
+  const artifactViews = createViewSet({
+    kanban: { groupBy: "kind" },
+    tree: { parentField: "task" },
+    timeline: { dateField: "created" },
+    calendar: { dateField: "created" },
+  });
+  const artifactRecords = $derived(
+    artifacts.map((artifact) => ({
+      id: `artifact:${artifact.id || artifact.uri || artifact.created_at_ms}`,
+      title: artifact.uri || artifact.id || "artifact",
+      type: "artifact",
+      subtitle: artifact.kind || "artifact",
+      description: `task ${artifact.task_id || "-"} / run ${artifact.run_id || "-"}`,
+      date: msIso(artifact.created_at_ms),
+      fields: {
+        kind: artifact.kind || "artifact",
+        task: artifact.task_id || "-",
+        run: artifact.run_id || "-",
+        size: artifact.size_bytes || 0,
+        created: msIso(artifact.created_at_ms),
+        meta: shortPreview(artifact.meta),
+      },
+      raw: artifact,
+    })) satisfies EntityRecord[],
+  );
 
   function fallbackPanelView(): PanelView {
     return visiblePanelViews[0] || (allPanelViews.includes(initialView) ? initialView : "tasks");
@@ -229,7 +464,12 @@
   }
 
   function setPanelView(view: PanelView) {
-    panelView = canShowPanelView(view) ? view : fallbackPanelView();
+    const nextView = canShowPanelView(view) ? view : fallbackPanelView();
+    if (panelView === nextView) return;
+    panelView = nextView;
+    if (active && running) {
+      setTimeout(() => void refreshAll(), 0);
+    }
   }
 
   function pipelineId(pipeline: Pipeline | null | undefined): string {
@@ -255,6 +495,151 @@
     return String(task?.title || task?.id || "task");
   }
 
+  function taskPriority(task: Task | null | undefined): number {
+    const value = Number(task?.priority ?? 0);
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function taskStage(task: Task | null | undefined): string {
+    return String(task?.stage || "unassigned");
+  }
+
+  function taskCreatedAt(task: Task | null | undefined): number {
+    const value = Number(task?.created_at_ms ?? 0);
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function taskDetail(task: Task | null | undefined): Task | null {
+    if (!task) return null;
+    const id = taskId(task);
+    if (id && taskDetailsById[id]) return taskDetailsById[id];
+    if (id && selectedTaskId === id && selectedTask) return selectedTask;
+    return task;
+  }
+
+  function dependencyTargetId(dep: any): string {
+    if (!dep) return "";
+    if (typeof dep === "string") return dep;
+    return String(dep.depends_on_task_id || dep.task_id || dep.id || "");
+  }
+
+  function taskDependencyList(task: Task | null | undefined): any[] {
+    const detail = taskDetail(task);
+    return Array.isArray(detail?.dependencies) ? detail.dependencies : [];
+  }
+
+  function taskById(id: string): Task | null {
+    if (!id) return null;
+    return tasks.find((task) => taskId(task) === id) || null;
+  }
+
+  function dependencyTargetTitle(dep: any): string {
+    const id = dependencyTargetId(dep);
+    const target = taskById(id);
+    return target ? taskTitle(target) : id || "-";
+  }
+
+  function sortedPlanningTasks(): Task[] {
+    return [...tasks].sort((a, b) => {
+      const priorityDiff = taskPriority(b) - taskPriority(a);
+      if (priorityDiff !== 0) return priorityDiff;
+      return taskCreatedAt(a) - taskCreatedAt(b);
+    });
+  }
+
+  function stageSummary(items: Task[]): { stage: string; count: number }[] {
+    const counts = new Map<string, number>();
+    for (const task of items) {
+      const stage = taskStage(task);
+      counts.set(stage, (counts.get(stage) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([stage, count]) => ({ stage, count }))
+      .sort((a, b) => b.count - a.count || a.stage.localeCompare(b.stage));
+  }
+
+  function planningGroups(): PlanningGroup[] {
+    const groups = new Map<string, PlanningGroup>();
+    for (const task of sortedPlanningTasks()) {
+      const id = String(task.pipeline_id || "unassigned");
+      const existing = groups.get(id);
+      if (existing) {
+        existing.tasks.push(task);
+        existing.maxPriority = Math.max(existing.maxPriority, taskPriority(task));
+      } else {
+        groups.set(id, {
+          id,
+          name: processNameById(id),
+          tasks: [task],
+          stages: [],
+          maxPriority: taskPriority(task),
+        });
+      }
+    }
+    return [...groups.values()]
+      .map((group) => ({ ...group, stages: stageSummary(group.tasks) }))
+      .sort((a, b) => b.maxPriority - a.maxPriority || b.tasks.length - a.tasks.length || a.name.localeCompare(b.name));
+  }
+
+  function visibleProcessCount(): number {
+    return new Set(tasks.map((task) => String(task.pipeline_id || "unassigned"))).size;
+  }
+
+  function visibleStageCount(): number {
+    return new Set(tasks.map((task) => taskStage(task))).size;
+  }
+
+  function highestPriorityTask(): Task | null {
+    return sortedPlanningTasks()[0] || null;
+  }
+
+  function dependencyEdges(): DependencyEdge[] {
+    const edges: DependencyEdge[] = [];
+    for (const task of tasks) {
+      for (const dep of taskDependencyList(task)) {
+        const dependsOnId = dependencyTargetId(dep);
+        if (!dependsOnId) continue;
+        edges.push({
+          task,
+          dependsOnId,
+          dependsOnTitle: dependencyTargetTitle(dep),
+          satisfied: Boolean(taskById(dependsOnId)),
+        });
+      }
+    }
+    return edges;
+  }
+
+  function selectedDependencyEdges(): DependencyEdge[] {
+    if (!selectedTask) return [];
+    return taskDependencyList(selectedTask)
+      .map((dep) => {
+        const dependsOnId = dependencyTargetId(dep);
+        return {
+          task: selectedTask,
+          dependsOnId,
+          dependsOnTitle: dependencyTargetTitle(dep),
+          satisfied: Boolean(taskById(dependsOnId)),
+        };
+      })
+      .filter((edge) => edge.dependsOnId);
+  }
+
+  function tasksBlockingSelected(): Task[] {
+    if (!selectedTaskId) return [];
+    return tasks.filter((task) =>
+      taskDependencyList(task).some((dep) => dependencyTargetId(dep) === selectedTaskId),
+    );
+  }
+
+  function blockedTaskCount(): number {
+    return tasks.filter((task) => taskDependencyList(task).length > 0).length;
+  }
+
+  function readyTaskCount(): number {
+    return tasks.filter((task) => taskDependencyList(task).length === 0).length;
+  }
+
   function runId(run: Run | null | undefined): string {
     return String(run?.id || "");
   }
@@ -276,6 +661,15 @@
     }
   }
 
+  function msIso(ms: number | undefined | null): string {
+    if (!ms) return "";
+    try {
+      return new Date(ms).toISOString();
+    } catch {
+      return "";
+    }
+  }
+
   function formatDuration(ms: number | undefined | null): string {
     if (ms == null) return "-";
     if (ms < 1000) return `${ms}ms`;
@@ -294,6 +688,31 @@
     } catch {
       return String(value);
     }
+  }
+
+  function shortPreview(value: any): string {
+    const text = jsonPreview(value).replace(/\s+/g, " ").trim();
+    return text.length > 140 ? `${text.slice(0, 140)}...` : text || "-";
+  }
+
+  function taskRecordId(record: EntityRecord): string {
+    return String(record.fields?.task_id || record.id.replace(/^task:/, ""));
+  }
+
+  function pipelineRecordId(record: EntityRecord): string {
+    return String(record.fields?.id || record.id.replace(/^process:/, ""));
+  }
+
+  function pipelineStateCount(pipeline: Pipeline | null | undefined): number {
+    const states = pipeline?.definition?.states;
+    return states && typeof states === "object" ? Object.keys(states).length : 0;
+  }
+
+  function stateRange(count: number): string {
+    if (count === 0) return "empty";
+    if (count < 4) return "small";
+    if (count < 10) return "medium";
+    return "large";
   }
 
   function parseJsonField(raw: string, fallback: any): any {
@@ -379,22 +798,73 @@
     loading = true;
     error = "";
     try {
+      const needsPipelines = panelView === "tasks" || panelView === "pipelines";
+      const needsTasks = panelView === "tasks" || panelView === "runs" || (panelView === "artifacts" && artifactScope === "selected");
+      const needsQueue = panelView === "queue";
+
       const [pipelineResult, queueResult] = await Promise.all([
-        api.nullTicketsPipelines(component, name),
-        api.nullTicketsAction(component, name, { method: "GET", path: "/ops/queue" }),
+        needsPipelines ? api.nullTicketsPipelines(component, name) : Promise.resolve(null),
+        needsQueue ? api.nullTicketsAction(component, name, { method: "GET", path: "/ops/queue" }) : Promise.resolve(null),
       ]);
-      pipelines = normalizeList(pipelineResult);
-      queueRoles = normalizeList(queueResult?.roles ? { items: queueResult.roles } : queueResult);
-      if (!selectedPipelineId || !pipelines.some((pipeline) => pipelineId(pipeline) === selectedPipelineId)) {
-        selectedPipelineId = pipelineId(pipelines[0] || {});
+
+      if (pipelineResult) {
+        pipelines = normalizeList(pipelineResult);
+        if (!selectedPipelineId || !pipelines.some((pipeline) => pipelineId(pipeline) === selectedPipelineId)) {
+          selectedPipelineId = pipelineId(pipelines[0] || {});
+        }
+        if (!createTaskPipeline && selectedPipelineId) createTaskPipeline = selectedPipelineId;
       }
-      if (!createTaskPipeline && selectedPipelineId) createTaskPipeline = selectedPipelineId;
-      if (!claimRole) claimRole = firstClaimableRole();
-      await loadTasks(false);
+      if (queueResult) {
+        queueRoles = normalizeList(queueResult?.roles ? { items: queueResult.roles } : queueResult);
+        if (!claimRole) claimRole = firstClaimableRole();
+      }
+
+      if (needsTasks) {
+        await loadTasks(false);
+      } else if (panelView === "artifacts") {
+        await loadArtifacts(false);
+      }
     } catch (e) {
       error = (e as Error).message;
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadVisibleTaskDetails(items = tasks, force = false) {
+    if (workMode !== "dependencies" || component !== "nulltickets" || !running) return;
+    const ids = items.map((task) => taskId(task)).filter(Boolean);
+    if (ids.length === 0) {
+      taskDetailsLoadToken += 1;
+      taskDetailsById = {};
+      taskDetailsLoadKey = "";
+      return;
+    }
+    const nextKey = ids.join("|");
+    if (!force && taskDetailsLoadKey === nextKey) return;
+    const loadToken = taskDetailsLoadToken + 1;
+    taskDetailsLoadToken = loadToken;
+    taskDetailsLoadKey = nextKey;
+    dependencyLoading = true;
+    try {
+      const entries = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const detail = await api.nullTicketsGetTask(component, name, id);
+            return [id, detail] as const;
+          } catch {
+            return [id, items.find((task) => taskId(task) === id) || null] as const;
+          }
+        }),
+      );
+      if (loadToken !== taskDetailsLoadToken) return;
+      const nextDetails: Record<string, Task> = {};
+      for (const [id, detail] of entries) {
+        if (detail) nextDetails[id] = detail;
+      }
+      taskDetailsById = nextDetails;
+    } finally {
+      if (loadToken === taskDetailsLoadToken) dependencyLoading = false;
     }
   }
 
@@ -411,12 +881,24 @@
         cursor: append ? nextCursor || undefined : undefined,
       });
       const items = normalizeList(result);
-      tasks = append ? [...tasks, ...items] : items;
+      const nextTasks = append ? [...tasks, ...items] : items;
+      tasks = nextTasks;
       nextCursor = typeof result?.next_cursor === "string" ? result.next_cursor : null;
-      if (!selectedTaskId && items.length > 0) {
-        await selectTask(taskId(items[0]));
-      } else if (!append && selectedTaskId) {
+      void loadVisibleTaskDetails(nextTasks, !append);
+      if (append) return;
+
+      const selectedStillVisible = selectedTaskId && items.some((task) => taskId(task) === selectedTaskId);
+      if (selectedStillVisible) {
         await selectTask(selectedTaskId);
+      } else if (items.length > 0) {
+        await selectTask(taskId(items[0]));
+      } else {
+        selectedTaskId = "";
+        selectedTask = null;
+        clearRunContext();
+        artifacts = [];
+        artifactsCursor = null;
+        artifactsScopeKey = "";
       }
     } catch (e) {
       error = (e as Error).message;
@@ -431,7 +913,9 @@
     selectedTaskLoading = true;
     error = "";
     try {
-      selectedTask = await api.nullTicketsGetTask(component, name, id);
+      const task = await api.nullTicketsGetTask(component, name, id);
+      selectedTask = task;
+      taskDetailsById = { ...taskDetailsById, [id]: task };
       await loadSelectedTaskContext();
     } catch (e) {
       error = (e as Error).message;
@@ -827,7 +1311,7 @@
   }
 
   $effect(() => {
-    const configKey = `${initialView}:${visiblePanelViews.join("|")}:${initialArtifactScope}`;
+    const configKey = `${initialView}:${visiblePanelViews.join("|")}:${initialArtifactScope}:${workMode}`;
     if (panelViewConfigKey !== configKey) {
       panelViewConfigKey = configKey;
       panelView = canShowPanelView(initialView) ? initialView : fallbackPanelView();
@@ -850,6 +1334,10 @@
     error = "";
     selectedTask = null;
     selectedTaskId = "";
+    taskDetailsById = {};
+    taskDetailsLoadKey = "";
+    taskDetailsLoadToken += 1;
+    dependencyLoading = false;
     clearRunContext();
     artifacts = [];
     artifactsCursor = null;
@@ -862,6 +1350,12 @@
     if (running) {
       void refreshAll();
     }
+  });
+
+  $effect(() => {
+    if (!active || component !== "nulltickets" || !running || workMode !== "dependencies") return;
+    if (tasks.length === 0) return;
+    void loadVisibleTaskDetails(tasks);
   });
 
   $effect(() => {
@@ -907,12 +1401,12 @@
       <div class="message-banner">{message}</div>
     {/if}
 
-    {#if panelView === "tasks"}
-      <div class="tickets-grid">
-        <section class="tickets-section">
+    {#if panelView === "tasks" && workMode === "planner"}
+      <div class="planner-grid">
+        <section class="tickets-section full">
           <div class="section-header">
-            <h3>Tasks</h3>
-            <span>{tasks.length}</span>
+            <h3>Planning Filters</h3>
+            <span>{tasks.length} visible</span>
           </div>
           <div class="filter-grid">
             <label class="field">
@@ -934,25 +1428,345 @@
             </label>
             <button class="btn" onclick={() => loadTasks(false)} disabled={loading}>Apply</button>
           </div>
+        </section>
 
-          <div class="task-list">
-            {#if tasks.length === 0}
-              <div class="empty-row">No tasks</div>
+        <section class="tickets-section planner-main">
+          <div class="section-header">
+            <h3>Plan by Process</h3>
+            <span>{planningGroups().length} processes</span>
+          </div>
+          <div class="insight-grid">
+            <div class="insight-card">
+              <span>Visible Tasks</span>
+              <strong>{tasks.length}</strong>
+            </div>
+            <div class="insight-card">
+              <span>Processes</span>
+              <strong>{visibleProcessCount()}</strong>
+            </div>
+            <div class="insight-card">
+              <span>Stages</span>
+              <strong>{visibleStageCount()}</strong>
+            </div>
+            <div class="insight-card">
+              <span>Top Priority</span>
+              <strong>{highestPriorityTask() ? `p${taskPriority(highestPriorityTask())}` : "-"}</strong>
+            </div>
+          </div>
+
+          {#if tasks.length === 0}
+            <div class="empty-row">No tasks match this plan.</div>
+          {:else}
+            <div class="process-plan-list">
+              {#each planningGroups() as group (group.id)}
+                <div class="process-plan">
+                  <div class="process-plan-header">
+                    <div>
+                      <span class="task-title">{group.name}</span>
+                      <span class="task-meta">{group.tasks.length} tasks / top p{group.maxPriority}</span>
+                    </div>
+                    <div class="stage-strip">
+                      {#each group.stages as item}
+                        <span>{item.stage} {item.count}</span>
+                      {/each}
+                    </div>
+                  </div>
+                  <div class="planner-task-list">
+                    {#each group.tasks as task (taskId(task))}
+                      <button
+                        class="planner-task"
+                        class:active={taskId(task) === selectedTaskId}
+                        onclick={() => selectTask(taskId(task))}
+                      >
+                        <span class="planner-priority">p{taskPriority(task)}</span>
+                        <span>
+                          <span class="task-title">{taskTitle(task)}</span>
+                          <span class="task-meta">
+                            {taskStage(task)} / {taskDependencyList(task).length} deps / {formatTime(task.created_at_ms)}
+                          </span>
+                        </span>
+                      </button>
+                    {/each}
+                  </div>
+                </div>
+              {/each}
+            </div>
+          {/if}
+          {#if nextCursor}
+            <button class="btn subtle" onclick={() => loadTasks(true)} disabled={loading}>
+              Load More
+            </button>
+          {/if}
+        </section>
+
+        <section class="tickets-section planner-side">
+          <div class="section-header">
+            <h3>Next Up</h3>
+            <span>{Math.min(sortedPlanningTasks().length, 6)}</span>
+          </div>
+          <div class="task-list compact">
+            {#each sortedPlanningTasks().slice(0, 6) as task (taskId(task))}
+              <button
+                class="task-row"
+                class:active={taskId(task) === selectedTaskId}
+                onclick={() => selectTask(taskId(task))}
+              >
+                <span class="task-title">{taskTitle(task)}</span>
+                <span class="task-meta">
+                  p{taskPriority(task)} / {taskStage(task)} / {processNameById(task.pipeline_id)}
+                </span>
+              </button>
             {:else}
-              {#each tasks as task}
+              <div class="empty-row">No planned tasks</div>
+            {/each}
+          </div>
+
+          <div class="selected-plan">
+            <div class="section-header inner">
+              <h3>Selected Task</h3>
+              {#if selectedTaskLoading}<span>Loading</span>{/if}
+            </div>
+            {#if selectedTask}
+              <div class="detail-stack">
+                <div class="detail-title">
+                  <span>{taskTitle(selectedTask)}</span>
+                  <code>{selectedTask.id}</code>
+                </div>
+                <div class="stats-grid">
+                  <div><span>Stage</span><strong>{selectedTask.stage || "-"}</strong></div>
+                  <div><span>Process</span><strong>{processNameById(selectedTask.pipeline_id)}</strong></div>
+                  <div><span>Priority</span><strong>{selectedTask.priority ?? 0}</strong></div>
+                  <div><span>Deps</span><strong>{taskDependencyList(selectedTask).length}</strong></div>
+                </div>
+                {#if selectedTask.description}
+                  <p class="description">{selectedTask.description}</p>
+                {/if}
+                {#if taskTransitions.length > 0}
+                  <div>
+                    <span class="subhead">Transitions</span>
+                    <div class="pill-list">
+                      {#each taskTransitions as transition}
+                        <span class="pill static">
+                          {transition.trigger || "-"} -> {transition.to || transition.new_stage || "-"}
+                        </span>
+                      {/each}
+                    </div>
+                  </div>
+                {/if}
+              </div>
+            {:else}
+              <div class="empty-row">Select a task from the plan.</div>
+            {/if}
+          </div>
+        </section>
+      </div>
+    {:else if panelView === "tasks" && workMode === "dependencies"}
+      <div class="dependency-grid">
+        <section class="tickets-section full">
+          <div class="section-header">
+            <h3>Dependency Filters</h3>
+            <span>{dependencyLoading ? "loading details" : `${dependencyEdges().length} edges`}</span>
+          </div>
+          <div class="filter-grid">
+            <label class="field">
+              <span>Process</span>
+              <select bind:value={filterPipeline}>
+                <option value="">All</option>
+                {#each pipelines as pipeline}
+                  <option value={pipelineId(pipeline)}>{pipelineName(pipeline)}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="field">
+              <span>Stage</span>
+              <input bind:value={filterStage} placeholder="todo" />
+            </label>
+            <label class="field small">
+              <span>Limit</span>
+              <input bind:value={taskLimit} inputmode="numeric" />
+            </label>
+            <button class="btn" onclick={() => loadTasks(false)} disabled={loading}>Apply</button>
+          </div>
+        </section>
+
+        <section class="tickets-section dependency-main">
+          <div class="section-header">
+            <h3>Dependency Map</h3>
+            <span>{dependencyEdges().length}</span>
+          </div>
+          <div class="insight-grid">
+            <div class="insight-card">
+              <span>Visible Tasks</span>
+              <strong>{tasks.length}</strong>
+            </div>
+            <div class="insight-card">
+              <span>Blocked</span>
+              <strong>{blockedTaskCount()}</strong>
+            </div>
+            <div class="insight-card">
+              <span>Ready</span>
+              <strong>{readyTaskCount()}</strong>
+            </div>
+            <div class="insight-card">
+              <span>Edges</span>
+              <strong>{dependencyEdges().length}</strong>
+            </div>
+          </div>
+
+          <div class="dependency-list">
+            {#if dependencyEdges().length === 0}
+              <div class="empty-row">No dependencies in the current filter.</div>
+            {:else}
+              {#each dependencyEdges() as edge (`${taskId(edge.task)}:${edge.dependsOnId}`)}
                 <button
-                  class="task-row"
-                  class:active={taskId(task) === selectedTaskId}
-                  onclick={() => selectTask(taskId(task))}
+                  class="dependency-row"
+                  class:active={taskId(edge.task) === selectedTaskId || edge.dependsOnId === selectedTaskId}
+                  onclick={() => selectTask(taskId(edge.task))}
                 >
-                  <span class="task-title">{taskTitle(task)}</span>
-                  <span class="task-meta">
-                    {task.stage || "-"} / {processNameById(task.pipeline_id)} / p{task.priority ?? 0}
+                  <span class="dependency-node">
+                    <strong>{taskTitle(edge.task)}</strong>
+                    <small>{taskStage(edge.task)} / {processNameById(edge.task.pipeline_id)}</small>
+                  </span>
+                  <span class="dependency-arrow">depends on</span>
+                  <span class="dependency-node">
+                    <strong>{edge.dependsOnTitle}</strong>
+                    <small>{edge.satisfied ? edge.dependsOnId : "outside current filter"}</small>
                   </span>
                 </button>
               {/each}
             {/if}
           </div>
+          {#if nextCursor}
+            <button class="btn subtle" onclick={() => loadTasks(true)} disabled={loading}>
+              Load More
+            </button>
+          {/if}
+        </section>
+
+        <section class="tickets-section dependency-side">
+          <div class="section-header">
+            <h3>Selected Task Dependencies</h3>
+            {#if selectedTaskLoading}<span>Loading</span>{/if}
+          </div>
+          <div class="task-list compact">
+            {#each sortedPlanningTasks() as task (taskId(task))}
+              <button
+                class="task-row"
+                class:active={taskId(task) === selectedTaskId}
+                onclick={() => selectTask(taskId(task))}
+              >
+                <span class="task-title">{taskTitle(task)}</span>
+                <span class="task-meta">
+                  {taskDependencyList(task).length} deps / p{taskPriority(task)} / {taskStage(task)}
+                </span>
+              </button>
+            {:else}
+              <div class="empty-row">No tasks</div>
+            {/each}
+          </div>
+
+          {#if selectedTask}
+            <div class="dependency-detail">
+              <div class="detail-title">
+                <span>{taskTitle(selectedTask)}</span>
+                <code>{selectedTask.id}</code>
+              </div>
+              <div class="stats-grid">
+                <div><span>Blocked By</span><strong>{selectedDependencyEdges().length}</strong></div>
+                <div><span>Blocking</span><strong>{tasksBlockingSelected().length}</strong></div>
+                <div><span>Stage</span><strong>{selectedTask.stage || "-"}</strong></div>
+                <div><span>Priority</span><strong>{selectedTask.priority ?? 0}</strong></div>
+              </div>
+
+              <div>
+                <span class="subhead">Blocked By</span>
+                {#if selectedDependencyEdges().length > 0}
+                  <div class="pill-list">
+                    {#each selectedDependencyEdges() as edge}
+                      <button
+                        class="pill"
+                        onclick={() => edge.dependsOnId && selectTask(edge.dependsOnId)}
+                        disabled={!edge.satisfied}
+                      >
+                        {edge.dependsOnTitle}
+                      </button>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="empty-row compact">No blockers</div>
+                {/if}
+              </div>
+
+              <div>
+                <span class="subhead">Blocking</span>
+                {#if tasksBlockingSelected().length > 0}
+                  <div class="pill-list">
+                    {#each tasksBlockingSelected() as task}
+                      <button class="pill" onclick={() => selectTask(taskId(task))}>
+                        {taskTitle(task)}
+                      </button>
+                    {/each}
+                  </div>
+                {:else}
+                  <div class="empty-row compact">Not blocking visible tasks</div>
+                {/if}
+              </div>
+
+              <div class="action-grid">
+                <label class="field">
+                  <span>Dependency</span>
+                  <input bind:value={dependencyTaskId} placeholder="task-id" />
+                </label>
+                <button class="btn" onclick={addDependency} disabled={actionLoading || !dependencyTaskId.trim()}>
+                  Add
+                </button>
+              </div>
+            </div>
+          {:else}
+            <div class="empty-row">Select a task to inspect blockers.</div>
+          {/if}
+        </section>
+      </div>
+    {:else if panelView === "tasks"}
+      <div class="tickets-grid">
+        <section class="tickets-section browser-section">
+          <div class="filter-grid">
+            <label class="field">
+              <span>Process</span>
+              <select bind:value={filterPipeline}>
+                <option value="">All</option>
+                {#each pipelines as pipeline}
+                  <option value={pipelineId(pipeline)}>{pipelineName(pipeline)}</option>
+                {/each}
+              </select>
+            </label>
+            <label class="field">
+              <span>Stage</span>
+              <input bind:value={filterStage} placeholder="todo" />
+            </label>
+            <label class="field small">
+              <span>Limit</span>
+              <input bind:value={taskLimit} inputmode="numeric" />
+            </label>
+            <button class="btn" onclick={() => loadTasks(false)} disabled={loading}>Apply</button>
+          </div>
+
+          <UniversalEntityView
+            title="Tasks"
+            description="Visible NullTickets tasks for this backend."
+            records={taskRecords}
+            columns={taskColumns}
+            views={taskViews}
+            defaultViewId="split"
+            {loading}
+            error={error || null}
+            actions={taskActions}
+            emptyTitle="No tasks"
+            emptyDescription="No tasks match the current filter."
+            onRefresh={() => loadTasks(false)}
+            onSelect={(record) => void selectTask(taskRecordId(record))}
+            onOpen={(record) => void selectTask(taskRecordId(record))}
+          />
           {#if nextCursor}
             <button class="btn subtle" onclick={() => loadTasks(true)} disabled={loading}>
               Load More
@@ -1128,23 +1942,23 @@
       </div>
     {:else if panelView === "pipelines"}
       <div class="tickets-grid">
-        <section class="tickets-section">
-          <div class="section-header">
-            <h3>Processes</h3>
-            <span>{pipelines.length}</span>
-          </div>
-          <div class="task-list">
-            {#each pipelines as pipeline}
-              <button
-                class="task-row"
-                class:active={pipelineId(pipeline) === selectedPipelineId}
-                onclick={() => (selectedPipelineId = pipelineId(pipeline))}
-              >
-                <span class="task-title">{pipelineName(pipeline)}</span>
-                <span class="task-meta">{pipelineId(pipeline)} / {formatTime(pipeline.created_at_ms)}</span>
-              </button>
-            {/each}
-          </div>
+        <section class="tickets-section browser-section">
+          <UniversalEntityView
+            title="Processes"
+            description="Process definitions available on this NullTickets backend."
+            records={pipelineRecords}
+            columns={pipelineColumns}
+            views={pipelineViews}
+            defaultViewId="cards"
+            {loading}
+            error={error || null}
+            actions={pipelineActions}
+            emptyTitle="No processes"
+            emptyDescription="Create a process definition to populate this view."
+            onRefresh={refreshAll}
+            onSelect={(record) => (selectedPipelineId = pipelineRecordId(record))}
+            onOpen={(record) => (selectedPipelineId = pipelineRecordId(record))}
+          />
         </section>
 
         <section class="tickets-section">
@@ -1185,36 +1999,23 @@
       </div>
     {:else if panelView === "queue"}
       <div class="tickets-grid">
-        <section class="tickets-section">
-          <div class="section-header">
-            <h3>Queue</h3>
-            <span>{queueRoles.length}</span>
-          </div>
-          <div class="queue-table">
-            <div class="queue-head">
-              <span>Role</span>
-              <span>Claimable</span>
-              <span>Failed</span>
-              <span>Stuck</span>
-              <span>Oldest</span>
-            </div>
-            {#if queueRoles.length === 0}
-              <div class="empty-row">No queue stats</div>
-            {:else}
-              {#each queueRoles as role}
-                <button
-                  class="queue-row"
-                  onclick={() => (claimRole = String(role.role || "coder"))}
-                >
-                  <span>{role.role || "-"}</span>
-                  <span>{role.claimable_count || 0}</span>
-                  <span>{role.failed_count || 0}</span>
-                  <span>{role.stuck_count || 0}</span>
-                  <span>{formatDuration(role.oldest_claimable_age_ms)}</span>
-                </button>
-              {/each}
-            {/if}
-          </div>
+        <section class="tickets-section browser-section">
+          <UniversalEntityView
+            title="Queue"
+            description="Role-level dispatch capacity and failure counters."
+            records={queueRecords}
+            columns={queueColumns}
+            views={queueViews}
+            defaultViewId="table"
+            {loading}
+            error={error || null}
+            actions={queueActions}
+            emptyTitle="No queue stats"
+            emptyDescription="Queue counters are not available for this backend."
+            onRefresh={refreshAll}
+            onSelect={(record) => (claimRole = String(record.fields?.role || "coder"))}
+            onOpen={(record) => (claimRole = String(record.fields?.role || "coder"))}
+          />
         </section>
 
         <section class="tickets-section">
@@ -1339,11 +2140,7 @@
           {/if}
         </section>
 
-        <section class="tickets-section">
-          <div class="section-header">
-            <h3>Events</h3>
-            <span>{runEvents.length}</span>
-          </div>
+        <section class="tickets-section browser-section">
           <div class="filter-grid">
             <label class="field small">
               <span>Limit</span>
@@ -1353,21 +2150,19 @@
               Load Events
             </button>
           </div>
-          <div class="event-list">
-            {#if runEvents.length === 0}
-              <div class="empty-row">No events</div>
-            {:else}
-              {#each runEvents as event}
-                <div class="event-row">
-                  <div>
-                    <span class="task-title">{event.kind || "event"}</span>
-                    <span class="task-meta">#{event.id ?? "-"} / {formatTime(event.ts_ms)}</span>
-                  </div>
-                  <pre>{jsonPreview(event.data)}</pre>
-                </div>
-              {/each}
-            {/if}
-          </div>
+          <UniversalEntityView
+            title="Events"
+            description="Event stream for the selected run."
+            records={eventRecords}
+            columns={eventColumns}
+            views={eventViews}
+            defaultViewId="split"
+            {loading}
+            error={error || null}
+            emptyTitle="No events"
+            emptyDescription="No events are available for the selected run."
+            onRefresh={() => loadRunEvents(false)}
+          />
           {#if runEventsCursor}
             <button class="btn subtle" onclick={() => loadRunEvents(true)} disabled={loading}>
               Load More
@@ -1390,11 +2185,7 @@
       </div>
     {:else}
       <div class="tickets-grid">
-        <section class="tickets-section">
-          <div class="section-header">
-            <h3>Artifacts</h3>
-            <span>{artifacts.length}</span>
-          </div>
+        <section class="tickets-section browser-section">
           <div class="filter-grid">
             <div class="field wide">
               <span>Scope</span>
@@ -1440,25 +2231,19 @@
               Load Artifacts
             </button>
           </div>
-          <div class="task-list">
-            {#if artifacts.length === 0}
-              <div class="empty-row">No artifacts</div>
-            {:else}
-              {#each artifacts as artifact}
-                <div class="artifact-row">
-                  <div>
-                    <span class="task-title">{artifact.kind || "artifact"}</span>
-                    <span class="task-meta">{artifact.id || "-"} / {formatTime(artifact.created_at_ms)}</span>
-                  </div>
-                  <code>{artifact.uri || "-"}</code>
-                  <span class="task-meta">
-                    task {artifact.task_id || "-"} / run {artifact.run_id || "-"} / {artifact.size_bytes ?? "-"} bytes
-                  </span>
-                  <pre>{jsonPreview(artifact.meta)}</pre>
-                </div>
-              {/each}
-            {/if}
-          </div>
+          <UniversalEntityView
+            title="Artifacts"
+            description={`Artifacts for ${artifactScopeLabel()}.`}
+            records={artifactRecords}
+            columns={artifactColumns}
+            views={artifactViews}
+            defaultViewId="table"
+            {loading}
+            error={error || null}
+            emptyTitle="No artifacts"
+            emptyDescription="No artifacts match the current scope."
+            onRefresh={() => loadArtifacts(false)}
+          />
           {#if artifactsCursor}
             <button class="btn subtle" onclick={() => loadArtifacts(true)} disabled={loading}>
               Load More
@@ -1572,6 +2357,12 @@
     grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr);
     gap: 1rem;
   }
+  .planner-grid,
+  .dependency-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+    gap: 1rem;
+  }
   .tickets-section {
     display: flex;
     flex-direction: column;
@@ -1585,6 +2376,19 @@
   .tickets-section.full {
     grid-column: 1 / -1;
   }
+  .tickets-section.browser-section {
+    border: 0;
+    background: transparent;
+    padding: 0;
+  }
+  .planner-main,
+  .dependency-main {
+    min-height: 520px;
+  }
+  .planner-side,
+  .dependency-side {
+    align-self: start;
+  }
   .section-header h3 {
     margin: 0;
     color: var(--accent);
@@ -1596,6 +2400,38 @@
     color: var(--fg-dim);
     font-size: 0.75rem;
     font-family: var(--font-mono);
+    overflow-wrap: anywhere;
+  }
+  .section-header.inner {
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .insight-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 0.5rem;
+  }
+  .insight-card {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 0.7rem;
+    border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--bg) 72%, transparent);
+  }
+  .insight-card span {
+    color: var(--fg-dim);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0;
+    font-weight: 700;
+  }
+  .insight-card strong {
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 1rem;
     overflow-wrap: anywhere;
   }
   .filter-grid,
@@ -1721,8 +2557,10 @@
     max-height: 520px;
     overflow: auto;
   }
-  .task-row,
-  .queue-row {
+  .task-list.compact {
+    max-height: 320px;
+  }
+  .task-row {
     display: grid;
     width: 100%;
     gap: 0.25rem;
@@ -1737,22 +2575,6 @@
   .task-row.active {
     border-color: var(--accent);
     background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-  .artifact-row,
-  .event-row {
-    display: grid;
-    gap: 0.5rem;
-    padding: 0.75rem;
-    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--bg) 70%, transparent);
-  }
-  .event-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    max-height: 520px;
-    overflow: auto;
   }
   .task-title {
     color: var(--fg);
@@ -1842,6 +2664,123 @@
   .pill.static {
     cursor: default;
   }
+  .process-plan-list,
+  .planner-task-list,
+  .dependency-list,
+  .dependency-detail,
+  .selected-plan {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .dependency-list {
+    max-height: 620px;
+    overflow: auto;
+  }
+  .process-plan {
+    display: grid;
+    gap: 0.75rem;
+    padding: 0.85rem;
+    border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--bg) 70%, transparent);
+  }
+  .process-plan-header {
+    display: flex;
+    min-width: 0;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .process-plan-header > div:first-child {
+    display: grid;
+    gap: 0.2rem;
+    min-width: 0;
+  }
+  .stage-strip {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 0.35rem;
+  }
+  .stage-strip span {
+    padding: 0.25rem 0.45rem;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+  }
+  .planner-task {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.65rem;
+    width: 100%;
+    padding: 0.65rem;
+    border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
+    border-radius: 2px;
+    background: var(--bg-surface);
+    color: var(--fg);
+    text-align: left;
+    cursor: pointer;
+  }
+  .planner-task.active {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  .planner-priority {
+    min-width: 2.25rem;
+    padding: 0.2rem 0.35rem;
+    border: 1px solid color-mix(in srgb, var(--accent-dim) 60%, transparent);
+    border-radius: 2px;
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    text-align: center;
+  }
+  .dependency-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+    gap: 0.75rem;
+    align-items: center;
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--bg) 70%, transparent);
+    color: var(--fg);
+    text-align: left;
+    cursor: pointer;
+  }
+  .dependency-row.active {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+  }
+  .dependency-node {
+    display: grid;
+    min-width: 0;
+    gap: 0.2rem;
+  }
+  .dependency-node strong {
+    overflow-wrap: anywhere;
+  }
+  .dependency-node small,
+  .dependency-arrow {
+    color: var(--fg-dim);
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+  }
+  .dependency-arrow {
+    text-transform: uppercase;
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
+  .empty-row.compact {
+    margin-top: 0.5rem;
+    padding: 0.6rem;
+  }
   pre {
     max-height: 280px;
     overflow: auto;
@@ -1855,26 +2794,6 @@
     font-size: 0.75rem;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
-  }
-  .queue-table {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-  .queue-head,
-  .queue-row {
-    display: grid;
-    grid-template-columns: 1.2fr 0.8fr 0.8fr 0.8fr 0.8fr;
-    gap: 0.75rem;
-    align-items: center;
-  }
-  .queue-head {
-    color: var(--accent-dim);
-    font-size: 0.6875rem;
-    text-transform: uppercase;
-    letter-spacing: 0;
-    font-weight: 700;
-    padding: 0 0.75rem;
   }
   .claimed-box,
   .empty-row,
@@ -1902,7 +2821,9 @@
     color: var(--fg);
   }
   @media (max-width: 900px) {
-    .tickets-grid {
+    .tickets-grid,
+    .planner-grid,
+    .dependency-grid {
       grid-template-columns: 1fr;
     }
     .tickets-tabs {
@@ -1912,15 +2833,18 @@
       flex: 1;
       min-width: 0;
     }
-    .queue-head,
-    .queue-row {
-      grid-template-columns: 1fr 0.7fr 0.7fr;
+    .process-plan-header,
+    .dependency-row {
+      grid-template-columns: 1fr;
     }
-    .queue-head span:nth-child(4),
-    .queue-head span:nth-child(5),
-    .queue-row span:nth-child(4),
-    .queue-row span:nth-child(5) {
-      display: none;
+    .process-plan-header {
+      flex-direction: column;
+    }
+    .stage-strip {
+      justify-content: flex-start;
+    }
+    .dependency-arrow {
+      white-space: normal;
     }
   }
 </style>

@@ -1,7 +1,14 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
   import { channelSchemas } from "$lib/components/configSchemas";
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+    type EntityViewAction,
+  } from "$lib/entity-view";
 
   const DEFAULT_CHANNELS = ['web', 'cli'];
   const CHANNEL_OPTIONS = Object.entries(channelSchemas)
@@ -9,9 +16,10 @@
     .map(([key, schema]) => ({ value: key, label: schema.label }));
 
   let channels = $state<any[]>([]);
-  let loading = $state(true);
+  let loading = $state(false);
   let error = $state("");
   let message = $state("");
+  let initialLoadTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Add form state
   let showAddForm = $state(false);
@@ -42,13 +50,78 @@
   let hasNullclaw = $state(false);
 
   let addSchema = $derived(channelSchemas[addForm.channel_type]);
+  let editingChannel = $derived(channels.find((channel) => channel.id === editingId) || null);
 
-  onMount(async () => {
-    await loadChannels();
-    try {
-      const status = await api.getStatus();
-      hasNullclaw = Object.keys(status.instances?.nullclaw || {}).length > 0;
-    } catch {}
+  const channelColumns: EntityColumn[] = [
+    { id: "channel", label: "Channel", type: "select", width: "minmax(150px,.55fr)" },
+    { id: "account", label: "Account", type: "mono", width: "minmax(130px,.45fr)" },
+    { id: "validation", label: "Validation", type: "status", width: "minmax(130px,.45fr)" },
+    { id: "config", label: "Config", type: "text", width: "minmax(260px,1fr)" },
+    { id: "validated_at", label: "Validated", type: "date", width: "minmax(150px,.55fr)" },
+  ];
+  const channelViews = createViewSet({
+    kanban: { groupBy: "validation" },
+    tree: { parentField: "channel_type" },
+    timeline: { dateField: "validated_at" },
+    calendar: { dateField: "validated_at" },
+  });
+  const channelActions: EntityViewAction[] = [
+    {
+      id: "revalidate",
+      label: "Re-validate",
+      visible: () => hasNullclaw,
+      run: async (record) => {
+        if (revalidatingId) return;
+        await handleRevalidate(String((record.raw as any)?.id || record.id.replace("channel:", "")));
+      },
+    },
+    { id: "edit", label: "Edit", run: (record) => startEdit(record.raw) },
+    {
+      id: "delete",
+      label: "Delete",
+      variant: "destructive",
+      run: async (record) => handleDelete(String((record.raw as any)?.id || record.id.replace("channel:", ""))),
+    },
+  ];
+  let channelRecords = $derived(
+    channels.map((channel) => {
+      const validation = channel.validated_at ? "connected" : "pending";
+      const configSummary = Object.entries(channel.config || {})
+        .map(([key, value]) => `${key}: ${displayConfigValue(value)}`)
+        .join(", ");
+      return {
+        id: `channel:${channel.id}`,
+        title: channel.name,
+        type: getChannelLabel(channel.channel_type),
+        status: validation,
+        subtitle: channel.account || "default",
+        description: configSummary || "No config values",
+        date: channel.validated_at || "",
+        fields: {
+          channel: getChannelLabel(channel.channel_type),
+          channel_type: channel.channel_type,
+          account: channel.account || "default",
+          validation,
+          config: configSummary || "-",
+          validated_at: channel.validated_at || "",
+        },
+        raw: channel,
+      };
+    }) satisfies EntityRecord[],
+  );
+
+  onMount(() => {
+    initialLoadTimer = setTimeout(async () => {
+      await loadChannels();
+      try {
+        const status = await api.getStatus();
+        hasNullclaw = Object.keys(status.instances?.nullclaw || {}).length > 0;
+      } catch {}
+    }, 350);
+  });
+
+  onDestroy(() => {
+    if (initialLoadTimer) clearTimeout(initialLoadTimer);
   });
 
   async function loadChannels() {
@@ -362,320 +435,211 @@
     </div>
   {/if}
 
-  {#if loading}
-    <p class="loading">Loading channels...</p>
-  {:else}
-    {#if channels.length === 0}
-      <div class="empty-state">
-        {#if hasNullclaw}
-          <p>No saved channels yet. Add one above or install a component — channels are saved automatically during setup.</p>
-        {:else}
-          <p>Install a nullclaw instance first to add and validate channels.</p>
-          <a href="/install" class="link-btn">Install NullClaw</a>
-        {/if}
+  <UniversalEntityView
+    title="Saved Channels"
+    description="Configured inbound and outbound channels with account routing and validation state."
+    records={channelRecords}
+    columns={channelColumns}
+    views={channelViews}
+    defaultViewId="cards"
+    {loading}
+    actions={channelActions}
+    emptyTitle="No saved channels"
+    emptyDescription={hasNullclaw
+      ? "Add a channel above or install a component to save channel configuration automatically."
+      : "Install a nullclaw instance first to add and validate channels."}
+    onRefresh={loadChannels}
+  />
+
+  {#if !hasNullclaw && channels.length === 0}
+    <a href="/install" class="link-btn">Install NullClaw</a>
+  {/if}
+
+  {#if editingChannel}
+    {@const editSchema = channelSchemas[editChannelType]}
+    <section class="edit-panel">
+      <div class="edit-panel-header">
+        <div>
+          <p>Edit Channel</p>
+          <h2>{editingChannel.name}</h2>
+        </div>
+        <button class="btn" onclick={cancelEdit}>Cancel</button>
       </div>
-    {:else}
-      <div class="channel-grid">
-        {#each channels as c}
-          <div class="channel-card">
-            {#if editingId === c.id}
-              {@const editSchema = channelSchemas[editChannelType]}
-              <div class="edit-form">
-                <div class="field">
-                  <label for="edit-name-{c.id}">Name</label>
-                  <input id="edit-name-{c.id}" type="text" bind:value={editForm.name} />
-                </div>
-                {#if editSchema?.hasAccounts}
-                  <div class="field">
-                    <label for="edit-account-{c.id}">Account</label>
-                    <input id="edit-account-{c.id}" type="text" bind:value={editForm.account} />
-                  </div>
-                {/if}
-                {#each (editSchema?.fields || []).filter(f => !f.advanced) as field}
-                  {@render channelField(`edit-${c.id}`, field, editForm.config, (k, v) => { editForm.config = { ...editForm.config, [k]: v }; })}
-                {/each}
-                {#if (editSchema?.fields || []).some(f => f.advanced)}
-                  <details class="advanced-section">
-                    <summary>Advanced</summary>
-                    {#each (editSchema?.fields || []).filter(f => f.advanced) as field}
-                      {@render channelField(`edit-${c.id}`, field, editForm.config, (k, v) => { editForm.config = { ...editForm.config, [k]: v }; })}
-                    {/each}
-                  </details>
-                {/if}
-                {#if editError}
-                  <div class="error-message">{editError}</div>
-                {/if}
-                <div class="edit-actions">
-                  <button class="primary-btn" onclick={() => saveEdit(c.id)} disabled={editValidating}>
-                    {editValidating ? "Saving..." : "Save"}
-                  </button>
-                  <button class="btn" onclick={cancelEdit}>Cancel</button>
-                </div>
-              </div>
-            {:else}
-              <div class="card-header">
-                <div class="card-title">
-                  <span class="status-dot" class:validated={!!c.validated_at} class:not-validated={!c.validated_at}></span>
-                  <h3>{c.name}</h3>
-                </div>
-                <span class="channel-type">{getChannelLabel(c.channel_type)}</span>
-              </div>
-              <div class="card-body">
-                {#if c.account && c.account !== "default"}
-                  <div class="card-field">
-                    <span class="label">Account</span>
-                    <code>{c.account}</code>
-                  </div>
-                {/if}
-                {#each Object.entries(c.config || {}) as [key, val]}
-                  <div class="card-field">
-                    <span class="label">{key}</span>
-                    <code>{displayConfigValue(val)}</code>
-                  </div>
-                {/each}
-                {#if c.validated_at}
-                  <div class="card-field">
-                    <span class="label">Validated</span>
-                    <span>{formatDate(c.validated_at)}</span>
-                  </div>
-                {/if}
-              </div>
-              <div class="card-actions">
-                <button
-                  class="btn"
-                  onclick={() => handleRevalidate(c.id)}
-                  disabled={revalidatingId === c.id || !hasNullclaw}
-                  title={hasNullclaw ? "Re-validate" : "Install nullclaw to re-validate"}
-                >
-                  {revalidatingId === c.id ? "Validating..." : "Re-validate"}
-                </button>
-                <button class="btn" onclick={() => startEdit(c)}>Edit</button>
-                <button class="btn danger" onclick={() => handleDelete(c.id)}>Delete</button>
-              </div>
-            {/if}
+      <div class="edit-form">
+        <div class="field">
+          <label for="edit-name-{editingChannel.id}">Name</label>
+          <input id="edit-name-{editingChannel.id}" type="text" bind:value={editForm.name} />
+        </div>
+        {#if editSchema?.hasAccounts}
+          <div class="field">
+            <label for="edit-account-{editingChannel.id}">Account</label>
+            <input id="edit-account-{editingChannel.id}" type="text" bind:value={editForm.account} />
           </div>
+        {/if}
+        {#each (editSchema?.fields || []).filter(f => !f.advanced) as field}
+          {@render channelField(`edit-${editingChannel.id}`, field, editForm.config, (k, v) => { editForm.config = { ...editForm.config, [k]: v }; })}
         {/each}
+        {#if (editSchema?.fields || []).some(f => f.advanced)}
+          <details class="advanced-section">
+            <summary>Advanced</summary>
+            {#each (editSchema?.fields || []).filter(f => f.advanced) as field}
+              {@render channelField(`edit-${editingChannel.id}`, field, editForm.config, (k, v) => { editForm.config = { ...editForm.config, [k]: v }; })}
+            {/each}
+          </details>
+        {/if}
+        {#if editError}
+          <div class="error-message">{editError}</div>
+        {/if}
+        <div class="edit-actions">
+          <button class="primary-btn" onclick={() => saveEdit(editingChannel.id)} disabled={editValidating}>
+            {editValidating ? "Saving..." : "Save"}
+          </button>
+          <button class="btn" onclick={cancelEdit}>Cancel</button>
+        </div>
       </div>
-    {/if}
+    </section>
   {/if}
 </div>
 
 <style>
   .channels-page {
-    max-width: 800px;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
     margin: 0 auto;
-    padding: 2rem;
+    max-width: 1120px;
+    padding: 1.5rem;
   }
 
   .page-header {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    margin-bottom: 2rem;
+    justify-content: space-between;
+    gap: 1rem;
   }
 
   h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    color: var(--accent);
-    text-shadow: var(--text-glow);
+    color: var(--shadcn-foreground);
+    font-size: 1.5rem;
+    font-weight: 600;
+    letter-spacing: 0;
   }
 
   h2 {
-    font-size: 1.125rem;
+    color: var(--shadcn-foreground);
+    font-size: 1rem;
     font-weight: 700;
-    margin-bottom: 1rem;
-    color: var(--accent-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 0;
   }
 
-  .add-form, .channel-card {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
+  .add-form,
+  .edit-panel {
+    background: var(--shadcn-card);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    color: var(--shadcn-card-foreground);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
     padding: 1.25rem;
-    margin-bottom: 1rem;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-  }
-
-  .add-form {
-    margin-bottom: 2rem;
   }
 
   .field {
-    margin-bottom: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
   }
 
   .field label {
-    display: block;
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
-    color: var(--fg-dim);
-    margin-bottom: 0.35rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
     font-weight: 700;
+    letter-spacing: 0;
   }
 
-  .field input, .field select {
-    width: 100%;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
+  .field input,
+  .field select {
+    background: var(--shadcn-background);
+    border: 1px solid var(--shadcn-input);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    color: var(--shadcn-foreground);
+    font: inherit;
+    min-height: 2.25rem;
+    outline: none;
     padding: 0.5rem 0.75rem;
-    color: var(--fg);
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+    width: 100%;
   }
 
-  .field input:focus, .field select:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
+  .field input:focus,
+  .field select:focus {
+    border-color: var(--shadcn-ring);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--shadcn-ring) 18%, transparent);
   }
 
   .field-hint {
+    color: var(--shadcn-muted-foreground);
     font-weight: 400;
     font-size: 0.65rem;
-    color: color-mix(in srgb, var(--fg-dim) 70%, transparent);
     letter-spacing: 0;
-    text-transform: none;
     margin-left: 0.5rem;
   }
 
   .advanced-section {
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
     margin-top: 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 2px;
     padding: 0 0.75rem;
   }
+
   .advanced-section[open] {
     padding-bottom: 0.75rem;
   }
+
   .advanced-section summary {
+    color: var(--shadcn-muted-foreground);
     cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 700;
     padding: 0.5rem 0;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
   }
+
   .advanced-section summary:hover {
-    color: var(--accent);
+    color: var(--shadcn-foreground);
   }
 
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 1rem;
-  }
-
-  .card-title {
+  .edit-panel-header,
+  .edit-actions {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-  }
-
-  .card-title h3 {
-    font-size: 1rem;
-    font-weight: 700;
-    color: var(--fg);
-  }
-
-  .channel-type {
-    font-size: 0.75rem;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-
-  .status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .status-dot.validated {
-    background: var(--success, #4a4);
-    box-shadow: 0 0 6px var(--success, #4a4);
-  }
-
-  .status-dot.not-validated {
-    background: var(--warning, #ca0);
-    box-shadow: 0 0 6px var(--warning, #ca0);
-  }
-
-  :global(body.theme-8bit-lobster) .status-dot,
-  :global(body.theme-8bit-lobster-light) .status-dot {
-    border-radius: var(--radius) !important;
-  }
-
-  :global(body.theme-8bit-lobster) .status-dot.validated,
-  :global(body.theme-8bit-lobster-light) .status-dot.validated {
-    background: var(--success) !important;
-    box-shadow: 0 0 8px var(--success) !important;
-  }
-
-  .card-body {
-    margin-bottom: 1rem;
-  }
-
-  .card-field {
-    display: flex;
     justify-content: space-between;
-    align-items: center;
-    padding: 0.375rem 0;
-    border-bottom: 1px dashed color-mix(in srgb, var(--border) 40%, transparent);
   }
 
-  .card-field:last-child {
-    border-bottom: none;
-  }
-
-  .card-field .label {
+  .edit-panel-header p {
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
     font-weight: 700;
-  }
-
-  .card-field code {
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    color: var(--fg);
-  }
-
-  .card-actions, .edit-actions {
-    display: flex;
-    gap: 0.5rem;
   }
 
   .btn {
-    padding: 0.375rem 0.875rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    align-items: center;
+    background: var(--shadcn-secondary);
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    color: var(--shadcn-secondary-foreground);
     cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
+    display: inline-flex;
+    font-size: 0.75rem;
+    font-weight: 600;
+    justify-content: center;
+    min-height: 2rem;
+    padding: 0.375rem 0.75rem;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+    white-space: nowrap;
   }
 
   .btn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
+    background: var(--shadcn-accent);
   }
 
   .btn:disabled {
@@ -683,34 +647,24 @@
     cursor: not-allowed;
   }
 
-  .btn.danger {
-    color: var(--error, #e55);
-    border-color: color-mix(in srgb, var(--error, #e55) 50%, transparent);
-  }
-
-  .btn.danger:hover:not(:disabled) {
-    border-color: var(--error, #e55);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error, #e55) 30%, transparent);
-  }
-
   .primary-btn {
-    padding: 0.5rem 1.25rem;
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    color: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 2px;
-    font-size: 0.875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    align-items: center;
+    background: var(--shadcn-primary) !important;
+    border: 1px solid var(--shadcn-primary);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    color: var(--shadcn-primary-foreground, #fff) !important;
     cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
+    display: inline-flex;
+    font-size: 0.875rem;
+    font-weight: 600;
+    justify-content: center;
+    min-height: 2.25rem;
+    padding: 0.5rem 1rem;
+    white-space: nowrap;
   }
 
   .primary-btn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    box-shadow: 0 0 15px var(--border-glow);
+    background: color-mix(in srgb, var(--shadcn-primary) 88%, var(--shadcn-background));
   }
 
   .primary-btn:disabled {
@@ -719,83 +673,54 @@
   }
 
   .message {
-    padding: 0.875rem 1.25rem;
     background: color-mix(in srgb, var(--success) 10%, transparent);
-    border: 1px solid var(--success);
-    border-radius: 2px;
+    border: 1px solid color-mix(in srgb, var(--success) 45%, transparent);
+    border-radius: calc(var(--shadcn-radius) - 2px);
     font-size: 0.875rem;
     font-weight: bold;
     color: var(--success);
-    margin-bottom: 1.5rem;
-    box-shadow: 0 0 10px color-mix(in srgb, var(--success) 30%, transparent);
+    padding: 0.875rem 1.25rem;
   }
 
   .warning-message {
-    padding: 0.875rem 1.25rem;
     background: color-mix(in srgb, var(--warning, #ca0) 10%, transparent);
-    border: 1px solid var(--warning, #ca0);
-    border-radius: 2px;
+    border: 1px solid color-mix(in srgb, var(--warning, #ca0) 45%, transparent);
+    border-radius: calc(var(--shadcn-radius) - 2px);
     font-size: 0.875rem;
     color: var(--warning, #ca0);
-    margin-bottom: 1rem;
+    padding: 0.875rem 1.25rem;
   }
 
   .error-message {
-    padding: 0.875rem 1.25rem;
-    background: color-mix(in srgb, var(--error, #e55) 10%, transparent);
-    border: 1px solid var(--error, #e55);
-    border-radius: 2px;
+    background: color-mix(in srgb, var(--shadcn-destructive) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--shadcn-destructive) 45%, transparent);
+    border-radius: calc(var(--shadcn-radius) - 2px);
     font-size: 0.875rem;
-    color: var(--error, #e55);
-    margin-bottom: 1rem;
-  }
-
-  .empty-state {
-    text-align: center;
-    padding: 3rem;
-    color: var(--fg-dim);
-  }
-
-  .empty-state p {
-    margin-bottom: 1rem;
-    font-family: var(--font-mono);
+    color: var(--shadcn-destructive);
+    padding: 0.875rem 1.25rem;
   }
 
   .link-btn {
-    color: var(--accent);
-    text-decoration: none;
-    border: 1px solid var(--accent);
-    padding: 0.5rem 1.25rem;
-    border-radius: 2px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    align-self: flex-start;
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    color: var(--shadcn-foreground);
     font-size: 0.875rem;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    text-decoration: none;
   }
 
   .link-btn:hover {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    box-shadow: 0 0 10px var(--border-glow);
-  }
-
-  .loading {
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    text-align: center;
-    padding: 2rem;
-  }
-
-  .channel-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
+    background: var(--shadcn-accent);
   }
 
   .edit-form {
-    padding: 0.5rem 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
   }
 
-  /* Toggle styles */
   .toggle {
     position: relative;
     display: inline-block;
@@ -807,31 +732,44 @@
   .toggle-slider {
     position: absolute;
     inset: 0;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+    background: var(--shadcn-secondary);
+    border: 1px solid var(--shadcn-border);
+    border-radius: 999px;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
+
   .toggle-slider::before {
+    background: var(--shadcn-muted-foreground);
+    border-radius: 999px;
     content: "";
-    position: absolute;
-    width: 16px;
     height: 16px;
     left: 4px;
+    position: absolute;
     top: 3px;
-    background: var(--fg-dim);
-    border-radius: 2px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
+    transition: background-color 0.15s ease, transform 0.15s ease;
+    width: 16px;
   }
+
   .toggle input:checked + .toggle-slider {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    border-color: var(--accent);
-    box-shadow: inset 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
+    background: var(--shadcn-primary);
+    border-color: var(--shadcn-primary);
   }
+
   .toggle input:checked + .toggle-slider::before {
+    background: var(--shadcn-primary-foreground);
     transform: translateX(18px);
-    background: var(--accent);
-    box-shadow: 0 0 5px var(--border-glow);
+  }
+
+  @media (max-width: 720px) {
+    .channels-page {
+      padding: 1rem;
+    }
+
+    .page-header,
+    .edit-panel-header,
+    .edit-actions {
+      align-items: stretch;
+      flex-direction: column;
+    }
   }
 </style>

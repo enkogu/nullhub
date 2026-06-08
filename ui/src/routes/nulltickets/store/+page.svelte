@@ -1,24 +1,68 @@
 <script lang="ts">
-  import { nullTicketsStoreApi } from '$lib/api/client';
-  import { getSelectedTicketsInstance } from '$lib/nullstack/backendSelection';
-  import TicketsInstanceSelector from '$lib/components/nulltickets/TicketsInstanceSelector.svelte';
+  import { nullTicketsStoreApi } from "$lib/api/client";
+  import { getSelectedTicketsInstance } from "$lib/nullstack/backendSelection";
+  import TicketsInstanceSelector from "$lib/components/nulltickets/TicketsInstanceSelector.svelte";
+  import {
+    UniversalEntityView,
+    createViewSet,
+    type EntityColumn,
+    type EntityRecord,
+    type EntityViewAction,
+  } from "$lib/entity-view";
 
-  let namespace = $state('');
-  let browsedNamespace = $state('');
+  let namespace = $state("");
+  let browsedNamespace = $state("");
   let entries = $state<any[]>([]);
   let loading = $state(false);
   let error = $state<string | null>(null);
 
-  // Selected entry detail modal
   let selectedEntry = $state<{ key: string; value: any } | null>(null);
 
-  // Add entry form
-  let addNamespace = $state('');
-  let addKey = $state('');
-  let addValue = $state('');
+  let addNamespace = $state("");
+  let addKey = $state("");
+  let addValue = $state("");
   let addError = $state<string | null>(null);
   let addSuccess = $state(false);
   let addLoading = $state(false);
+
+  const entryColumns: EntityColumn[] = [
+    { id: "namespace", label: "Namespace", type: "mono", width: "minmax(140px,.5fr)" },
+    { id: "key", label: "Key", type: "mono", width: "minmax(180px,.8fr)" },
+    { id: "value_kind", label: "Value", type: "select", width: "minmax(110px,.36fr)" },
+    { id: "value_preview", label: "Preview", type: "text", width: "minmax(260px,1.2fr)" },
+  ];
+  const entryViews = createViewSet({
+    kanban: { groupBy: "value_kind" },
+    tree: { parentField: "namespace" },
+    timeline: { dateField: "updated" },
+    calendar: { dateField: "updated" },
+  });
+  const entryActions: EntityViewAction[] = [
+    { id: "view", label: "View", variant: "default", run: (record) => viewEntry(record.raw) },
+    { id: "delete", label: "Delete", variant: "destructive", run: (record) => deleteEntry(String(record.fields?.key || record.title)) },
+  ];
+
+  const entryRecords = $derived(
+    entries.map((entry) => {
+      const key = entryKey(entry);
+      const value = entry?.value !== undefined ? entry.value : entry;
+      return {
+        id: `store:${browsedNamespace}:${key}`,
+        title: key,
+        type: "store entry",
+        subtitle: browsedNamespace,
+        description: previewValue(value),
+        fields: {
+          namespace: browsedNamespace,
+          key,
+          value_kind: valueKind(value),
+          value_preview: previewValue(value),
+          updated: entry?.updated_at || entry?.created_at || "",
+        },
+        raw: entry,
+      };
+    }) satisfies EntityRecord[],
+  );
 
   function ticketsTarget(): string | undefined {
     return getSelectedTicketsInstance() || undefined;
@@ -41,8 +85,7 @@
     entries = [];
     selectedEntry = null;
     try {
-      const result = await nullTicketsStoreApi.storeList(browsedNamespace, ticketsTarget());
-      entries = result || [];
+      entries = (await nullTicketsStoreApi.storeList(browsedNamespace, ticketsTarget())) || [];
     } catch (e) {
       error = (e as Error).message;
     } finally {
@@ -55,7 +98,7 @@
   }
 
   function entryKey(entry: any): string {
-    return typeof entry === 'string' ? entry : String(entry?.key ?? entry);
+    return typeof entry === "string" ? entry : String(entry?.key ?? entry);
   }
 
   async function deleteEntry(key: string) {
@@ -73,11 +116,9 @@
     const key = entryKey(entry);
     try {
       const full = await nullTicketsStoreApi.storeGet(browsedNamespace, key, ticketsTarget());
-      // nulltickets returns a StoreEntry {namespace, key, value, ...} — extract .value
       selectedEntry = { key, value: full?.value ?? full };
-    } catch (e) {
-      // fall back to inline value
-      selectedEntry = { key, value: entry.value ?? entry };
+    } catch {
+      selectedEntry = { key, value: entry?.value ?? entry };
     }
   }
 
@@ -85,26 +126,23 @@
     addError = null;
     addSuccess = false;
     if (!addNamespace.trim() || !addKey.trim() || !addValue.trim()) {
-      addError = 'All fields are required.';
+      addError = "All fields are required.";
       return;
     }
     let parsed: any;
     try {
       parsed = JSON.parse(addValue);
     } catch {
-      addError = 'Value must be valid JSON.';
+      addError = "Value must be valid JSON.";
       return;
     }
     addLoading = true;
     try {
       await nullTicketsStoreApi.storePut(addNamespace.trim(), addKey.trim(), parsed, ticketsTarget());
       addSuccess = true;
-      addKey = '';
-      addValue = '';
-      // Refresh if we browsed the same namespace
-      if (browsedNamespace === addNamespace.trim()) {
-        await loadEntries(browsedNamespace);
-      }
+      addKey = "";
+      addValue = "";
+      if (browsedNamespace === addNamespace.trim()) await loadEntries(browsedNamespace);
     } catch (e) {
       addError = (e as Error).message;
     } finally {
@@ -113,175 +151,106 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === 'Enter' && !e.shiftKey) browse();
-  }
-
-  function handleEntryRowKeydown(e: KeyboardEvent, entry: any) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      void viewEntry(entry);
-    }
+    if (e.key === "Enter" && !e.shiftKey) browse();
   }
 
   function closeModal() {
     selectedEntry = null;
   }
 
-  function formatValue(val: any): string {
+  function previewValue(value: any): string {
+    const text = formatValue(value).replace(/\s+/g, " ").trim();
+    return text.length > 140 ? `${text.slice(0, 140)}...` : text || "-";
+  }
+
+  function valueKind(value: any): string {
+    if (Array.isArray(value)) return "array";
+    if (value === null) return "null";
+    return typeof value;
+  }
+
+  function formatValue(value: any): string {
     try {
-      return JSON.stringify(val, null, 2);
+      return JSON.stringify(value, null, 2);
     } catch {
-      return String(val);
+      return String(value);
     }
   }
 </script>
 
 <div class="page">
-  <div class="header">
-    <h1>Store</h1>
-  </div>
-
-  {#if error}
-    <div class="error-banner">ERR: {error}</div>
-  {/if}
-
-  <div class="layout">
-    <!-- Left panel: namespace browser -->
-    <div class="left-panel">
-      <div class="panel-section">
-        <h2 class="panel-title">Browse Namespace</h2>
-        <div class="store-selector">
-          <TicketsInstanceSelector label="Store backend" onChange={handleTicketsInstanceChange} />
-        </div>
-        <div class="input-row">
-          <input
-            class="ns-input"
-            type="text"
-            placeholder="namespace"
-            bind:value={namespace}
-            onkeydown={handleKeydown}
-          />
-          <button class="btn-primary" onclick={browse} disabled={loading || !namespace.trim()}>
-            {loading ? '...' : 'Browse'}
-          </button>
-        </div>
-      </div>
-
-      <div class="panel-section add-section">
-        <h2 class="panel-title">Add Entry</h2>
-        <div class="form-field">
-          <label class="form-label" for="add-ns">Namespace</label>
-          <input
-            id="add-ns"
-            class="form-input"
-            type="text"
-            placeholder="namespace"
-            bind:value={addNamespace}
-          />
-        </div>
-        <div class="form-field">
-          <label class="form-label" for="add-key">Key</label>
-          <input
-            id="add-key"
-            class="form-input"
-            type="text"
-            placeholder="key"
-            bind:value={addKey}
-          />
-        </div>
-        <div class="form-field">
-          <label class="form-label" for="add-value">Value (JSON)</label>
-          <textarea
-            id="add-value"
-            class="form-textarea"
-            placeholder="JSON value"
-            bind:value={addValue}
-            rows={5}
-          ></textarea>
-        </div>
-        {#if addError}
-          <div class="form-error">{addError}</div>
-        {/if}
-        {#if addSuccess}
-          <div class="form-success">Saved.</div>
-        {/if}
-        <button class="btn-primary" onclick={saveEntry} disabled={addLoading}>
-          {addLoading ? 'Saving...' : 'Save'}
+  <aside class="control-panel">
+    <section class="panel-section">
+      <h2>Browse Namespace</h2>
+      <TicketsInstanceSelector label="Store backend" onChange={handleTicketsInstanceChange} />
+      <div class="input-row">
+        <input
+          type="text"
+          placeholder="namespace"
+          bind:value={namespace}
+          onkeydown={handleKeydown}
+        />
+        <button type="button" class="primary-button" onclick={browse} disabled={loading || !namespace.trim()}>
+          {loading ? "Loading" : "Browse"}
         </button>
       </div>
-    </div>
+    </section>
 
-    <!-- Main area: entries table -->
-    <div class="main-area">
-      {#if !browsedNamespace}
-        <div class="empty-state">
-          <p>> Enter a namespace and press Browse.</p>
-        </div>
-      {:else if loading}
-        <div class="loading">Loading entries...</div>
-      {:else if entries.length === 0}
-        <div class="empty-state">
-          <p>> No entries in namespace "{browsedNamespace}".</p>
-        </div>
-      {:else}
-        <div class="table-section">
-          <div class="table-header">
-            <span class="ns-label">/{browsedNamespace}</span>
-            <span class="entry-count">{entries.length} entries</span>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Key</th>
-                  <th>Value Preview</th>
-                  <th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {#each entries as entry}
-                  <tr
-                    class="clickable"
-                    role="button"
-                    tabindex="0"
-                    onclick={() => viewEntry(entry)}
-                    onkeydown={(e) => handleEntryRowKeydown(e, entry)}
-                  >
-                    <td class="mono">{entryKey(entry)}</td>
-                    <td class="mono value-preview">
-                      {#if entry.value !== undefined}
-                        {typeof entry.value === 'string'
-                          ? entry.value.slice(0, 80)
-                          : JSON.stringify(entry.value).slice(0, 80)}
-                      {:else}
-                        -
-                      {/if}
-                    </td>
-                    <td class="actions-cell">
-                      <button
-                        class="btn-danger-sm"
-                        onclick={(e) => { e.stopPropagation(); void deleteEntry(entryKey(entry)); }}
-                      >Delete</button>
-                    </td>
-                  </tr>
-                {/each}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      {/if}
-    </div>
-  </div>
+    <section class="panel-section add-section">
+      <h2>Add Entry</h2>
+      <label>
+        <span>Namespace</span>
+        <input type="text" placeholder="namespace" bind:value={addNamespace} />
+      </label>
+      <label>
+        <span>Key</span>
+        <input type="text" placeholder="key" bind:value={addKey} />
+      </label>
+      <label>
+        <span>Value (JSON)</span>
+        <textarea placeholder="JSON value" bind:value={addValue} rows={5}></textarea>
+      </label>
+      {#if addError}<div class="form-message error">{addError}</div>{/if}
+      {#if addSuccess}<div class="form-message success">Saved.</div>{/if}
+      <button type="button" class="primary-button" onclick={saveEntry} disabled={addLoading}>
+        {addLoading ? "Saving" : "Save"}
+      </button>
+    </section>
+  </aside>
+
+  <main class="content">
+    {#if !browsedNamespace}
+      <div class="empty-state">
+        <strong>Browse a namespace</strong>
+        <span>Enter a namespace to load store entries.</span>
+      </div>
+    {:else}
+      <UniversalEntityView
+        title={`/${browsedNamespace}`}
+        description="Key/value entries from the selected NullTickets store namespace."
+        records={entryRecords}
+        columns={entryColumns}
+        views={entryViews}
+        defaultViewId="split"
+        {loading}
+        {error}
+        actions={entryActions}
+        emptyTitle="No entries"
+        emptyDescription="This namespace does not contain any entries."
+        onRefresh={() => loadEntries(browsedNamespace)}
+        onOpen={(record) => void viewEntry(record.raw)}
+      />
+    {/if}
+  </main>
 </div>
 
-<!-- Entry detail modal -->
 {#if selectedEntry}
   <div class="modal-backdrop">
     <button type="button" class="modal-backdrop-button" aria-label="Close dialog" onclick={closeModal}></button>
-    <div class="modal" role="dialog" aria-modal="true" aria-label="Entry detail" tabindex="-1" onkeydown={(e) => { if (e.key === 'Escape') closeModal(); }}>
+    <div class="modal" role="dialog" aria-modal="true" aria-label="Entry detail" tabindex="-1" onkeydown={(e) => { if (e.key === "Escape") closeModal(); }}>
       <div class="modal-header">
         <span class="modal-title mono">{selectedEntry.key}</span>
-        <button class="modal-close" onclick={closeModal} aria-label="Close">&#x2715;</button>
+        <button type="button" class="modal-close" onclick={closeModal} aria-label="Close">Close</button>
       </div>
       <div class="modal-body">
         <pre class="json-view">{formatValue(selectedEntry.value)}</pre>
@@ -292,342 +261,210 @@
 
 <style>
   .page {
-    padding: 2rem;
-    max-width: 1400px;
-    margin: 0 auto;
-  }
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 2rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
-  }
-  h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    text-shadow: var(--text-glow);
-    text-transform: uppercase;
-    letter-spacing: 2px;
-  }
-  .layout {
-    display: flex;
-    gap: 1.5rem;
-    align-items: flex-start;
-  }
-  .left-panel {
-    width: 280px;
-    min-width: 240px;
-    flex-shrink: 0;
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(240px, 18rem) minmax(0, 1fr);
     gap: 1rem;
+    min-width: 0;
+    align-items: start;
   }
+
+  .control-panel {
+    display: grid;
+    gap: 1rem;
+    min-width: 0;
+  }
+
   .panel-section {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    display: grid;
+    gap: 0.75rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
     padding: 1rem;
+    background: var(--shadcn-card);
+    color: var(--shadcn-card-foreground);
   }
-  .panel-title {
-    font-size: 0.6875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1.5px;
-    color: var(--fg-dim);
-    margin-bottom: 0.75rem;
+
+  .panel-section h2 {
+    margin: 0;
+    color: var(--shadcn-foreground);
+    font-size: 0.875rem;
+    font-weight: 650;
   }
+
   .input-row {
     display: flex;
     gap: 0.5rem;
-  }
-  .store-selector {
-    margin-bottom: 0.75rem;
-  }
-  .store-selector:empty {
-    display: none;
-    margin-bottom: 0;
-  }
-  .ns-input {
-    flex: 1;
-    padding: 0.4rem 0.6rem;
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    font-size: 0.8125rem;
-    font-family: var(--font-mono);
     min-width: 0;
-  }
-  .ns-input:focus {
-    border-color: var(--accent-dim);
-    box-shadow: 0 0 4px var(--border-glow);
-  }
-  .btn-primary {
-    padding: 0.4rem 0.875rem;
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, transform 0.15s ease, text-shadow 0.15s ease;
-  }
-  .btn-primary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 25%, transparent);
-    box-shadow: 0 0 6px var(--accent-dim);
-  }
-  .btn-primary:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-  .add-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0.625rem;
-  }
-  .form-field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-  }
-  .form-label {
-    font-size: 0.6875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
-  }
-  .form-input,
-  .form-textarea {
-    padding: 0.375rem 0.5rem;
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    font-size: 0.8125rem;
-    font-family: var(--font-mono);
-    resize: vertical;
-  }
-  .form-input:focus,
-  .form-textarea:focus {
-    border-color: var(--accent-dim);
-    box-shadow: 0 0 4px var(--border-glow);
-  }
-  .form-error {
-    font-size: 0.75rem;
-    color: var(--error);
-    text-shadow: 0 0 4px var(--error);
-  }
-  .form-success {
-    font-size: 0.75rem;
-    color: var(--success);
-    text-shadow: 0 0 4px var(--success);
-  }
-  .main-area {
-    flex: 1;
-    min-width: 0;
-  }
-  .table-section {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1rem;
-  }
-  .table-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 0.75rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .ns-label {
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    color: var(--accent);
-    text-shadow: var(--text-glow);
-  }
-  .entry-count {
-    font-size: 0.6875rem;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .table-wrap {
-    overflow-x: auto;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.8125rem;
-  }
-  th {
-    text-align: left;
-    padding: 0.625rem 0.75rem;
-    font-size: 0.6875rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
-    border-bottom: 1px solid var(--border);
-    white-space: nowrap;
-  }
-  td {
-    padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-    color: var(--fg);
-  }
-  td.mono {
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-  }
-  td.value-preview {
-    max-width: 400px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--fg-dim);
-  }
-  td.actions-cell {
-    white-space: nowrap;
-    width: 80px;
-  }
-  tr.clickable {
-    cursor: pointer;
-    transition: background 0.15s ease;
-  }
-  tr.clickable:hover td {
-    background: var(--bg-hover);
-  }
-  tr.clickable:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-  }
-  tr.clickable:focus-visible td {
-    background: var(--bg-hover);
-  }
-  .btn-danger-sm {
-    padding: 0.25rem 0.5rem;
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-    color: var(--error);
-    border: 1px solid color-mix(in srgb, var(--error) 40%, transparent);
-    border-radius: 2px;
-    font-size: 0.6875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    cursor: pointer;
-    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, transform 0.15s ease, text-shadow 0.15s ease;
-  }
-  .btn-danger-sm:hover {
-    background: color-mix(in srgb, var(--error) 20%, transparent);
-    box-shadow: 0 0 5px color-mix(in srgb, var(--error) 30%, transparent);
-  }
-  .error-banner {
-    padding: 0.75rem 1rem;
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-    color: var(--error);
-    border: 1px solid var(--error);
-    border-radius: 4px;
-    margin-bottom: 1.5rem;
-    font-size: 0.875rem;
-    font-weight: bold;
-    text-shadow: 0 0 5px var(--error);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error) 20%, transparent);
-  }
-  .loading {
-    text-align: center;
-    padding: 4rem 2rem;
-    color: var(--fg-dim);
-  }
-  .empty-state {
-    text-align: center;
-    padding: 4rem 2rem;
-    color: var(--fg-dim);
-    border: 1px dashed var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
-  }
-  .empty-state p {
-    font-family: var(--font-mono);
   }
 
-  /* Modal */
+  label {
+    display: grid;
+    gap: 0.35rem;
+    min-width: 0;
+  }
+
+  label span {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  input,
+  textarea {
+    min-width: 0;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    padding: 0.5rem 0.625rem;
+    background: var(--shadcn-background);
+    color: var(--shadcn-foreground);
+    font: inherit;
+    font-size: 0.875rem;
+  }
+
+  textarea {
+    resize: vertical;
+  }
+
+  .primary-button {
+    min-height: 2.25rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    padding: 0 0.875rem;
+    background: var(--shadcn-primary);
+    color: var(--shadcn-primary-foreground);
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .primary-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  .form-message {
+    border-radius: var(--shadcn-radius);
+    padding: 0.5rem 0.625rem;
+    font-size: 0.8125rem;
+  }
+
+  .form-message.error {
+    border: 1px solid var(--shadcn-destructive);
+    color: var(--shadcn-destructive);
+  }
+
+  .form-message.success {
+    border: 1px solid var(--shadcn-border);
+    color: var(--shadcn-foreground);
+    background: var(--shadcn-muted);
+  }
+
+  .content {
+    min-width: 0;
+  }
+
+  .empty-state {
+    display: grid;
+    min-height: 20rem;
+    place-content: center;
+    gap: 0.35rem;
+    border: 1px dashed var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
+    color: var(--shadcn-muted-foreground);
+    text-align: center;
+  }
+
+  .empty-state strong {
+    color: var(--shadcn-foreground);
+  }
+
   .modal-backdrop {
     position: fixed;
     inset: 0;
+    z-index: 100;
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 100;
   }
+
   .modal-backdrop-button {
     position: absolute;
     inset: 0;
-    background: rgba(0, 0, 0, 0.65);
-    backdrop-filter: blur(2px);
-    border: none;
+    border: 0;
     padding: 0;
-    margin: 0;
+    background: rgb(0 0 0 / 0.62);
     cursor: pointer;
   }
-  .modal-backdrop-button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -4px;
-  }
+
   .modal {
     position: relative;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    width: 640px;
-    max-width: 90vw;
-    max-height: 80vh;
     display: flex;
+    width: min(720px, 92vw);
+    max-height: 82vh;
     flex-direction: column;
-    box-shadow: 0 0 30px color-mix(in srgb, var(--accent) 15%, transparent);
+    overflow: hidden;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
+    box-shadow: 0 18px 54px rgb(0 0 0 / 0.28);
   }
+
   .modal-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 1rem;
+    border-bottom: 1px solid var(--shadcn-border);
     padding: 0.875rem 1rem;
-    border-bottom: 1px solid var(--border);
   }
+
   .modal-title {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--shadcn-foreground);
     font-size: 0.875rem;
-    color: var(--accent);
-    text-shadow: var(--text-glow);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+
   .modal-close {
-    background: none;
-    border: none;
-    color: var(--fg-dim);
-    font-size: 1rem;
+    min-height: 2rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    padding: 0 0.75rem;
+    background: var(--shadcn-secondary);
+    color: var(--shadcn-secondary-foreground);
+    font: inherit;
+    font-size: 0.8125rem;
     cursor: pointer;
-    padding: 0.25rem;
-    line-height: 1;
-    transition: color 0.15s ease;
   }
-  .modal-close:hover {
-    color: var(--fg);
-  }
+
   .modal-body {
-    padding: 1rem;
-    overflow-y: auto;
     flex: 1;
+    overflow: auto;
+    padding: 1rem;
   }
+
   .json-view {
     margin: 0;
+    color: var(--shadcn-foreground);
     font-family: var(--font-mono);
     font-size: 0.8125rem;
-    color: var(--fg);
+    line-height: 1.5;
     white-space: pre-wrap;
-    word-break: break-all;
+    word-break: break-word;
+  }
+
+  .mono {
+    font-family: var(--font-mono);
+  }
+
+  @media (max-width: 820px) {
+    .page {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
