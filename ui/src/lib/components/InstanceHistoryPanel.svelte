@@ -4,6 +4,7 @@
     describeInstanceCliError,
     isInstanceCliError,
   } from "$lib/instanceCli";
+  import { normalizeMojibakeText } from "$lib/textEncoding";
 
   type HistorySession = {
     session_id: string;
@@ -194,7 +195,12 @@
         return;
       }
 
-      const nextMessages = Array.isArray(result?.messages) ? result.messages : [];
+      const nextMessages = Array.isArray(result?.messages)
+        ? result.messages.map((message: HistoryMessage) => ({
+            ...message,
+            content: normalizeMojibakeText(message.content || ""),
+          }))
+        : [];
       const nextTotal = Number(result?.total || session.message_count || nextMessages.length || 0);
       if (mode === "prepend") {
         messages = [...nextMessages, ...messages];

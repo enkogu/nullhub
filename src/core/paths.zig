@@ -24,11 +24,14 @@ pub const Paths = struct {
     root: []const u8,
 
     /// Initialize a Paths struct. If `custom_root` is null, resolves from
-    /// the HOME environment variable (producing `$HOME/.nullhub`).
+    /// NULLHUB_HOME first, then HOME (producing `$HOME/.nullhub`).
     /// The returned root string is owned by the allocator.
     pub fn init(allocator: std.mem.Allocator, custom_root: ?[]const u8) !Paths {
         if (custom_root) |cr| {
             return .{ .root = try allocator.dupe(u8, cr) };
+        }
+        if (getNormalizedEnvVarOwned(allocator, "NULLHUB_HOME")) |root| {
+            return .{ .root = root };
         }
         const home = try getHomeDirOwned(allocator);
         defer allocator.free(home);
@@ -318,8 +321,45 @@ test "ensureDirs creates all subdirectories" {
     std_compat.fs.deleteTreeAbsolute(tmp_root) catch {};
 }
 
-test "init without custom root reads HOME" {
+test "init without custom root reads NULLHUB_HOME" {
     const allocator = std.testing.allocator;
+
+    const previous_nullhub_home = std_compat.process.getEnvVarOwned(allocator, "NULLHUB_HOME") catch null;
+    defer if (previous_nullhub_home) |value| allocator.free(value);
+    defer {
+        if (previous_nullhub_home) |value| {
+            _ = std.c.setenv("NULLHUB_HOME", value.ptr, 1);
+        } else {
+            _ = std.c.unsetenv("NULLHUB_HOME");
+        }
+    }
+
+    const temp_dir = try getTempDirOwned(allocator);
+    defer allocator.free(temp_dir);
+    const expected_root = try std.fmt.allocPrintZ(allocator, "{s}/nullhub-home-env-test", .{temp_dir});
+    defer allocator.free(expected_root);
+
+    if (std.c.setenv("NULLHUB_HOME", expected_root.ptr, 1) != 0) return error.Unexpected;
+
+    var p = try Paths.init(allocator, null);
+    defer p.deinit(allocator);
+
+    try std.testing.expectEqualStrings(expected_root, p.root);
+}
+
+test "init without custom root falls back to HOME" {
+    const allocator = std.testing.allocator;
+
+    const previous_nullhub_home = std_compat.process.getEnvVarOwned(allocator, "NULLHUB_HOME") catch null;
+    defer if (previous_nullhub_home) |value| allocator.free(value);
+    defer {
+        if (previous_nullhub_home) |value| {
+            _ = std.c.setenv("NULLHUB_HOME", value.ptr, 1);
+        } else {
+            _ = std.c.unsetenv("NULLHUB_HOME");
+        }
+    }
+    _ = std.c.unsetenv("NULLHUB_HOME");
 
     const home = getHomeDirOwned(allocator) catch return; // skip if no HOME/USERPROFILE
     defer allocator.free(home);

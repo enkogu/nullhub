@@ -7,7 +7,7 @@ let resolvedBase: string | null = null;
 
 function apiBases(): string[] {
   if (resolvedBase) return [resolvedBase];
-  if (typeof window !== 'undefined' && window.location.port === '8787') {
+  if (typeof window !== 'undefined') {
     return ['/nullhub-api', '/api'];
   }
   return ['/api'];

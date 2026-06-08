@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api } from "$lib/api/client";
+  import { normalizeMojibakeText } from "$lib/textEncoding";
   import ModuleFrame from "./ModuleFrame.svelte";
 
   let {
@@ -152,7 +153,7 @@
       return {
         id: `history-${latestSession.session_id}-${offset + index}`,
         role: historyRoleToChatRole(message.role),
-        content: message.content || "",
+        content: normalizeMojibakeText(message.content || ""),
         timestamp: parseHistoryTimestamp(message.created_at, fallbackTimestamp),
         order: offset + index,
       };
