@@ -68,7 +68,7 @@
     <AppSidebar />
     <Sidebar.Inset>
       <header
-        class="app-header flex h-16 shrink-0 items-center gap-2 bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
+        class="app-header flex h-16 shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
       >
         <div class="header-content">
           <div class="header-breadcrumb">
