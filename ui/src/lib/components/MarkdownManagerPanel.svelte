@@ -286,10 +286,10 @@
       <input aria-label="Title" bind:value={draftTitle} placeholder="Title" />
       <input aria-label="Path" class:invalid={!pathValid && draftPath.trim()} bind:value={draftPath} placeholder="docs/runbook.md" />
       <div class="mode-switch" aria-label="File view mode">
-        <button type="button" class:active={viewMode === 'preview'} onclick={() => (viewMode = 'preview')}>
+        <button type="button" aria-pressed={viewMode === 'preview'} class:active={viewMode === 'preview'} onclick={() => (viewMode = 'preview')}>
           Preview
         </button>
-        <button type="button" class:active={viewMode === 'source'} onclick={() => (viewMode = 'source')}>
+        <button type="button" aria-pressed={viewMode === 'source'} class:active={viewMode === 'source'} onclick={() => (viewMode = 'source')}>
           Source
         </button>
       </div>
@@ -303,13 +303,15 @@
       {/if}
     </div>
 
-    {#if error && !softStoreError}
-      <div class="inline-error">{error}</div>
-    {:else if overEditLimit}
-      <div class="inline-error">Read-only - this Markdown document is over the 512 KB edit limit.</div>
-    {:else if message}
-      <div class="inline-message">{message}</div>
-    {/if}
+    <div class="status-row">
+      {#if error && !softStoreError}
+        <span class="inline-error">{error}</span>
+      {:else if overEditLimit}
+        <span class="inline-error">Read-only - this Markdown document is over the 512 KB edit limit.</span>
+      {:else if message}
+        <span class="inline-message">{message}</span>
+      {/if}
+    </div>
 
     <div class="document-surface">
       {#if viewMode === 'preview'}
@@ -377,7 +379,11 @@
   .btn.primary {
     border-color: var(--accent);
     background: var(--accent);
-    color: var(--bg);
+    color: #fff;
+  }
+
+  .fields-row .btn.primary {
+    color: #fff !important;
   }
 
   .btn.primary:disabled {
@@ -410,33 +416,38 @@
     min-height: 0;
     height: 100%;
     padding: 12px;
-    resize: vertical;
+    resize: none;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     line-height: 1.5;
   }
 
+  .status-row {
+    min-height: 0;
+  }
+
   .inline-error,
   .inline-message {
-    margin-bottom: 5px;
-    border-radius: 6px;
-    padding: 7px 9px;
+    display: block;
+    min-height: 22px;
+    overflow: hidden;
+    padding: 0 2px 5px;
     font-size: 12px;
+    line-height: 18px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
   }
 
   .inline-error {
-    border: 1px solid color-mix(in srgb, var(--error), transparent 68%);
     color: var(--error);
   }
 
   .inline-message {
-    border: 1px solid color-mix(in srgb, var(--success), transparent 70%);
     color: var(--success);
   }
 
   .mode-switch {
-    display: inline-grid;
-    grid-template-columns: 1fr 1fr;
-    min-width: 132px;
+    display: inline-flex;
+    min-height: 26px;
     overflow: hidden;
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -444,10 +455,21 @@
   }
 
   .mode-switch button {
-    min-width: 0;
+    min-width: 62px;
+    min-height: 24px;
     border: 0;
     border-radius: 0;
     background: transparent;
+    color: var(--fg-dim);
+  }
+
+  .mode-switch button + button {
+    border-left: 1px solid var(--border);
+  }
+
+  .mode-switch button.active {
+    background: var(--bg-hover);
+    color: var(--fg);
   }
 
   .document-surface {
@@ -457,41 +479,125 @@
 
   .preview-pane {
     height: 100%;
+    min-height: 0;
     overflow: auto;
     border: 1px solid var(--border);
     border-radius: 6px;
     background: var(--bg);
-    padding: 12px;
+    padding: 18px 20px 32px;
   }
 
   .preview-title {
-    margin-bottom: 12px;
+    margin: 0 0 14px;
     color: var(--fg);
+    font-size: 24px;
     font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
+    line-height: 1.18;
   }
 
   .prose-preview {
     color: var(--fg);
-    line-height: 1.55;
+    overflow-wrap: anywhere;
+  }
+
+  .prose-preview :global(h1),
+  .prose-preview :global(h2),
+  .prose-preview :global(h3) {
+    margin: 1.1em 0 0.45em;
+    color: var(--fg);
+    font-weight: 650;
+    line-height: 1.18;
+  }
+
+  .prose-preview :global(h1) {
+    font-size: 24px;
+  }
+
+  .prose-preview :global(h2) {
+    font-size: 19px;
+  }
+
+  .prose-preview :global(h3) {
+    font-size: 16px;
+  }
+
+  .prose-preview :global(p),
+  .prose-preview :global(ul),
+  .prose-preview :global(ol),
+  .prose-preview :global(pre),
+  .prose-preview :global(table),
+  .prose-preview :global(blockquote) {
+    margin: 0.75em 0;
+  }
+
+  .prose-preview :global(ul),
+  .prose-preview :global(ol) {
+    padding-left: 1.4em;
   }
 
   .prose-preview :global(a) {
     color: var(--accent);
+    text-decoration: underline;
+  }
+
+  .prose-preview :global(code) {
+    border-radius: 4px;
+    background: var(--bg-hover);
+    padding: 0.1rem 0.25rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 0.92em;
   }
 
   .prose-preview :global(pre) {
-    overflow: auto;
+    overflow-x: auto;
+    overflow-y: visible;
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 10px;
     background: var(--bg-hover);
+    padding: 0.75rem;
+  }
+
+  .prose-preview :global(pre code) {
+    background: transparent;
+    padding: 0;
+  }
+
+  .prose-preview :global(blockquote) {
+    border-left: 3px solid var(--border);
+    color: var(--fg-dim);
+    padding-left: 0.85rem;
+  }
+
+  .prose-preview :global(table) {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    border-collapse: collapse;
+  }
+
+  .prose-preview :global(th),
+  .prose-preview :global(td) {
+    border: 1px solid var(--border);
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+  }
+
+  .prose-preview :global(th) {
+    background: var(--bg-hover);
+    font-weight: 650;
+    white-space: nowrap;
+  }
+
+  .prose-preview :global(img) {
+    display: block;
+    max-width: 100%;
+    margin: 1em 0;
   }
 
   .empty-preview {
     display: grid;
     height: 100%;
+    min-height: 180px;
     place-items: center;
     color: var(--fg-dim);
   }
@@ -511,7 +617,7 @@
   .editor-shell {
     min-height: 0;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr);
   }
 
   .document-strip {
@@ -549,6 +655,7 @@
   .fields-row {
     display: grid;
     grid-template-columns: minmax(160px, 1fr) minmax(220px, 2fr) auto auto auto auto auto;
+    align-items: center;
     gap: 5px;
     margin-bottom: 5px;
   }
