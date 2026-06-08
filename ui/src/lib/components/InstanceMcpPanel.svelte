@@ -9,6 +9,12 @@
     describeInstanceCliError,
     isInstanceCliError,
   } from "$lib/instanceCli";
+  import {
+    buildMcpServerDraft,
+    createEmptyMcpDraft,
+    describeMcpMutationResult,
+    hydrateMcpEditorState,
+  } from "$lib/mcpEditor.js";
 
   let { component, name, active = false } = $props<{
     component: string;
@@ -17,17 +23,6 @@
   }>();
 
   type EditorMode = "create" | "edit";
-
-  const emptyDraft = (): McpServerDraft => ({
-    name: "",
-    transport: "stdio",
-    command: "",
-    args: [],
-    url: "",
-    env: {},
-    headers: {},
-    timeout_ms: 10000,
-  });
 
   let servers = $state<McpServerSummary[]>([]);
   let selectedName = $state("");
@@ -42,7 +37,7 @@
   let editorOpen = $state(false);
   let editorMode = $state<EditorMode>("create");
   let originalName = $state("");
-  let draft = $state<McpServerDraft>(emptyDraft());
+  let draft = $state<McpServerDraft>(createEmptyMcpDraft());
   let envText = $state("");
   let headerText = $state("");
   let argsText = $state("");
@@ -63,87 +58,28 @@
     sortedServers.reduce((sum, server) => sum + (typeof server.tool_count === "number" ? server.tool_count : 0), 0),
   );
 
-  function normalizeTransport(value: unknown): "stdio" | "http" {
-    return value === "http" ? "http" : "stdio";
-  }
-
-  function listToText(values: string[] | undefined): string {
-    return Array.isArray(values) ? values.join("\n") : "";
-  }
-
-  function objectToText(value: Record<string, string> | undefined): string {
-    if (!value) return "";
-    return Object.entries(value)
-      .map(([key, item]) => `${key}=${item}`)
-      .join("\n");
-  }
-
-  function textToList(value: string): string[] {
-    return value
-      .split(/\r?\n/)
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-
-  function textToObject(value: string): Record<string, string> {
-    const out: Record<string, string> = {};
-    for (const rawLine of value.split(/\r?\n/)) {
-      const line = rawLine.trim();
-      if (!line) continue;
-      const idx = line.indexOf("=");
-      if (idx <= 0) {
-        out[line] = "";
-      } else {
-        out[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-      }
-    }
-    return out;
-  }
-
   function hydrateEditor(server?: McpServerSummary) {
-    const next = emptyDraft();
-    if (server) {
-      next.name = server.name;
-      next.transport = normalizeTransport(server.transport);
-      next.command = server.command || "";
-      next.args = Array.isArray(server.args) ? server.args : [];
-      next.url = server.url || "";
-      next.timeout_ms = typeof server.timeout_ms === "number" ? server.timeout_ms : 10000;
-    }
-    draft = next;
-    argsText = listToText(next.args);
-    envText = "";
-    headerText = "";
-    replaceEnv = false;
-    replaceHeaders = false;
+    const next = hydrateMcpEditorState(server);
+    draft = next.draft;
+    argsText = next.argsText;
+    envText = next.envText;
+    headerText = next.headerText;
+    replaceEnv = next.replaceEnv;
+    replaceHeaders = next.replaceHeaders;
   }
 
   function buildDraft(): McpServerDraft {
-    const next: McpServerDraft = {
-      name: draft.name.trim(),
-      transport: draft.transport,
-      timeout_ms: Number(draft.timeout_ms) || 0,
-    };
-    if (next.transport === "stdio") {
-      next.command = (draft.command || "").trim();
-      next.args = textToList(argsText);
-    } else {
-      next.url = (draft.url || "").trim();
-      const headers = textToObject(headerText);
-      if (Object.keys(headers).length > 0 || replaceHeaders) next.headers = headers;
-      if (replaceHeaders) next.replace_headers = true;
-    }
-    const env = textToObject(envText);
-    if (Object.keys(env).length > 0 || replaceEnv) next.env = env;
-    if (replaceEnv) next.replace_env = true;
-    return next;
+    return buildMcpServerDraft(draft, {
+      argsText,
+      envText,
+      headerText,
+      replaceEnv,
+      replaceHeaders,
+    }) as McpServerDraft;
   }
 
   function describeResult(result: McpMutationResult, fallback: string): string {
-    if (result?.message) return result.message;
-    if (result?.requires_restart) return `${fallback} Restart this instance to apply the change.`;
-    if (result?.requires_reload) return `${fallback} Reload config to apply the change.`;
-    return fallback;
+    return describeMcpMutationResult(result, fallback);
   }
 
   async function loadServers(force = false) {

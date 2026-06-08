@@ -9631,6 +9631,100 @@ test "dispatch routes config mutation actions" {
     try std.testing.expectEqualStrings("{\"valid\":true}\n", validate_resp.body);
 }
 
+test "mcp validators cover names urls headers drafts and partial patches" {
+    const allocator = std.testing.allocator;
+
+    try std.testing.expect(validMcpServerName("context7"));
+    try std.testing.expect(validMcpServerName("a.b-c_1"));
+    try std.testing.expect(!validMcpServerName(""));
+    try std.testing.expect(!validMcpServerName("bad/name"));
+    try std.testing.expect(!validMcpServerName("bad..name"));
+    var long_name: [97]u8 = undefined;
+    @memset(&long_name, 'a');
+    try std.testing.expect(!validMcpServerName(&long_name));
+
+    const valid_urls = [_][]const u8{
+        "https://mcp.example.com/mcp",
+        "http://localhost:6000/mcp",
+        "http://foo.localhost:6000/mcp",
+        "http://mcp.local:6000/mcp",
+        "http://host.docker.internal:6000/mcp",
+        "http://host.containers.internal:6000/mcp",
+        "http://10.0.0.1:8080/rpc",
+        "http://100.64.0.1:8931/mcp",
+        "http://[::1]:6000/mcp",
+        "http://[fd00::1]:6000/mcp",
+    };
+    for (valid_urls) |url| try std.testing.expect(validMcpHttpUrl(url));
+
+    const invalid_urls = [_][]const u8{
+        "",
+        "ftp://mcp.example.com/mcp",
+        "http://example.com/mcp",
+        "http://100.128.0.1:8931/mcp",
+        "https://mcp.example.com/mcp#frag",
+        "https://mcp.example.com/mcp path",
+        "http://[fczz::1]:6000/mcp",
+    };
+    for (invalid_urls) |url| try std.testing.expect(!validMcpHttpUrl(url));
+
+    try std.testing.expect(validMcpHttpHeaderName("Authorization"));
+    try std.testing.expect(validMcpHttpHeaderName("X-Trace_1"));
+    try std.testing.expect(!validMcpHttpHeaderName(""));
+    try std.testing.expect(!validMcpHttpHeaderName(" Authorization"));
+    try std.testing.expect(!validMcpHttpHeaderName("X-Trace\n"));
+    try std.testing.expect(!validMcpHttpHeaderName("Bad:Header"));
+    try std.testing.expect(validMcpHttpHeaderValue("Bearer token"));
+    try std.testing.expect(!validMcpHttpHeaderValue("bad\rvalue"));
+    try std.testing.expect(!validMcpHttpHeaderValue("bad\nvalue"));
+
+    {
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator,
+            "{\"name\":\"context7\",\"transport\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\"]}",
+            .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
+        );
+        defer parsed.deinit();
+        const resp = validateMcpDraftObject(mcpDraftObject(parsed.value).?, true);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    }
+    {
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator,
+            "{\"name\":\"remote\",\"transport\":\"http\",\"url\":\"http://example.com/mcp\"}",
+            .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
+        );
+        defer parsed.deinit();
+        const resp = validateMcpDraftObject(mcpDraftObject(parsed.value).?, true);
+        try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    }
+    {
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator,
+            "{\"env\":{\"FOO\":\"bar\"},\"replace_env\":true}",
+            .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
+        );
+        defer parsed.deinit();
+        const resp = validateMcpPatchObject(mcpDraftObject(parsed.value).?);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    }
+    {
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator,
+            "{\"headers\":{\"X-Trace\":\"bad\\nvalue\"}}",
+            .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
+        );
+        defer parsed.deinit();
+        const resp = validateMcpPatchObject(mcpDraftObject(parsed.value).?);
+        try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    }
+    {
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator,
+            "{\"replace_headers\":\"yes\"}",
+            .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
+        );
+        defer parsed.deinit();
+        const resp = validateMcpPatchObject(mcpDraftObject(parsed.value).?);
+        try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    }
+}
+
 test "dispatch routes doctor capabilities mcp and models detail" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
 
@@ -9664,6 +9758,10 @@ test "dispatch routes doctor capabilities mcp and models detail" {
         \\  printf '%s\n' '{"name":"context7","transport":"stdio","command":"npx","args":["-y","@upstash/context7-mcp"],"env_keys":["CONTEXT7_API_KEY"],"tool_count":7}'
         \\  exit 0
         \\fi
+        \\if [ "$1" = "config" ] && [ "$2" = "reload" ] && [ "$3" = "--json" ]; then
+        \\  printf '%s\n' '{"reloaded":true,"message":"config reloaded"}'
+        \\  exit 0
+        \\fi
         \\if [ "$1" = "models" ] && [ "$2" = "info" ] && [ "$3" = "openai/gpt-5" ] && [ "$4" = "--json" ]; then
         \\  printf '%s\n' '{"name":"openai/gpt-5","provider":"openai","canonical_name":"openai/gpt-5","context_window":null}'
         \\  exit 0
@@ -9693,6 +9791,19 @@ test "dispatch routes doctor capabilities mcp and models detail" {
     defer allocator.free(mcp_info_resp.body);
     try std.testing.expectEqualStrings("200 OK", mcp_info_resp.status);
     try std.testing.expect(std.mem.indexOf(u8, mcp_info_resp.body, "\"tool_count\":7") != null);
+
+    const mcp_probe_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "POST", "/api/instances/nullclaw/my-agent/mcp-probe?name=context7", "").?;
+    defer allocator.free(mcp_probe_resp.body);
+    try std.testing.expectEqualStrings("200 OK", mcp_probe_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, mcp_probe_resp.body, "\"tool_count\":7") != null);
+
+    const mcp_reload_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "POST", "/api/instances/nullclaw/my-agent/mcp-reload", "").?;
+    defer allocator.free(mcp_reload_resp.body);
+    try std.testing.expectEqualStrings("200 OK", mcp_reload_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, mcp_reload_resp.body, "\"reloaded\":true") != null);
+
+    const mcp_reload_get_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "GET", "/api/instances/nullclaw/my-agent/mcp-reload", "").?;
+    try std.testing.expectEqualStrings("405 Method Not Allowed", mcp_reload_get_resp.status);
 
     const model_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "GET", "/api/instances/nullclaw/my-agent/models?name=openai%2Fgpt-5", "").?;
     defer allocator.free(model_resp.body);
@@ -9811,6 +9922,39 @@ test "dispatch mutates mcp server config subtree" {
     try std.testing.expectEqualStrings("200 OK", create_resp.status);
     try std.testing.expect(std.mem.indexOf(u8, create_resp.body, "\"action\":\"create\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, create_resp.body, "\"requires_restart\":true") != null);
+
+    const duplicate_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp",
+        "{\"name\":\"context7\",\"transport\":\"stdio\",\"command\":\"npx\"}",
+    ).?;
+    defer allocator.free(duplicate_resp.body);
+    try std.testing.expectEqualStrings("409 Conflict", duplicate_resp.status);
+
+    const mismatch_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "PATCH",
+        "/api/instances/nullclaw/my-agent/mcp?name=context7",
+        "{\"name\":\"other\",\"transport\":\"stdio\",\"command\":\"node\"}",
+    ).?;
+    defer allocator.free(mismatch_resp.body);
+    try std.testing.expectEqualStrings("400 Bad Request", mismatch_resp.status);
+
+    const method_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "PUT", "/api/instances/nullclaw/my-agent/mcp?name=context7", "{}").?;
+    try std.testing.expectEqualStrings("405 Method Not Allowed", method_resp.status);
+
+    const missing_delete_name_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "DELETE", "/api/instances/nullclaw/my-agent/mcp", "").?;
+    defer allocator.free(missing_delete_name_resp.body);
+    try std.testing.expectEqualStrings("400 Bad Request", missing_delete_name_resp.status);
 
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
@@ -10001,6 +10145,115 @@ test "dispatch mutates mcp server config subtree" {
     const missing_delete_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "DELETE", "/api/instances/nullclaw/my-agent/mcp?name=context7", "").?;
     defer allocator.free(missing_delete_resp.body);
     try std.testing.expectEqualStrings("404 Not Found", missing_delete_resp.status);
+}
+
+test "dispatch rejects unsupported and malformed mcp mutation boundaries" {
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var state_fixture = try test_helpers.TempPaths.init(allocator);
+    defer state_fixture.deinit();
+    const state_path = try state_fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var s = state_mod.State.init(allocator, state_path);
+    defer s.deinit();
+    var mctx = TestManagerCtx.init(allocator);
+    defer mctx.deinit(allocator);
+
+    try s.addInstance("nullclaw", "my-agent", .{ .version = "1.0.10" });
+    try s.addInstance("nullboiler", "pipe", .{ .version = "1.0.10" });
+
+    const unsupported_validate = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullboiler/pipe/mcp-validate",
+        "{\"name\":\"x\",\"transport\":\"stdio\",\"command\":\"npx\"}",
+    ).?;
+    defer allocator.free(unsupported_validate.body);
+    try std.testing.expectEqualStrings("400 Bad Request", unsupported_validate.status);
+
+    const unsupported_read = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "GET", "/api/instances/nullboiler/pipe/mcp", "").?;
+    defer allocator.free(unsupported_read.body);
+    try std.testing.expectEqualStrings("400 Bad Request", unsupported_read.status);
+
+    const missing_instance = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/missing/mcp",
+        "{\"name\":\"x\",\"transport\":\"stdio\",\"command\":\"npx\"}",
+    ).?;
+    try std.testing.expectEqualStrings("404 Not Found", missing_instance.status);
+
+    const inst_dir = try mctx.paths.instanceDir(allocator, "nullclaw", "my-agent");
+    defer allocator.free(inst_dir);
+    std_compat.fs.makeDirAbsolute(inst_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+    const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
+    defer allocator.free(config_path);
+
+    {
+        const file = try std_compat.fs.createFileAbsolute(config_path, .{ .truncate = true });
+        defer file.close();
+        try file.writeAll("[\"not-object\"]");
+    }
+    const array_root_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp",
+        "{\"name\":\"x\",\"transport\":\"stdio\",\"command\":\"npx\"}",
+    ).?;
+    defer allocator.free(array_root_resp.body);
+    try std.testing.expectEqualStrings("400 Bad Request", array_root_resp.status);
+
+    {
+        const file = try std_compat.fs.createFileAbsolute(config_path, .{ .truncate = true });
+        defer file.close();
+        try file.writeAll("{\"mcp_servers\":[]}");
+    }
+    const array_servers_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp",
+        "{\"name\":\"x\",\"transport\":\"stdio\",\"command\":\"npx\"}",
+    ).?;
+    defer allocator.free(array_servers_resp.body);
+    try std.testing.expectEqualStrings("400 Bad Request", array_servers_resp.status);
+
+    {
+        const file = try std_compat.fs.createFileAbsolute(config_path, .{ .truncate = true });
+        defer file.close();
+        try file.writeAll("{");
+    }
+    const invalid_json_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp",
+        "{\"name\":\"x\",\"transport\":\"stdio\",\"command\":\"npx\"}",
+    ).?;
+    defer allocator.free(invalid_json_resp.body);
+    try std.testing.expectEqualStrings("400 Bad Request", invalid_json_resp.status);
 }
 
 test "dispatch routes agent invoke stream and sessions" {
