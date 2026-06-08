@@ -20,7 +20,7 @@
         return [configured.trim().replace(/\/$/, '')];
       }
     }
-    return ['/nullhub-ui', '/ui'];
+    return ['/ui', '/nullhub-ui'];
   }
 
   function currentModuleTheme() {

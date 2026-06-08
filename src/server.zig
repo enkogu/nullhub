@@ -573,7 +573,7 @@ pub const Server = struct {
             return;
         };
 
-        if (instances_api.isGatewayProxyPath(target)) {
+        if (instances_api.isGatewayProxyPath(target) and !config_api.isConfigPath(target)) {
             const prepared = blk: {
                 self.mutex.lock();
                 defer self.mutex.unlock();
@@ -3001,6 +3001,7 @@ test "routeWithoutServerMutex keeps product proxy requests off global lock" {
     try std.testing.expect(Server.routeWithoutServerMutex("/api/nullwatch/v1/runs"));
     try std.testing.expect(!Server.routeWithoutServerMutex("/api/nulltickets/tasks"));
     try std.testing.expect(Server.routeWithoutServerMutex("/api/mission-control/state"));
+    try std.testing.expect(!Server.routeWithoutServerMutex("/api/instances/nullclaw/demo/config"));
     try std.testing.expect(Server.routeWithoutServerMutex("/api/instances/nullclaw/demo/logs"));
     try std.testing.expect(Server.routeWithoutServerMutex("/api/instances/nulltickets/tracker-a/tickets"));
     try std.testing.expect(!Server.routeWithoutServerMutex("/api/components"));

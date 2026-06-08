@@ -826,8 +826,8 @@
       if (instances[component] && instances[component][name]) {
         instance = instances[component][name];
       }
-    } catch (e) {
-      console.error(e);
+    } catch {
+      // Status refresh is best-effort; transient startup timeouts should not break the page.
     }
     // Re-fetch provider health when the instance just became running (stale probe from boot)
     const justBecameRunning = instance?.status === "running" && prevStatus !== "running";
