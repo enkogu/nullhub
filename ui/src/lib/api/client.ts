@@ -2,6 +2,7 @@ import { createNullBoilerApi } from '$lib/api/nullboiler';
 import { createMissionControlApi } from '$lib/api/missionControl';
 import { createNullTicketsApi, createNullTicketsStoreApi } from '$lib/api/nulltickets';
 import { componentApiPath, encodePathSegment, instanceApiPath } from '$lib/nullstack/path';
+import { normalizeMojibakeText, normalizeMojibakeValue } from '$lib/textEncoding';
 
 let resolvedBase: string | null = null;
 
@@ -77,20 +78,52 @@ export type ApiRequestError = Error & {
   status?: number;
   body?: any;
 };
+type ApiRequestInit = RequestInit & {
+  timeoutMs?: number;
+};
 
-async function requestFromBase<T>(base: string, path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${base}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options
-  });
+function requestTimeoutMs(options?: ApiRequestInit): number {
+  if (options?.timeoutMs && options.timeoutMs > 0) return options.timeoutMs;
+  const method = (options?.method || 'GET').toUpperCase();
+  return method === 'GET' ? 15000 : 60000;
+}
+
+async function requestFromBase<T>(base: string, path: string, options?: ApiRequestInit): Promise<T> {
+  const timeoutMs = requestTimeoutMs(options);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromCaller = () => controller.abort();
+  options?.signal?.addEventListener('abort', abortFromCaller, { once: true });
+
+  let res: Response;
+  try {
+    const { timeoutMs: _timeoutMs, signal: _signal, ...fetchOptions } = options || {};
+    res = await fetch(`${base}${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...fetchOptions,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    const error = new Error(
+      err instanceof DOMException && err.name === 'AbortError'
+        ? `Request timed out after ${Math.round(timeoutMs / 1000)}s.`
+        : (err as Error).message || 'API request failed.',
+    ) as ApiRequestError;
+    error.status = 0;
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    options?.signal?.removeEventListener('abort', abortFromCaller);
+  }
+
   if (!res.ok) {
-    const body = await res.json().catch(() => null);
+    const body = normalizeMojibakeValue(await res.json().catch(() => null));
     const errMsg =
       typeof body?.message === 'string'
-        ? body.message
+        ? normalizeMojibakeText(body.message)
         : typeof body?.error === 'string'
-          ? body.error
-          : body?.error?.message || `HTTP ${res.status}`;
+          ? normalizeMojibakeText(body.error)
+          : normalizeMojibakeText(body?.error?.message || `HTTP ${res.status}`);
     const error = new Error(errMsg) as ApiRequestError;
     error.status = res.status;
     error.body = body;
@@ -100,16 +133,16 @@ async function requestFromBase<T>(base: string, path: string, options?: RequestI
   const text = await res.text();
   if (!text) return undefined as T;
   try {
-    return JSON.parse(text);
+    return normalizeMojibakeValue(JSON.parse(text));
   } catch {
     const error = new Error(`Invalid JSON response from ${base}${path}`) as ApiRequestError;
     error.status = res.status;
-    error.body = text;
+    error.body = normalizeMojibakeText(text);
     throw error;
   }
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function request<T>(path: string, options?: ApiRequestInit): Promise<T> {
   const bases = apiBases();
   let lastError: ApiRequestError | null = null;
   for (const base of bases) {
@@ -263,9 +296,9 @@ export const api = {
       }),
     ),
   getSkills: (c: string, n: string, name?: string) =>
-    request<any>(withQuery(instanceApiPath(c, n, '/skills'), { name })),
+    request<any>(withQuery(instanceApiPath(c, n, '/skills'), { name }), { timeoutMs: 10000 }),
   getSkillCatalog: (c: string, n: string) =>
-    request<any>(withQuery(instanceApiPath(c, n, '/skills'), { catalog: 1 })),
+    request<any>(withQuery(instanceApiPath(c, n, '/skills'), { catalog: 1 }), { timeoutMs: 10000 }),
   installBundledSkill: (c: string, n: string, bundled: string) =>
     request<any>(instanceApiPath(c, n, '/skills'), {
       method: 'POST',
