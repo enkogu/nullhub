@@ -8,6 +8,7 @@
 	import HouseIcon from "@lucide/svelte/icons/house";
 	import LayoutDashboardIcon from "@lucide/svelte/icons/layout-dashboard";
 	import ListChecksIcon from "@lucide/svelte/icons/list-checks";
+	import LogOutIcon from "@lucide/svelte/icons/log-out";
 	import PackagePlusIcon from "@lucide/svelte/icons/package-plus";
 	import RadioIcon from "@lucide/svelte/icons/radio";
 	import ServerIcon from "@lucide/svelte/icons/server";
@@ -319,31 +320,41 @@
 					{/snippet}
 				</Sidebar.MenuButton>
 			</Sidebar.MenuItem>
+			<Sidebar.MenuItem>
+				<Sidebar.MenuButton tooltipContent="Sign out">
+					{#snippet child({ props })}
+						<a href="/logout" {...props}>
+							<LogOutIcon />
+							<span>Sign out</span>
+						</a>
+					{/snippet}
+				</Sidebar.MenuButton>
+			</Sidebar.MenuItem>
 		</Sidebar.Menu>
 	</Sidebar.Footer>
 </Sidebar.Root>
 
 <style>
-	.status-icon {
+	:global(.status-icon) {
 		width: 0.625rem;
 		height: 0.625rem;
 	}
 
-	.status-running {
+	:global(.status-running) {
 		color: var(--success);
 		fill: var(--success);
 	}
 
-	.status-muted {
+	:global(.status-muted) {
 		color: var(--fg-dim);
 		fill: var(--fg-dim);
 	}
 
-	.hub-online {
+	:global(.hub-online) {
 		color: var(--success);
 	}
 
-	.hub-offline {
+	:global(.hub-offline) {
 		color: var(--error);
 	}
 </style>

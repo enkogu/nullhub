@@ -234,16 +234,16 @@
     color: var(--fg-dim);
   }
   .save-btn.secondary {
-    background: color-mix(in srgb, var(--warning, #f59e0b) 12%, transparent);
-    color: var(--warning, #f59e0b);
-    border-color: color-mix(in srgb, var(--warning, #f59e0b) 65%, var(--border));
-    box-shadow: inset 0 0 8px color-mix(in srgb, var(--warning, #f59e0b) 25%, transparent);
+    background: color-mix(in srgb, var(--warning, #777777) 12%, transparent);
+    color: var(--warning, #777777);
+    border-color: color-mix(in srgb, var(--warning, #777777) 65%, var(--border));
+    box-shadow: inset 0 0 8px color-mix(in srgb, var(--warning, #777777) 25%, transparent);
   }
   .save-btn.secondary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--warning, #f59e0b) 24%, transparent);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--warning, #f59e0b) 20%, transparent),
-      inset 0 0 10px color-mix(in srgb, var(--warning, #f59e0b) 40%, transparent);
-    text-shadow: 0 0 5px color-mix(in srgb, var(--warning, #f59e0b) 70%, transparent);
+    background: color-mix(in srgb, var(--warning, #777777) 24%, transparent);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--warning, #777777) 20%, transparent),
+      inset 0 0 10px color-mix(in srgb, var(--warning, #777777) 40%, transparent);
+    text-shadow: 0 0 5px color-mix(in srgb, var(--warning, #777777) 70%, transparent);
   }
   .ui-content {
     max-height: 600px;

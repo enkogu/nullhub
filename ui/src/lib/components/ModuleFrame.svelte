@@ -28,7 +28,8 @@
       let mod: any = null;
       let lastError: unknown = null;
       for (const basePath of moduleBasePaths()) {
-        const moduleUrl = `${basePath}/${moduleName}@${moduleVersion}/module.js`;
+        const cacheKey = moduleVersion === 'dev-local' ? Date.now() : moduleVersion;
+        const moduleUrl = `${basePath}/${moduleName}@${moduleVersion}/module.js?v=${encodeURIComponent(String(cacheKey))}`;
         try {
           mod = await import(/* @vite-ignore */ moduleUrl);
           break;

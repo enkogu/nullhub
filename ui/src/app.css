@@ -381,7 +381,7 @@ body.theme-8bit-lobster-light:not(.effects-disabled) .status-dot.running,
 body.theme-8bit-lobster-light:not(.effects-disabled) .status-dot.ok,
 body.theme-8bit-lobster-light:not(.effects-disabled) .status-dot.validated,
 body.theme-8bit-lobster-light:not(.effects-disabled) .badge.running::before {
-  animation: retroPulse 1.6s steps(6, end) infinite;
+  animation: none;
 }
 
 @keyframes retroPulse {

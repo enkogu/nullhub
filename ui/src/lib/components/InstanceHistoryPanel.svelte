@@ -419,9 +419,9 @@
     text-align: center;
   }
   .panel-state.warning {
-    border-color: color-mix(in srgb, var(--warning, #f59e0b) 50%, transparent);
-    color: var(--warning, #f59e0b);
-    background: color-mix(in srgb, var(--warning, #f59e0b) 8%, transparent);
+    border-color: color-mix(in srgb, var(--warning, #777777) 50%, transparent);
+    color: var(--warning, #777777);
+    background: color-mix(in srgb, var(--warning, #777777) 8%, transparent);
   }
   .history-grid {
     display: grid;
@@ -531,7 +531,7 @@
   }
   .message-card.system,
   .message-card.tool {
-    border-color: color-mix(in srgb, var(--warning, #f59e0b) 45%, transparent);
+    border-color: color-mix(in srgb, var(--warning, #777777) 45%, transparent);
   }
   .message-card header {
     display: flex;

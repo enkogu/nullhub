@@ -281,7 +281,7 @@
     align-items: center;
     justify-content: center;
     height: 100%;
-    color: var(--warning, #f59e0b);
+    color: var(--warning, #777777);
     font-size: 0.875rem;
     font-family: var(--font-mono);
     text-transform: uppercase;
@@ -289,9 +289,9 @@
     padding: 2rem;
     text-align: center;
     border: 1px dashed
-      color-mix(in srgb, var(--warning, #f59e0b) 50%, transparent);
-    background: color-mix(in srgb, var(--warning, #f59e0b) 5%, transparent);
+      color-mix(in srgb, var(--warning, #777777) 50%, transparent);
+    background: color-mix(in srgb, var(--warning, #777777) 5%, transparent);
     text-shadow: 0 0 5px
-      color-mix(in srgb, var(--warning, #f59e0b) 50%, transparent);
+      color-mix(in srgb, var(--warning, #777777) 50%, transparent);
   }
 </style>
