@@ -1,10 +1,14 @@
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+
 /* Fonts loaded non-blocking via <link> in app.html to prevent render-blocking.
    CSS @import blocks rendering until the external stylesheet loads, which causes
    a black screen on Windows when Google Fonts is slow or stalls. */
 
-:root,
 body.theme-matrix {
-  /* Default Theme: Matrix Green */
+  /* Matrix Green */
   --bg: #030a05;
   --bg-surface: rgba(0, 20, 5, 0.7);
   --bg-hover: rgba(0, 40, 10, 0.8);
@@ -17,6 +21,7 @@ body.theme-matrix {
   --border: rgba(0, 255, 65, 0.3);
   --border-glow: rgba(0, 255, 65, 0.5);
   --text-glow: 0 0 5px rgba(0, 255, 65, 0.4);
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
 }
 
@@ -65,19 +70,19 @@ body.theme-amber {
   --text-glow: 0 0 5px rgba(255, 176, 0, 0.4);
 }
 
+:root,
 body.theme-light {
-  --bg: #e4e2de;
-  /* Vintage paper terminal */
-  --bg-surface: rgba(255, 255, 255, 0.6);
-  --bg-hover: rgba(220, 218, 214, 0.8);
-  --fg: #2b2b2b;
-  --fg-dim: #5c5c5c;
-  --accent: #00702a;
-  --accent-dim: #004b1c;
-  --error: #cf222e;
-  --warning: #9a6700;
-  --border: rgba(0, 0, 0, 0.15);
-  --border-glow: rgba(0, 112, 42, 0.2);
+  --bg: #ffffff;
+  --bg-surface: rgba(255, 255, 255, 0.92);
+  --bg-hover: rgba(249, 115, 22, 0.08);
+  --fg: #111111;
+  --fg-dim: #5f6368;
+  --accent: #f97316;
+  --accent-dim: #c2410c;
+  --error: #dc2626;
+  --warning: #b45309;
+  --border: rgba(17, 17, 17, 0.12);
+  --border-glow: rgba(249, 115, 22, 0.2);
   --text-glow: none;
 }
 
@@ -141,15 +146,49 @@ body {
   --bg-tertiary: var(--bg-hover);
   --fx-accent: var(--accent);
   --fx-accent-glow: var(--border-glow);
+  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --ui-font-size: 15px;
   --ui-line-height: 1.6;
   --radius: 4px;
   --radius-sm: 2px;
 }
 
-*,
-*::before,
-*::after {
+:root,
+html,
+body,
+body.theme-light,
+body.theme-matrix,
+body.theme-dracula,
+body.theme-synthwave,
+body.theme-amber,
+html.theme-8bit-lobster-light,
+body.theme-8bit-lobster-light,
+html.theme-8bit-lobster,
+body.theme-8bit-lobster {
+  --bg: #ffffff;
+  --bg-surface: #ffffff;
+  --bg-hover: #ffffff;
+  --fg: #000000;
+  --fg-dim: #777777;
+  --accent: #000000;
+  --accent-dim: #777777;
+  --error: #b91c1c;
+  --warning: #777777;
+  --success: #166534;
+  --border: #777777;
+  --border-glow: #777777;
+  --text-glow: none;
+  --text-muted: #777777;
+  --text-primary: #000000;
+  --bg-secondary: #ffffff;
+  --bg-tertiary: #ffffff;
+  --fx-accent: #000000;
+  --fx-accent-glow: #777777;
+}
+
+*:not(.prototype-content *),
+*:not(.prototype-content *)::before,
+*:not(.prototype-content *)::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
@@ -160,7 +199,7 @@ body {
   min-height: 100vh;
   background: var(--bg);
   color: var(--fg);
-  font-family: var(--font-mono);
+  font-family: var(--font-sans);
   line-height: var(--ui-line-height);
   -webkit-font-smoothing: antialiased;
   position: relative;
@@ -174,6 +213,11 @@ html {
 
 body {
   font-size: 1rem;
+}
+
+body::before,
+body::after {
+  display: none !important;
 }
 
 /* CRT Scanline Effect */

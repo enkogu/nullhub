@@ -13,10 +13,30 @@
   let mountedComponent: any = null;
   let error = $state('');
 
+  function moduleBasePaths() {
+    if (typeof window !== 'undefined') {
+      const configured = (window as any).__NULLHUB_UI_BASE__;
+      if (typeof configured === 'string' && configured.trim()) {
+        return [configured.trim().replace(/\/$/, '')];
+      }
+    }
+    return ['/nullhub-ui', '/ui'];
+  }
+
   onMount(async () => {
     try {
-      const moduleUrl = `/ui/${moduleName}@${moduleVersion}/module.js`;
-      const mod = await import(/* @vite-ignore */ moduleUrl);
+      let mod: any = null;
+      let lastError: unknown = null;
+      for (const basePath of moduleBasePaths()) {
+        const moduleUrl = `${basePath}/${moduleName}@${moduleVersion}/module.js`;
+        try {
+          mod = await import(/* @vite-ignore */ moduleUrl);
+          break;
+        } catch (e) {
+          lastError = e;
+        }
+      }
+      if (!mod) throw lastError || new Error('module not found');
       const opts = {
         instanceUrl,
         token,

@@ -11,6 +11,7 @@
     onboardingPending = false,
     starterMessage = "Wake up, my friend!",
     onboardingMarker = "",
+    authToken = "",
   } = $props<{
     port?: number;
     moduleName?: string;
@@ -19,6 +20,7 @@
     onboardingPending?: boolean;
     starterMessage?: string;
     onboardingMarker?: string;
+    authToken?: string;
   }>();
 
   type HistorySession = {
@@ -42,7 +44,56 @@
 
   const DEFAULT_HISTORY_LIMIT = 200;
 
-  const wsUrl = $derived(port > 0 ? `ws://127.0.0.1:${port}/ws` : "");
+  function configuredWebSocketUrl(webPort: number, token: string): string {
+    const template = import.meta.env.VITE_NULLCLAW_WS_BASE?.trim();
+    if (!template) return "";
+
+    const currentProtocol =
+      typeof window !== "undefined" && window.location.protocol === "https:" ? "wss:" : "ws:";
+    const currentHost =
+      typeof window !== "undefined" && window.location.host ? window.location.host : "127.0.0.1";
+    const base = `${currentProtocol}//${currentHost}`;
+    const value = template.replaceAll("{port}", String(webPort)).replaceAll("{path}", "ws");
+    const url = new URL(value, base);
+    if (url.protocol === "http:") url.protocol = "ws:";
+    if (url.protocol === "https:") url.protocol = "wss:";
+    if (!url.pathname.endsWith("/ws")) {
+      url.pathname = `${url.pathname.replace(/\/$/, "")}/ws`;
+    }
+    if (token) url.searchParams.set("token", token);
+    return url.toString();
+  }
+
+  function isLoopbackHost(host: string): boolean {
+    return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
+  }
+
+  const wsUrl = $derived.by(() => {
+    if (port <= 0) return "";
+    const token = authToken.trim();
+    const configuredUrl = configuredWebSocketUrl(port, token);
+    if (configuredUrl) return configuredUrl;
+
+    const host = typeof window !== "undefined" && window.location.hostname
+      ? window.location.hostname
+      : "127.0.0.1";
+    if (typeof window !== "undefined" && !isLoopbackHost(host)) return "";
+    if (typeof window !== "undefined" && window.location.protocol === "https:") return "";
+
+    const url = new URL(`ws://${host}:${port}/ws`);
+    if (token) url.searchParams.set("token", token);
+    return url.toString();
+  });
+  const unavailableReason = $derived.by(() => {
+    if (port <= 0) return "Waiting for web channel port...";
+    if (typeof window !== "undefined" && !wsUrl) {
+      const host = window.location.hostname || "";
+      if (window.location.protocol === "https:" || !isLoopbackHost(host)) {
+        return "Secure web channel proxy is not configured.";
+      }
+    }
+    return "Waiting for web channel port...";
+  });
   const hasModule = $derived(moduleName.length > 0 && moduleVersion.length > 0);
   const mountKey = $derived(`${instanceKey}:${moduleName}:${moduleVersion}:${wsUrl}`);
 
@@ -196,6 +247,7 @@
           instanceUrl={wsUrl}
           moduleProps={{
             wsUrl,
+            authToken,
             pairingCode: "123456",
             initialMessages,
             autoSendMessage,
@@ -211,7 +263,7 @@
       Chat UI module not installed. Reinstall this instance to add it.
     </div>
   {:else}
-    <div class="chat-unavailable">Waiting for web channel port...</div>
+    <div class="chat-unavailable">{unavailableReason}</div>
   {/if}
 </div>
 

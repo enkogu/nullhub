@@ -92,6 +92,26 @@ export type McpMutationResult = {
   message?: string;
   valid?: boolean;
 };
+export type CronJobCreateRequest = {
+  expression?: string;
+  delay?: string;
+  command?: string;
+  prompt?: string;
+  model?: string;
+  session_target?: string;
+  announce?: boolean;
+  delivery_channel?: string;
+  delivery_account_id?: string;
+  delivery_to?: string;
+};
+export type CronJobUpdateRequest = {
+  expression?: string;
+  command?: string;
+  prompt?: string;
+  model?: string;
+  enabled?: boolean;
+  session_target?: string;
+};
 type InstanceStartOptions = {
   launch_mode?: string;
   verbose?: boolean;
@@ -366,6 +386,46 @@ export const api = {
     }),
   getSkillCatalog: (c: string, n: string) =>
     request<any>(withQuery(instanceApiPath(c, n, '/skills'), { catalog: 1 }), { timeoutMs: 10000 }),
+  getCronJobs: (c: string, n: string) =>
+    request<any>(instanceApiPath(c, n, '/cron'), { timeoutMs: 15000 }),
+  createCronJob: (c: string, n: string, payload: CronJobCreateRequest) =>
+    request<any>(instanceApiPath(c, n, '/cron'), {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  createOneShotCronJob: (c: string, n: string, payload: CronJobCreateRequest) =>
+    request<any>(instanceApiPath(c, n, '/cron/once'), {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getCronJob: (c: string, n: string, jobId: string) =>
+    request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}`, { timeoutMs: 15000 }),
+  getCronRuns: (c: string, n: string, jobId: string, limit = 10) =>
+    request<any>(
+      withQuery(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}/runs`, { limit }),
+      { timeoutMs: 15000 },
+    ),
+  runCronJob: (c: string, n: string, jobId: string) =>
+    request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}/run`, {
+      method: 'POST',
+    }),
+  pauseCronJob: (c: string, n: string, jobId: string) =>
+    request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}/pause`, {
+      method: 'POST',
+    }),
+  resumeCronJob: (c: string, n: string, jobId: string) =>
+    request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}/resume`, {
+      method: 'POST',
+    }),
+  updateCronJob: (c: string, n: string, jobId: string, payload: CronJobUpdateRequest) =>
+    request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  deleteCronJob: (c: string, n: string, jobId: string) =>
+    request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}`, {
+      method: 'DELETE',
+    }),
   installBundledSkill: (c: string, n: string, bundled: string) =>
     request<any>(instanceApiPath(c, n, '/skills'), {
       method: 'POST',

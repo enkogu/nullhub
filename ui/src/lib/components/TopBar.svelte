@@ -9,10 +9,6 @@
   let accountMenuOpen = $state(false);
   let statusPollDelay = 750;
 
-  let currentTheme = $state("theme-light");
-  let effectsEnabled = $state(false);
-  let initialized = $state(false);
-
   function readCurrentUser() {
     if (!browser) return;
 
@@ -35,11 +31,6 @@
 
     if (browser) {
       readCurrentUser();
-      const savedTheme = localStorage.getItem("nullhub-theme");
-      const savedEffects = localStorage.getItem("nullhub-effects");
-      if (savedTheme) currentTheme = savedTheme;
-      if (savedEffects === "true") effectsEnabled = true;
-      initialized = true;
 
       closeAccountMenu = (event: MouseEvent) => {
         const target = event.target as HTMLElement | null;
@@ -73,59 +64,13 @@
       if (closeAccountMenu) document.removeEventListener("click", closeAccountMenu);
     };
   });
-
-  $effect(() => {
-    if (browser && initialized) {
-      localStorage.setItem("nullhub-theme", currentTheme);
-      localStorage.setItem("nullhub-effects", effectsEnabled.toString());
-
-      const body = document.body;
-      const root = document.documentElement;
-      const themeClasses = [
-        "theme-matrix",
-        "theme-8bit-lobster",
-        "theme-8bit-lobster-light",
-        "theme-dracula",
-        "theme-synthwave",
-        "theme-amber",
-        "theme-light",
-      ];
-      body.classList.remove(...themeClasses);
-      root.classList.remove(...themeClasses);
-      if (currentTheme) {
-        body.classList.add(currentTheme);
-        root.classList.add(currentTheme);
-      }
-
-      if (effectsEnabled) {
-        body.classList.remove("effects-disabled");
-      } else {
-        body.classList.add("effects-disabled");
-      }
-    }
-  });
 </script>
 
 <header class="topbar">
   <div class="topbar-right">
-    <div class="theme-controls">
-      <label class="effect-toggle" title="Toggle CRT Effects">
-        <input type="checkbox" bind:checked={effectsEnabled} />
-        CRT FX
-      </label>
-      <select bind:value={currentTheme} class="theme-select" title="Theme">
-        <option value="theme-matrix">Matrix</option>
-        <option value="theme-8bit-lobster">Lobster</option>
-        <option value="theme-8bit-lobster-light">Lobster Light</option>
-        <option value="theme-dracula">Dracula</option>
-        <option value="theme-synthwave">Synthwave</option>
-        <option value="theme-amber">Amber</option>
-        <option value="theme-light">Light</option>
-      </select>
-    </div>
     <div class="hub-status">
       <span class="status-dot" class:running={hubOk}></span>
-      <span>{hubOk ? "Hub Running" : "Hub Unreachable"}</span>
+      <span>Hub</span>
     </div>
     <div class="account-menu">
       <button
@@ -140,7 +85,6 @@
       >
         <span class="avatar" aria-hidden="true">{userInitial}</span>
         <span class="account-email">{userEmail}</span>
-        <span class="account-caret" aria-hidden="true">v</span>
       </button>
       {#if accountMenuOpen}
         <div class="account-panel" role="menu">
@@ -173,87 +117,6 @@
     display: flex;
     align-items: center;
     gap: 1.5rem;
-  }
-
-  .theme-controls {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding-right: 1.5rem;
-    border-right: 1px dashed var(--border);
-  }
-
-  :global(body.theme-8bit-lobster) .theme-controls,
-  :global(body.theme-8bit-lobster-light) .theme-controls {
-    border-right-style: solid;
-  }
-
-  .effect-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.75rem;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-  }
-
-  .effect-toggle input[type="checkbox"] {
-    appearance: none;
-    width: 14px;
-    height: 14px;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: var(--radius-sm);
-    position: relative;
-    cursor: pointer;
-    margin: 0;
-    padding: 0;
-  }
-
-  .effect-toggle input[type="checkbox"]:checked {
-    background: color-mix(in srgb, var(--fx-accent) 20%, transparent);
-    border-color: var(--fx-accent);
-    box-shadow: inset 0 0 5px var(--fx-accent);
-  }
-
-  .effect-toggle input[type="checkbox"]:checked::after {
-    content: "";
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 8px;
-    height: 8px;
-    background: var(--fx-accent);
-    border-radius: 1px;
-    box-shadow: 0 0 3px var(--fx-accent-glow);
-  }
-
-  .theme-select {
-    background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: 0.25rem 0.5rem;
-    color: var(--accent);
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease;
-  }
-
-  .theme-select:focus-visible,
-  .theme-select:hover {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
-  }
-
-  .theme-select option {
-    background: var(--bg);
-    color: var(--fg);
   }
 
   .hub-status {
@@ -322,12 +185,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .account-caret {
-    color: var(--fg-dim);
-    font-size: 0.85rem;
-    line-height: 1;
   }
 
   .account-panel {
@@ -414,15 +271,6 @@
       width: 100%;
       justify-content: flex-end;
       gap: 0.75rem;
-    }
-
-    .theme-controls {
-      gap: 0.6rem;
-      padding-right: 0.75rem;
-    }
-
-    .hub-status span:last-child {
-      display: none;
     }
 
     .account-trigger {

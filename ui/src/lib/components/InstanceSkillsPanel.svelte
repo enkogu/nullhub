@@ -535,8 +535,8 @@
     cursor: not-allowed;
   }
   .toolbar-btn.danger {
-    border-color: color-mix(in srgb, var(--danger, #ef4444) 50%, transparent);
-    color: var(--danger, #ef4444);
+    border-color: color-mix(in srgb, var(--danger, #000000) 50%, transparent);
+    color: var(--danger, #000000);
   }
   .panel-state {
     padding: 1rem 1.15rem;
@@ -547,14 +547,14 @@
     text-align: center;
   }
   .panel-state.warning {
-    border-color: color-mix(in srgb, var(--warning, #f59e0b) 50%, transparent);
-    color: var(--warning, #f59e0b);
-    background: color-mix(in srgb, var(--warning, #f59e0b) 8%, transparent);
+    border-color: color-mix(in srgb, var(--warning, #777777) 50%, transparent);
+    color: var(--warning, #777777);
+    background: color-mix(in srgb, var(--warning, #777777) 8%, transparent);
   }
   .panel-state.success {
-    border-color: color-mix(in srgb, var(--success, #22c55e) 50%, transparent);
-    color: var(--success, #22c55e);
-    background: color-mix(in srgb, var(--success, #22c55e) 8%, transparent);
+    border-color: color-mix(in srgb, var(--success, #166534) 50%, transparent);
+    color: var(--success, #166534);
+    background: color-mix(in srgb, var(--success, #166534) 8%, transparent);
   }
   .skill-grid {
     display: grid;
@@ -574,10 +574,10 @@
     border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
   }
   .skill-card.installed {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success, #22c55e) 28%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success, #166534) 28%, transparent);
   }
   .skill-card.missing {
-    border-color: color-mix(in srgb, var(--warning, #f59e0b) 45%, transparent);
+    border-color: color-mix(in srgb, var(--warning, #777777) 45%, transparent);
   }
   .skill-card header {
     display: flex;
@@ -616,8 +616,8 @@
     letter-spacing: 1px;
   }
   .badge.ok {
-    border-color: color-mix(in srgb, var(--success, #22c55e) 45%, transparent);
-    color: var(--success, #22c55e);
+    border-color: color-mix(in srgb, var(--success, #166534) 45%, transparent);
+    color: var(--success, #166534);
   }
   .badge.accent {
     border-color: color-mix(in srgb, var(--accent) 45%, transparent);

@@ -127,10 +127,10 @@
   }
 
   .maturity-badge.alpha {
-    background: color-mix(in srgb, #ffb84d 18%, transparent);
-    color: #ffb84d;
-    border: 1px solid color-mix(in srgb, #ffb84d 65%, #000 35%);
-    box-shadow: inset 0 0 4px color-mix(in srgb, #ffb84d 35%, transparent);
+    background: color-mix(in srgb, var(--fg-dim) 10%, transparent);
+    color: var(--fg-dim);
+    border: 1px solid color-mix(in srgb, var(--fg-dim) 45%, transparent);
+    box-shadow: inset 0 0 4px color-mix(in srgb, var(--fg-dim) 20%, transparent);
   }
 
   .maturity-badge.beta {

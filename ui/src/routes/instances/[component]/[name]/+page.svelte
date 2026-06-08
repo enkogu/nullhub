@@ -7,9 +7,11 @@
   import ConfigEditor from "$lib/components/ConfigEditor.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import InstanceHistoryPanel from "$lib/components/InstanceHistoryPanel.svelte";
+  import InstanceHooksPanel from "$lib/components/InstanceHooksPanel.svelte";
   import InstanceMemoryPanel from "$lib/components/InstanceMemoryPanel.svelte";
   import InstanceMcpPanel from "$lib/components/InstanceMcpPanel.svelte";
   import InstanceSkillsPanel from "$lib/components/InstanceSkillsPanel.svelte";
+  import InstanceCronPanel from "$lib/components/InstanceCronPanel.svelte";
   import NullBoilerPanel from "$lib/components/NullBoilerPanel.svelte";
   import NullTicketsPanel from "$lib/components/NullTicketsPanel.svelte";
   import { api, type ApiRequestError } from "$lib/api/client";
@@ -70,6 +72,7 @@
 
   let modelName = $derived(extractModel(config));
   let webPort = $derived(extractWebPort(config));
+  let webAuthToken = $derived(extractWebAuthToken(config));
   let providerStatus = $derived(extractProviderStatus(config));
   let providerHealthCurrent = $derived(
     providerHealth &&
@@ -131,9 +134,26 @@
   let supportsBoilerUi = $derived(component === "nullboiler");
   let supportsTicketsUi = $derived(component === "nulltickets");
   let supportsChat = $derived(component === "nullclaw");
+  let supportsCron = $derived(component === "nullclaw");
+  let supportsHooks = $derived(component === "nullclaw");
   let supportsUsage = $derived(component === "nullclaw");
   let supportsVerboseStartup = $derived(component === "nullclaw");
   let instanceRouteKey = $derived(`${component}/${name}`);
+  const routeTabs = new Set([
+    "overview",
+    "chat",
+    "history",
+    "memory",
+    "skills",
+    "mcp",
+    "hooks",
+    "cron",
+    "tickets",
+    "boiler",
+    "config",
+    "logs",
+    "advanced",
+  ]);
   let initializedRouteKey = $state("");
   let queueSummary = $derived(summarizeQueue(integration?.queue));
   let linkedBoilers = $derived(integration?.linked_boilers || []);
@@ -180,6 +200,18 @@
         )
       : "",
   );
+
+  function hashTab(): string {
+    const value = window.location.hash.replace(/^#/, "");
+    return routeTabs.has(value) ? value : "";
+  }
+
+  function selectTab(tab: string) {
+    activeTab = tab;
+    const url = new URL(window.location.href);
+    url.hash = tab;
+    window.history.replaceState(null, "", url);
+  }
 
   function extractModel(cfg: any): string | null {
     if (!cfg) return null;
@@ -271,6 +303,18 @@
       /* ignore */
     }
     return null;
+  }
+
+  function extractWebAuthToken(cfg: any): string {
+    if (!cfg) return "";
+    try {
+      const account = cfg.channels?.web?.accounts?.default || {};
+      if (typeof account.auth_token === "string") return account.auth_token;
+      const inlineToken = cfg.channels?.web?.auth_token;
+      return typeof inlineToken === "string" ? inlineToken : "";
+    } catch {
+      return "";
+    }
   }
 
   function formatUptime(seconds: number | undefined): string {
@@ -851,6 +895,12 @@
     if ((activeTab === "history" || activeTab === "memory" || activeTab === "skills" || activeTab === "mcp") && !supportsAgentData) {
       activeTab = "overview";
     }
+    if (activeTab === "hooks" && !supportsHooks) {
+      activeTab = "overview";
+    }
+    if (activeTab === "cron" && !supportsCron) {
+      activeTab = "overview";
+    }
     if (activeTab === "tickets" && !supportsTicketsUi) {
       activeTab = "overview";
     }
@@ -910,8 +960,19 @@
   });
 
   onMount(() => {
+    const applyHashTab = () => {
+      const tab = hashTab();
+      if (tab) activeTab = tab;
+    };
+
+    applyHashTab();
+    window.addEventListener("hashchange", applyHashTab);
+
     const interval = setInterval(refresh, 3000);
-    return () => clearInterval(interval);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("hashchange", applyHashTab);
+    };
   });
 
   async function start() {
@@ -1044,7 +1105,7 @@
       {#if supportsAgentData}
         <button class="btn" onclick={startAgent} disabled={loading}>Agent</button>
       {/if}
-      <button class="btn" onclick={stop} disabled={loading}>Stop</button>
+      <button class="btn danger" onclick={stop} disabled={loading}>Stop</button>
       <button class="btn" onclick={restart} disabled={loading}>Restart</button>
       {#if component === "nullwatch"}
         <a class="btn" href={`/nullwatch?watch=${encodeURIComponent(name)}`}>NullWatch</a>
@@ -1058,13 +1119,13 @@
   <div class="tabs">
     <button
       class:active={activeTab === "overview"}
-      onclick={() => (activeTab = "overview")}>Overview</button
+      onclick={() => selectTab("overview")}>Overview</button
     >
     {#if supportsChat}
       <button
         class:active={activeTab === "chat"}
         class:disabled-tab={!chatReady}
-        onclick={() => (activeTab = "chat")}
+        onclick={() => selectTab("chat")}
         >Chat{#if !providerStatus.configured}<span class="tab-warn">!</span
           >{/if}</button
       >
@@ -1072,44 +1133,52 @@
     {#if supportsAgentData}
       <button
         class:active={activeTab === "history"}
-        onclick={() => (activeTab = "history")}>History</button
+        onclick={() => selectTab("history")}>History</button
       >
       <button
         class:active={activeTab === "memory"}
-        onclick={() => (activeTab = "memory")}>Memory</button
+        onclick={() => selectTab("memory")}>Memory</button
       >
       <button
         class:active={activeTab === "skills"}
-        onclick={() => (activeTab = "skills")}>Skills</button
+        onclick={() => selectTab("skills")}>Skills</button
       >
       <button
         class:active={activeTab === "mcp"}
-        onclick={() => (activeTab = "mcp")}>MCP</button
+        onclick={() => selectTab("mcp")}>MCP</button
+      >
+      <button
+        class:active={activeTab === "hooks"}
+        onclick={() => selectTab("hooks")}>Hooks</button
+      >
+      <button
+        class:active={activeTab === "cron"}
+        onclick={() => selectTab("cron")}>Cron</button
       >
     {/if}
     {#if supportsTicketsUi}
       <button
         class:active={activeTab === "tickets"}
-        onclick={() => (activeTab = "tickets")}>Tickets</button
+        onclick={() => selectTab("tickets")}>Tickets</button
       >
     {/if}
     {#if supportsBoilerUi}
       <button
         class:active={activeTab === "boiler"}
-        onclick={() => (activeTab = "boiler")}>Boiler</button
+        onclick={() => selectTab("boiler")}>Boiler</button
       >
     {/if}
     <button
       class:active={activeTab === "config"}
-      onclick={() => (activeTab = "config")}>Config</button
+      onclick={() => selectTab("config")}>Config</button
     >
     <button
       class:active={activeTab === "logs"}
-      onclick={() => (activeTab = "logs")}>Logs</button
+      onclick={() => selectTab("logs")}>Logs</button
     >
     <button
       class:active={activeTab === "advanced"}
-      onclick={() => (activeTab = "advanced")}>Advanced</button
+      onclick={() => selectTab("advanced")}>Advanced</button
     >
   </div>
 
@@ -1775,6 +1844,14 @@
       {#key instanceRouteKey}
         <InstanceMcpPanel {component} {name} active={activeTab === "mcp"} />
       {/key}
+    {:else if activeTab === "hooks"}
+      {#key instanceRouteKey}
+        <InstanceHooksPanel {component} {name} active={activeTab === "hooks"} />
+      {/key}
+    {:else if activeTab === "cron"}
+      {#key instanceRouteKey}
+        <InstanceCronPanel {component} {name} active={activeTab === "cron"} />
+      {/key}
     {:else if activeTab === "tickets"}
       {#key instanceRouteKey}
         <NullTicketsPanel
@@ -1901,6 +1978,7 @@
               onboardingPending={onboardingPending}
               starterMessage={onboardingStarterMessage}
               onboardingMarker={onboardingMarker}
+              authToken={webAuthToken}
             />
           {/key}
         </div>
@@ -2054,9 +2132,9 @@
   }
   .integration-badge {
     padding: 0.2rem 0.5rem;
-    border: 1px solid color-mix(in srgb, var(--success, #22c55e) 50%, transparent);
-    color: var(--success, #22c55e);
-    background: color-mix(in srgb, var(--success, #22c55e) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--success, #166534) 50%, transparent);
+    color: var(--success, #166534);
+    background: color-mix(in srgb, var(--success, #166534) 12%, transparent);
     border-radius: 2px;
     font-size: 0.7rem;
     text-transform: uppercase;
@@ -2315,14 +2393,14 @@
     width: 16px;
     height: 16px;
     border-radius: 2px;
-    background: color-mix(in srgb, var(--warning, #f59e0b) 20%, transparent);
-    color: var(--warning, #f59e0b);
-    border: 1px solid var(--warning, #f59e0b);
+    background: color-mix(in srgb, var(--warning, #777777) 20%, transparent);
+    color: var(--warning, #777777);
+    border: 1px solid var(--warning, #777777);
     font-size: 0.7rem;
     font-weight: 700;
     margin-left: 0.5rem;
     vertical-align: middle;
-    box-shadow: 0 0 5px var(--warning, #f59e0b);
+    box-shadow: 0 0 5px var(--warning, #777777);
   }
   .disabled-tab {
     opacity: 0.5;
@@ -2423,33 +2501,33 @@
     padding: 4rem 2rem;
     gap: 1rem;
     text-align: center;
-    border: 1px dashed var(--warning, #f59e0b);
-    background: color-mix(in srgb, var(--warning, #f59e0b) 5%, transparent);
+    border: 1px dashed var(--warning, #777777);
+    background: color-mix(in srgb, var(--warning, #777777) 5%, transparent);
     border-radius: 4px;
   }
   .chat-blocked-icon {
     width: 64px;
     height: 64px;
     border-radius: 4px;
-    background: color-mix(in srgb, var(--warning, #f59e0b) 15%, transparent);
-    border: 1px solid var(--warning, #f59e0b);
-    color: var(--warning, #f59e0b);
+    background: color-mix(in srgb, var(--warning, #777777) 15%, transparent);
+    border: 1px solid var(--warning, #777777);
+    color: var(--warning, #777777);
     display: flex;
     align-items: center;
     justify-content: center;
     font-size: 2rem;
     font-weight: 700;
-    text-shadow: 0 0 8px var(--warning, #f59e0b);
+    text-shadow: 0 0 8px var(--warning, #777777);
     box-shadow: 0 0 15px
-      color-mix(in srgb, var(--warning, #f59e0b) 30%, transparent);
+      color-mix(in srgb, var(--warning, #777777) 30%, transparent);
   }
   .chat-blocked-title {
     font-size: 1.25rem;
     font-weight: 700;
-    color: var(--warning, #f59e0b);
+    color: var(--warning, #777777);
     text-transform: uppercase;
     letter-spacing: 1px;
-    text-shadow: 0 0 5px var(--warning, #f59e0b);
+    text-shadow: 0 0 5px var(--warning, #777777);
   }
   .chat-blocked-desc {
     color: var(--fg);
@@ -2459,13 +2537,13 @@
   }
   .chat-blocked-desc code {
     padding: 0.125rem 0.375rem;
-    background: color-mix(in srgb, var(--warning, #f59e0b) 10%, transparent);
+    background: color-mix(in srgb, var(--warning, #777777) 10%, transparent);
     border: 1px solid
-      color-mix(in srgb, var(--warning, #f59e0b) 30%, transparent);
+      color-mix(in srgb, var(--warning, #777777) 30%, transparent);
     border-radius: 2px;
     font-family: var(--font-mono);
     font-size: 0.8125rem;
-    color: var(--warning, #f59e0b);
+    color: var(--warning, #777777);
   }
   .chat-blocked-model {
     color: var(--fg-dim);
@@ -2523,7 +2601,7 @@
   .link-btn {
     background: none;
     border: none;
-    color: var(--warning, #f59e0b);
+    color: var(--warning, #777777);
     cursor: pointer;
     font-size: inherit;
     text-decoration: underline;
@@ -2531,11 +2609,11 @@
     padding: 0;
   }
   .link-btn:hover {
-    text-shadow: 0 0 5px var(--warning, #f59e0b);
+    text-shadow: 0 0 5px var(--warning, #777777);
   }
   .card-warn {
-    border-color: color-mix(in srgb, var(--warning, #f59e0b) 40%, transparent);
-    background: color-mix(in srgb, var(--warning, #f59e0b) 5%, transparent);
+    border-color: color-mix(in srgb, var(--warning, #777777) 40%, transparent);
+    background: color-mix(in srgb, var(--warning, #777777) 5%, transparent);
   }
   .provider-status {
     display: flex;
@@ -2550,16 +2628,16 @@
     border-radius: 50%;
   }
   .status-dot.ok {
-    background: var(--success, #22c55e);
-    box-shadow: 0 0 8px var(--success, #22c55e);
+    background: var(--success, #166534);
+    box-shadow: 0 0 8px var(--success, #166534);
   }
   .status-dot.err {
-    background: var(--warning, #f59e0b);
-    box-shadow: 0 0 8px var(--warning, #f59e0b);
+    background: var(--warning, #777777);
+    box-shadow: 0 0 8px var(--warning, #777777);
   }
   .provider-hint {
     font-size: 0.75rem;
-    color: var(--warning, #f59e0b);
+    color: var(--warning, #777777);
     text-transform: uppercase;
     letter-spacing: 1px;
     font-weight: 700;
