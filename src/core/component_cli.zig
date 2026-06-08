@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const std_compat = @import("compat");
 
 pub const CliError = error{
@@ -146,6 +147,27 @@ fn makeTimeoutResult(allocator: std.mem.Allocator, stdout: []u8, stderr: []u8, t
     };
 }
 
+fn configureTimeoutProcessGroup(child: *std_compat.process.Child) void {
+    if (builtin.os.tag != .windows) {
+        // Make the CLI the leader of a fresh process group so timeout cleanup
+        // also reaches shell grandchildren that inherited stdout/stderr.
+        child.pgid = 0;
+    }
+}
+
+fn terminateTimedOutChild(child: *std_compat.process.Child) void {
+    if (builtin.os.tag == .windows) {
+        _ = child.kill() catch {};
+        return;
+    }
+
+    const pid: std.posix.pid_t = @intCast(child.id);
+    if (pid > 0) {
+        std.posix.kill(-pid, std.posix.SIG.KILL) catch {};
+        std.posix.kill(pid, std.posix.SIG.KILL) catch {};
+    }
+}
+
 fn runCapturedWithTimeout(
     allocator: std.mem.Allocator,
     argv: []const []const u8,
@@ -159,6 +181,7 @@ fn runCapturedWithTimeout(
     child.env_map = env_map;
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
+    configureTimeoutProcessGroup(&child);
     try child.spawn();
 
     var stdout_result: ReadThreadResult = .{};
@@ -177,7 +200,7 @@ fn runCapturedWithTimeout(
         const now_ms: u64 = @intCast(std_compat.time.milliTimestamp());
         if (now_ms - started_ms >= timeout_ms) {
             timed_out = true;
-            _ = child.kill() catch {};
+            terminateTimedOutChild(&child);
             break;
         }
         std_compat.thread.sleep(25 * std.time.ns_per_ms);
@@ -271,7 +294,7 @@ test "home env var includes managed components" {
 }
 
 test "runWithComponentHomeLimitedTimeout terminates slow commands" {
-    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
 
     const result = try runWithComponentHomeLimitedTimeout(
         std.testing.allocator,
@@ -288,4 +311,27 @@ test "runWithComponentHomeLimitedTimeout terminates slow commands" {
 
     try std.testing.expect(!result.success);
     try std.testing.expect(std.mem.indexOf(u8, result.stderr, "timed out") != null);
+}
+
+test "runWithComponentHomeLimitedTimeout terminates descendants holding pipes" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const started_ms: u64 = @intCast(std_compat.time.milliTimestamp());
+    const result = try runWithComponentHomeLimitedTimeout(
+        std.testing.allocator,
+        "",
+        "/bin/sh",
+        &.{ "-c", "(sleep 5) & sleep 5" },
+        null,
+        null,
+        1024,
+        100,
+    );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+    const elapsed_ms: u64 = @intCast(std_compat.time.milliTimestamp() - @as(i64, @intCast(started_ms)));
+
+    try std.testing.expect(!result.success);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "timed out") != null);
+    try std.testing.expect(elapsed_ms < 2_000);
 }

@@ -7,11 +7,20 @@ const helpers = @import("helpers.zig");
 
 pub const ApiResponse = helpers.ApiResponse;
 const admin_max_output_bytes = 2 * 1024 * 1024;
-const admin_timeout_ms = 10_000;
+pub const admin_read_timeout_ms = 10_000;
+pub const admin_mutation_timeout_ms = 120_000;
+pub const admin_install_timeout_ms = 600_000;
+
+pub const CaptureOptions = struct {
+    max_output_bytes: usize = admin_max_output_bytes,
+    timeout_ms: ?u64 = admin_read_timeout_ms,
+};
 
 pub const JsonOptions = struct {
     null_is_not_found: bool = false,
     not_found_error_codes: []const []const u8 = &.{},
+    max_output_bytes: usize = admin_max_output_bytes,
+    timeout_ms: ?u64 = admin_read_timeout_ms,
 };
 
 pub const Captured = union(enum) {
@@ -35,6 +44,18 @@ pub fn capture(
     component: []const u8,
     name: []const u8,
     args: []const []const u8,
+) Captured {
+    return captureWithOptions(allocator, s, paths, component, name, args, .{});
+}
+
+pub fn captureWithOptions(
+    allocator: std.mem.Allocator,
+    s: *state_mod.State,
+    paths: paths_mod.Paths,
+    component: []const u8,
+    name: []const u8,
+    args: []const []const u8,
+    options: CaptureOptions,
 ) Captured {
     const entry = s.getInstance(component, name) orelse return .{ .response = helpers.notFound() };
 
@@ -60,8 +81,8 @@ pub fn capture(
         args,
         null,
         inst_dir,
-        admin_max_output_bytes,
-        admin_timeout_ms,
+        options.max_output_bytes,
+        options.timeout_ms,
     ) catch {
         return .{ .response = jsonError(
             allocator,
@@ -84,7 +105,10 @@ pub fn captureJson(
     args: []const []const u8,
     options: JsonOptions,
 ) JsonCapture {
-    const captured = capture(allocator, s, paths, component, name, args);
+    const captured = captureWithOptions(allocator, s, paths, component, name, args, .{
+        .max_output_bytes = options.max_output_bytes,
+        .timeout_ms = options.timeout_ms,
+    });
     const result = switch (captured) {
         .response => |resp| return .{ .response = resp },
         .result => |value| value,

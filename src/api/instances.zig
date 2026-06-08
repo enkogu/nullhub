@@ -2237,7 +2237,9 @@ fn handleCronCreate(
         args.append(value) catch return helpers.serverError();
     }
 
-    const captured = managed_cli.capture(allocator, s, paths, component, name, args.items);
+    const captured = managed_cli.captureWithOptions(allocator, s, paths, component, name, args.items, .{
+        .timeout_ms = managed_cli.admin_mutation_timeout_ms,
+    });
     const result = switch (captured) {
         .response => |resp| return resp,
         .result => |value| value,
@@ -2276,7 +2278,9 @@ fn handleCronCommandWithJob(
     defer before.deinit();
     if (!cronStoreHasJobId(&before, job_id)) return notFound();
 
-    const captured = managed_cli.capture(allocator, s, paths, component, name, args);
+    const captured = managed_cli.captureWithOptions(allocator, s, paths, component, name, args, .{
+        .timeout_ms = managed_cli.admin_mutation_timeout_ms,
+    });
     const result = switch (captured) {
         .response => |resp| return resp,
         .result => |value| value,
@@ -2369,7 +2373,9 @@ fn handleCronUpdate(
         args.append(value) catch return helpers.serverError();
     }
 
-    const captured = managed_cli.capture(allocator, s, paths, component, name, args.items);
+    const captured = managed_cli.captureWithOptions(allocator, s, paths, component, name, args.items, .{
+        .timeout_ms = managed_cli.admin_mutation_timeout_ms,
+    });
     const result = switch (captured) {
         .response => |resp| return resp,
         .result => |value| value,
@@ -2404,7 +2410,9 @@ fn handleCronDelete(
     if (!cronStoreHasJobId(&before, job_id)) return notFound();
 
     const args = [_][]const u8{ "cron", "remove", job_id };
-    const captured = managed_cli.capture(allocator, s, paths, component, name, &args);
+    const captured = managed_cli.captureWithOptions(allocator, s, paths, component, name, &args, .{
+        .timeout_ms = managed_cli.admin_mutation_timeout_ms,
+    });
     const result = switch (captured) {
         .response => |resp| return resp,
         .result => |value| value,
@@ -4167,7 +4175,9 @@ fn handleSkillsInstall(
         args.append(allocator, if (source) |value| value else url.?) catch return helpers.serverError();
     }
 
-    const captured = managed_cli.capture(allocator, s, paths, component, name, args.items);
+    const captured = managed_cli.captureWithOptions(allocator, s, paths, component, name, args.items, .{
+        .timeout_ms = managed_cli.admin_install_timeout_ms,
+    });
     const result = switch (captured) {
         .response => |resp| return resp,
         .result => |value| value,
@@ -4225,7 +4235,9 @@ fn handleSkillsRemove(
     args.append(allocator, "remove") catch return helpers.serverError();
     args.append(allocator, skill_name.?) catch return helpers.serverError();
 
-    const captured = managed_cli.capture(allocator, s, paths, component, name, args.items);
+    const captured = managed_cli.captureWithOptions(allocator, s, paths, component, name, args.items, .{
+        .timeout_ms = managed_cli.admin_mutation_timeout_ms,
+    });
     const result = switch (captured) {
         .response => |resp| return resp,
         .result => |value| value,
