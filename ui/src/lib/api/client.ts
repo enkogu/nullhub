@@ -179,11 +179,16 @@ type ApiRequestInit = RequestInit & {
 const ADMIN_READ_TIMEOUT_MS = 10_000;
 const ADMIN_MUTATION_TIMEOUT_MS = 120_000;
 const ADMIN_INSTALL_TIMEOUT_MS = 600_000;
+const mojibakeResponsePattern = /[ÐÑÃÂâðŸ�]|\\u00(?:c3|c2|d0|d1|f0|f1)/i;
 
 function requestTimeoutMs(options?: ApiRequestInit): number {
   if (options?.timeoutMs && options.timeoutMs > 0) return options.timeoutMs;
   const method = (options?.method || 'GET').toUpperCase();
   return method === 'GET' ? 15000 : 60000;
+}
+
+function normalizeApiJson<T>(rawText: string, value: T): T {
+  return mojibakeResponsePattern.test(rawText) ? normalizeMojibakeValue(value) : value;
 }
 
 async function requestFromBase<T>(base: string, path: string, options?: ApiRequestInit): Promise<T> {
@@ -231,7 +236,7 @@ async function requestFromBase<T>(base: string, path: string, options?: ApiReque
   const text = await res.text();
   if (!text) return undefined as T;
   try {
-    return normalizeMojibakeValue(JSON.parse(text));
+    return normalizeApiJson(text, JSON.parse(text));
   } catch {
     const error = new Error(`Invalid JSON response from ${base}${path}`) as ApiRequestError;
     error.status = res.status;

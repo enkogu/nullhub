@@ -86,6 +86,11 @@
   let ticketClaimTtl = $state("300000");
   let claimedTicket = $state<any>(null);
   let lastTicketsRefreshAt = $state(0);
+  let refreshInFlight = false;
+  let refreshQueued = false;
+  let refreshRequestSeq = 0;
+  let integrationRequestSeq = 0;
+  let lastIntegrationRefreshAt = 0;
 
   let modelName = $derived(extractModel(config));
   let webPort = $derived(extractWebPort(config));
@@ -621,16 +626,23 @@
     }
   }
 
-  async function refreshIntegration() {
+  async function refreshIntegration(force = false) {
     if (!supportsIntegration) {
       integration = null;
       integrationError = null;
       return;
     }
+    const now = Date.now();
+    if (!force && now - lastIntegrationRefreshAt < 10_000) return;
+    if (integrationLoading) return;
+    lastIntegrationRefreshAt = now;
 
+    const req = ++integrationRequestSeq;
     integrationLoading = true;
     try {
-      integration = await api.getIntegration(component, name);
+      const nextIntegration = await api.getIntegration(component, name);
+      if (req !== integrationRequestSeq) return;
+      integration = nextIntegration;
       integrationError = null;
       if (component === "nullboiler") {
         const currentLink = integration?.current_link;
@@ -653,7 +665,7 @@
           String(currentLink?.max_concurrent_tasks || trackerConcurrency || "1");
       } else if (component === "nulltickets") {
         if (!ticketClaimRole) ticketClaimRole = firstQueueRole();
-        await refreshTicketsData();
+        void refreshTicketsData(force);
       } else if (component === "nullclaw") {
         selectedWatch =
           integration?.linked_watch?.name ||
@@ -669,10 +681,11 @@
           "";
       }
     } catch (e) {
+      if (req !== integrationRequestSeq) return;
       integration = null;
       integrationError = (e as Error).message;
     } finally {
-      integrationLoading = false;
+      if (req === integrationRequestSeq) integrationLoading = false;
     }
   }
 
@@ -851,57 +864,55 @@
   }
 
   async function refresh(loadProviderHealth = false, forceUsage = false) {
+    if (refreshInFlight) {
+      refreshQueued = true;
+      return;
+    }
+    refreshInFlight = true;
+    const req = ++refreshRequestSeq;
     const prevStatus = instance?.status;
     try {
-      const status = await api.getStatus();
-      const instances = status.instances || {};
+      const [status, uiModuleResult] = await Promise.all([
+        api.getStatus().catch(() => null),
+        api.getUiModules().catch(() => null),
+      ]);
+      if (req !== refreshRequestSeq) return;
+      const instances = status?.instances || {};
       if (instances[component] && instances[component][name]) {
         instance = instances[component][name];
       }
-    } catch {
-      // Status refresh is best-effort; transient startup timeouts should not break the page.
-    }
-    // Re-fetch provider health when the instance just became running (stale probe from boot)
-    const justBecameRunning = instance?.status === "running" && prevStatus !== "running";
-    // Fetch installed UI modules independently from instance config. Config endpoints can be
-    // slow or unavailable while an instance is booting, but module installation is hub-level.
-    try {
-      const res = await api.getUiModules();
-      uiModules = res.modules || {};
-    } catch {
-      /* ignore */
-    }
-    // Fetch config (best-effort)
-    let loadedConfig: any = null;
-    try {
-      loadedConfig = await api.getConfig(component, name);
-      config = loadedConfig;
-    } catch {
-      try {
+      if (uiModuleResult) uiModules = uiModuleResult.modules || {};
+
+      // Re-fetch provider health when the instance just became running (stale probe from boot)
+      const justBecameRunning = instance?.status === "running" && prevStatus !== "running";
+
+      // Config and onboarding are useful for rendering controls, but they should not wait for
+      // provider probes, usage summaries, or integration/tickets data.
+      const configPromise = api.getConfig(component, name).catch(async () => {
         await new Promise((resolve) => setTimeout(resolve, 350));
-        loadedConfig = await api.getConfig(component, name);
-        config = loadedConfig;
-      } catch {
-        loadedConfig = config;
-        if (!config) {
-          providerHealth = null;
-        }
+        return api.getConfig(component, name).catch(() => config);
+      });
+      const onboardingPromise = component === "nullclaw"
+        ? api.getOnboarding(component, name).catch(() => null)
+        : Promise.resolve(null);
+      const [loadedConfig, nextOnboardingStatus] = await Promise.all([configPromise, onboardingPromise]);
+      if (req !== refreshRequestSeq) return;
+      if (loadedConfig) config = loadedConfig;
+      if (!loadedConfig && !config) providerHealth = null;
+      onboardingStatus = nextOnboardingStatus;
+
+      if (loadProviderHealth || justBecameRunning) {
+        void refreshProviderHealth(loadedConfig || config);
+      }
+      void refreshUsage(forceUsage);
+      void refreshIntegration(loadProviderHealth || forceUsage);
+    } finally {
+      refreshInFlight = false;
+      if (refreshQueued) {
+        refreshQueued = false;
+        void refresh(false, false);
       }
     }
-    if (component === "nullclaw") {
-      try {
-        onboardingStatus = await api.getOnboarding(component, name);
-      } catch {
-        onboardingStatus = null;
-      }
-    } else {
-      onboardingStatus = null;
-    }
-    if (loadProviderHealth || justBecameRunning) {
-      await refreshProviderHealth(loadedConfig);
-    }
-    await refreshUsage(forceUsage);
-    await refreshIntegration();
   }
 
   $effect(() => {
@@ -1007,6 +1018,8 @@
     bootstrapChatAutoOpenedFor = "";
     bootstrapNoticeHidden = false;
     lastUsageRefreshAt = 0;
+    lastIntegrationRefreshAt = 0;
+    integrationRequestSeq += 1;
     void refresh(true, true);
   });
 
@@ -1019,7 +1032,7 @@
     applyHashTab();
     window.addEventListener("hashchange", applyHashTab);
 
-    const interval = setInterval(refresh, 3000);
+    const interval = setInterval(refresh, 5000);
     return () => {
       clearInterval(interval);
       window.removeEventListener("hashchange", applyHashTab);

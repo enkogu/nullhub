@@ -38,6 +38,7 @@
   let sessionsLoading = $state(false);
   let sessionsError = $state<string | null>(null);
   let loadedSessionsKey = $state("");
+  let initializedHistoryKey = $state("");
 
   let selectedSessionId = $state("");
   let messages = $state<HistoryMessage[]>([]);
@@ -162,6 +163,7 @@
 
   function openSession(session: HistorySession) {
     if (!session?.session_id) return;
+    messageRequestSeq += 1;
     selectedSessionId = session.session_id;
     messages = [];
     messagesTotal = Number(session.message_count || 0);
@@ -265,8 +267,12 @@
   }
 
   $effect(() => {
-    if (!active || !component || !name) return;
-    if (loadedSessionsKey === `${instanceKey}:sessions`) return;
+    if (!active || !component || !name) {
+      initializedHistoryKey = "";
+      return;
+    }
+    if (initializedHistoryKey === instanceKey) return;
+    initializedHistoryKey = instanceKey;
     sessions = [];
     sessionsTotal = 0;
     sessionsOffset = 0;

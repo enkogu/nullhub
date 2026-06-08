@@ -42,7 +42,8 @@
     order?: number;
   };
 
-  const DEFAULT_HISTORY_LIMIT = 200;
+  const DEFAULT_HISTORY_LIMIT = 50;
+  const HISTORY_LOAD_TIMEOUT_MS = 1200;
 
   function configuredWebSocketUrl(webPort: number, token: string): string {
     const template = import.meta.env.VITE_NULLCLAW_WS_BASE?.trim();
@@ -145,6 +146,7 @@
   }
 
   let autoSendMessage = $derived.by(() => {
+    if (!historyReady) return "";
     if (!shouldAutoStartBootstrap(instanceKey, onboardingMarker, onboardingPending, initialMessages)) {
       return "";
     }
@@ -216,6 +218,19 @@
     });
   }
 
+  async function loadLatestHistoryWithTimeout(component: string, name: string): Promise<ChatSeedMessage[]> {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<ChatSeedMessage[]>((resolve) => {
+      timer = setTimeout(() => resolve([]), HISTORY_LOAD_TIMEOUT_MS);
+    });
+
+    try {
+      return await Promise.race([loadLatestHistory(component, name), timeoutPromise]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   $effect(() => {
     const parsed = parseInstanceKey(instanceKey);
     if (!hasModule || !wsUrl || !parsed) {
@@ -228,7 +243,7 @@
     historyReady = false;
     initialMessages = [];
 
-    void loadLatestHistory(parsed.component, parsed.name)
+    void loadLatestHistoryWithTimeout(parsed.component, parsed.name)
       .then((messages) => {
         if (requestSeq !== historyRequestSeq) return;
         initialMessages = messages;

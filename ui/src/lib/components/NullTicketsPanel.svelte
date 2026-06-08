@@ -98,6 +98,7 @@
   };
 
   const allPanelViews: PanelView[] = ["tasks", "pipelines", "queue", "runs", "artifacts"];
+  const TASK_DETAIL_PREFETCH_LIMIT = 12;
   const panelViewLabels: Record<PanelView, string> = {
     tasks: "Tasks",
     pipelines: "Processes",
@@ -898,13 +899,17 @@
 
   async function loadVisibleTaskDetails(items = tasks, force = false) {
     if (component !== "nulltickets" || !running || !shouldLoadVisibleTaskDetails()) return;
-    const ids = items.map((task) => taskId(task)).filter(Boolean);
-    if (ids.length === 0) {
+    const allIds = items.map((task) => taskId(task)).filter(Boolean);
+    if (allIds.length === 0) {
       taskDetailsLoadToken += 1;
       taskDetailsById = {};
       taskDetailsLoadKey = "";
       return;
     }
+    const ids = [
+      ...(selectedTaskId && allIds.includes(selectedTaskId) ? [selectedTaskId] : []),
+      ...allIds.filter((id) => id !== selectedTaskId),
+    ].slice(0, TASK_DETAIL_PREFETCH_LIMIT);
     const nextKey = ids.join("|");
     if (!force && taskDetailsLoadKey === nextKey) return;
     const loadToken = taskDetailsLoadToken + 1;
@@ -953,10 +958,18 @@
       if (append) return;
 
       const selectedStillVisible = selectedTaskId && items.some((task) => taskId(task) === selectedTaskId);
-      if (selectedStillVisible) {
-        await selectTask(selectedTaskId);
-      } else if (items.length > 0) {
-        await selectTask(taskId(items[0]));
+      const nextSelectedTaskId = selectedStillVisible
+        ? selectedTaskId
+        : items.length > 0
+          ? taskId(items[0])
+          : "";
+      if (nextSelectedTaskId) {
+        selectedTaskId = nextSelectedTaskId;
+        selectedTask =
+          taskDetailsById[nextSelectedTaskId] ||
+          items.find((task) => taskId(task) === nextSelectedTaskId) ||
+          null;
+        void selectTask(nextSelectedTaskId);
       } else {
         selectedTaskId = "";
         selectedTask = null;
