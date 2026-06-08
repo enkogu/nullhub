@@ -68,7 +68,7 @@
     <AppSidebar />
     <Sidebar.Inset>
       <header
-        class="app-header flex h-16 shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
+        class="app-header flex h-16 shrink-0 items-center gap-2 bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
       >
         <div class="header-content">
           <div class="header-breadcrumb">
@@ -243,7 +243,7 @@
 
   .route-actions button {
     height: 32px;
-    border: 1px solid var(--shadcn-border);
+    border: 1px solid transparent;
     border-radius: 6px;
     background: var(--shadcn-background);
     color: var(--shadcn-foreground);
@@ -266,6 +266,7 @@
 
   .route-actions button.active {
     background: var(--shadcn-accent);
+    border-color: var(--shadcn-accent);
     color: var(--shadcn-foreground);
   }
 

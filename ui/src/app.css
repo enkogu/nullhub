@@ -21,7 +21,7 @@ body.theme-matrix {
   --border: rgba(0, 255, 65, 0.3);
   --border-glow: rgba(0, 255, 65, 0.5);
   --text-glow: 0 0 5px rgba(0, 255, 65, 0.4);
-  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans: var(--prin7r-font-sans, -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Arial, sans-serif);
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
 }
 
@@ -72,6 +72,9 @@ body.theme-amber {
 
 :root,
 body.theme-light {
+  --prin7r-font-standard: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  --prin7r-font-sans: var(--prin7r-font-standard);
+  --prin7r-font-mono-standard: "SF Mono", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   --bg: #ffffff;
   --bg-surface: rgba(255, 255, 255, 0.92);
   --bg-hover: rgba(249, 115, 22, 0.08);
@@ -146,7 +149,7 @@ body {
   --bg-tertiary: var(--bg-hover);
   --fx-accent: var(--accent);
   --fx-accent-glow: var(--border-glow);
-  --font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-sans: var(--prin7r-font-sans);
   --ui-font-size: 15px;
   --ui-line-height: 1.6;
   --radius: 4px;

@@ -40,7 +40,10 @@
 
 :root,
 body.theme-light {
-	--shadcn-font-sans: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+	--prin7r-font-standard: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+	--prin7r-font-sans: var(--prin7r-font-standard);
+	--prin7r-font-mono-standard: "SF Mono", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+	--shadcn-font-sans: var(--prin7r-font-sans);
 	--shadcn-radius: 0.5rem;
 	--shadcn-background: #ffffff;
 	--shadcn-foreground: #111111;

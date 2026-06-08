@@ -1876,7 +1876,6 @@
           {component}
           {name}
           active={activeTab === "docs"}
-          onExit={() => selectTab("overview")}
         />
       {/key}
     {:else if activeTab === "tickets"}

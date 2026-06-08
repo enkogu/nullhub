@@ -1,9 +1,5 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
-  import FileTextIcon from '@lucide/svelte/icons/file-text';
-  import FolderIcon from '@lucide/svelte/icons/folder';
-  import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
   import { marked } from 'marked';
   import {
     deleteMarkdownDocument,
@@ -30,12 +26,10 @@
     component,
     name,
     active,
-    onExit,
   } = $props<{
     component: string;
     name: string;
     active: boolean;
-    onExit?: () => void;
   }>();
 
   let documents = $state<MarkdownDocumentEntry[]>([]);
@@ -75,6 +69,7 @@
   const saveState = $derived(saving ? 'Saving' : dirty ? 'Unsaved' : selectedKey ? 'Saved' : 'Draft');
   const documentTree = $derived(buildDocumentTree(documents));
   const selectedFileName = $derived(fileName(draftPath) || 'Docs');
+  const materialIconBase = '/file-icons/material';
 
   function parseTags(value: string): string[] {
     return value
@@ -112,11 +107,6 @@
     return candidate;
   }
 
-  function titleFromPath(path: string): string {
-    const file = path.split('/').pop() || path;
-    return file.replace(/\.(md|markdown)$/i, '').replaceAll('-', ' ').replaceAll('_', ' ');
-  }
-
   function fileName(path: string): string {
     const normalized = normalizeMarkdownPath(path);
     return normalized.split('/').pop() || normalized;
@@ -131,7 +121,24 @@
   function fileExtension(path: string): string {
     const name = fileName(path);
     const dot = name.lastIndexOf('.');
-    return dot >= 0 ? name.slice(dot + 1).toUpperCase() : 'MD';
+    return dot >= 0 ? name.slice(dot + 1).toLowerCase() : '';
+  }
+
+  function materialFileIconName(path: string): string {
+    const ext = fileExtension(path);
+    if (ext === 'md' || ext === 'markdown') return 'markdown';
+    return 'file';
+  }
+
+  function materialFolderIconName(name: string, expanded: boolean): string {
+    const lower = name.toLowerCase();
+    if (lower === 'docs' && expanded) return 'folder-markdown-open';
+    if (lower === 'skills' && expanded) return 'folder-skills-open';
+    return expanded ? 'folder-open' : 'folder';
+  }
+
+  function materialIconUrl(name: string): string {
+    return `${materialIconBase}/${name}.svg`;
   }
 
   function pathAncestors(path: string): string[] {
@@ -356,7 +363,11 @@
   }
 
   function renderMarkdown(markdown: string): string {
-    return sanitizeHtml(marked.parse(escapeRawHtml(markdown), { gfm: true, async: false }) as string);
+    return sanitizeHtml(marked.parse(escapeRawHtml(stripYamlFrontmatter(markdown)), { gfm: true, async: false }) as string);
+  }
+
+  function stripYamlFrontmatter(markdown: string): string {
+    return markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, '');
   }
 
   function escapeRawHtml(markdown: string): string {
@@ -449,15 +460,6 @@
     }
     headerToolbar.set({
       crumbLabel: selectedFileName,
-      path: {
-        value: draftPath,
-        placeholder: 'docs/runbook.md',
-        invalid: Boolean(!pathValid && draftPath.trim()),
-        onInput: (value: string) => {
-          draftPath = value;
-          draftTitle = titleFromPath(value);
-        },
-      },
       status: {
         label: error && !softStoreError ? 'Error' : saveState,
         tone: error && !softStoreError ? 'error' : saving ? 'saving' : dirty ? 'dirty' : 'muted',
@@ -498,15 +500,6 @@
           disabled: !canSave,
           onClick: saveDraft,
         },
-        ...(onExit
-          ? [
-              {
-                id: 'back',
-                label: 'Back',
-                onClick: onExit,
-              },
-            ]
-          : []),
       ],
     });
   });
@@ -531,18 +524,13 @@
     }}
   >
     {#if node.kind === 'folder'}
-      <ChevronRightIcon class={expanded ? 'tree-chevron open' : 'tree-chevron'} />
-      {#if expanded}
-        <FolderOpenIcon class="tree-icon folder-icon" />
-      {:else}
-        <FolderIcon class="tree-icon folder-icon" />
-      {/if}
+      <span class={expanded ? 'tree-chevron open' : 'tree-chevron'} aria-hidden="true"></span>
+      <img class="tree-icon" src={materialIconUrl(materialFolderIconName(node.name, expanded))} alt="" aria-hidden="true" draggable="false" />
       <span class="tree-name">{node.name}</span>
     {:else}
       <span class="tree-spacer" aria-hidden="true"></span>
-      <FileTextIcon class="tree-icon file-icon" />
+      <img class="tree-icon" src={materialIconUrl(materialFileIconName(node.path))} alt="" aria-hidden="true" draggable="false" />
       <span class="tree-name">{node.name}</span>
-      <span class="tree-badge">{fileExtension(node.path)}</span>
     {/if}
   </button>
   {#if node.kind === 'folder' && expanded}
@@ -604,10 +592,10 @@
   .markdown-manager {
     display: grid;
     grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
-    gap: 10px;
+    gap: 0;
     width: 100%;
     height: 100%;
-    padding: 8px;
+    padding: 0;
     overflow: hidden;
   }
 
@@ -635,9 +623,9 @@
 
   textarea {
     width: 100%;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
     color: var(--fg);
     padding: 5px 8px;
     font: inherit;
@@ -646,10 +634,11 @@
   textarea {
     min-height: 0;
     height: 100%;
-    padding: 12px;
+    padding: 24px 28px 48px;
     resize: none;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     line-height: 1.5;
+    outline: none;
   }
 
   .status-row {
@@ -685,13 +674,14 @@
     height: 100%;
     min-height: 0;
     overflow: auto;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
-    padding: 18px 20px 32px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    padding: 24px 32px 56px;
   }
 
   .prose-preview {
+    max-width: 980px;
     color: var(--fg);
     overflow-wrap: anywhere;
   }
@@ -699,14 +689,14 @@
   .prose-preview :global(h1),
   .prose-preview :global(h2),
   .prose-preview :global(h3) {
-    margin: 1.1em 0 0.45em;
+    margin: 1.05em 0 0.45em;
     color: var(--fg);
     font-weight: 650;
     line-height: 1.18;
   }
 
   .prose-preview :global(h1) {
-    font-size: 24px;
+    font-size: 26px;
   }
 
   .prose-preview :global(h2) {
@@ -747,10 +737,10 @@
   .prose-preview :global(pre) {
     overflow-x: auto;
     overflow-y: visible;
-    border: 1px solid var(--border);
+    border: 0;
     border-radius: 6px;
     background: var(--bg-hover);
-    padding: 0.75rem;
+    padding: 0.85rem;
   }
 
   .prose-preview :global(pre code) {
@@ -800,20 +790,16 @@
 
   .document-list,
   .editor-shell {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-elevated);
-  }
-
-  .document-list,
-  .editor-shell {
-    padding: 6px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
   }
 
   .editor-shell {
     min-height: 0;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
+    padding: 0;
   }
 
   .document-list {
@@ -821,6 +807,8 @@
     overflow: hidden;
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
+    border-right: 1px solid var(--shadcn-border);
+    padding: 10px 8px;
   }
 
   .document-list-header {
@@ -828,12 +816,11 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    padding: 4px 6px 7px;
+    padding: 4px 6px 8px;
     color: var(--fg-dim);
     font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
+    font-weight: 650;
+    letter-spacing: 0;
   }
 
   .doc-scroll {
@@ -848,10 +835,10 @@
     gap: 6px;
     width: 100%;
     min-width: 0;
-    min-height: 28px;
+    min-height: 30px;
     margin-bottom: 1px;
     border: 0;
-    border-radius: 5px;
+    border-radius: 6px;
     background: transparent;
     color: var(--fg);
     padding: 0 6px;
@@ -872,19 +859,32 @@
     color: #fff;
   }
 
-  .tree-row :global(.tree-chevron) {
+  .tree-chevron {
     width: 13px;
     height: 13px;
     flex: 0 0 auto;
     color: var(--fg-dim);
+    position: relative;
     transition: transform 120ms ease;
   }
 
-  .tree-row :global(.tree-chevron.open) {
+  .tree-chevron::before {
+    content: "";
+    position: absolute;
+    left: 4px;
+    top: 3px;
+    width: 6px;
+    height: 6px;
+    border-right: 1.5px solid currentColor;
+    border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+  }
+
+  .tree-chevron.open {
     transform: rotate(90deg);
   }
 
-  .tree-row.active :global(.tree-chevron) {
+  .tree-row.active .tree-chevron {
     color: currentColor;
   }
 
@@ -894,23 +894,11 @@
     flex: 0 0 auto;
   }
 
-  .tree-row :global(.tree-icon) {
-    width: 15px;
-    height: 15px;
+  .tree-icon {
+    width: 17px;
+    height: 17px;
     flex: 0 0 auto;
-    color: var(--fg-dim);
-  }
-
-  .tree-row :global(.folder-icon) {
-    color: color-mix(in srgb, var(--accent) 62%, var(--fg-dim));
-  }
-
-  .tree-row :global(.file-icon) {
-    color: color-mix(in srgb, var(--fg) 72%, var(--fg-dim));
-  }
-
-  .tree-row.active :global(.tree-icon) {
-    color: currentColor;
+    object-fit: contain;
   }
 
   .tree-name {
@@ -918,24 +906,9 @@
     flex: 1;
     overflow: hidden;
     font-size: 13px;
-    font-weight: 600;
+    font-weight: 500;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .tree-badge {
-    flex: 0 0 auto;
-    color: var(--fg-dim);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: 10px;
-    font-weight: 700;
-    line-height: 1;
-    white-space: nowrap;
-  }
-
-  .tree-row.active .tree-badge {
-    color: currentColor;
-    opacity: 0.72;
   }
 
   .empty-list {
@@ -950,11 +923,21 @@
     .markdown-manager {
       grid-template-columns: 1fr;
       grid-template-rows: minmax(120px, 28vh) minmax(0, 1fr);
-      padding: 8px;
+      padding: 0;
+    }
+
+    .document-list {
+      border-right: 0;
+      border-bottom: 1px solid var(--shadcn-border);
     }
 
     textarea {
       min-height: 0;
+      padding: 18px 16px 32px;
+    }
+
+    .preview-pane {
+      padding: 18px 16px 36px;
     }
   }
 </style>
