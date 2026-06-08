@@ -10,7 +10,7 @@ export function withBoilerInstance(path: string, boilerInstance?: string): strin
   return withQueryParam(path, BOILER_INSTANCE_QUERY_PARAM, value);
 }
 
-const nullboilerUiRoot = "/nullboiler";
+const nullboilerUiRoot = "/automations";
 const nullboilerApiRoot = "/nullboiler";
 const workflowsBase = `${nullboilerUiRoot}/workflows`;
 const runsBase = `${nullboilerUiRoot}/runs`;

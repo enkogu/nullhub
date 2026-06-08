@@ -19,5 +19,6 @@
   {label}
   getSelected={getSelectedTicketsInstance}
   setSelected={setSelectedTicketsInstance}
+  hideWhenSingleton={true}
   {onChange}
 />

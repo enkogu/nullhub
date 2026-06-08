@@ -17,5 +17,6 @@
   label="NullBoiler"
   getSelected={getSelectedBoilerInstance}
   setSelected={setSelectedBoilerInstance}
+  hideWhenSingleton={true}
   {onChange}
 />

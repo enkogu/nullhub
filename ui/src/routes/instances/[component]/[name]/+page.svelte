@@ -33,6 +33,7 @@
   let uiModules = $state<Record<string, string>>({});
   let activeTab = $state("overview");
   let bootstrapChatAutoOpenedFor = $state("");
+  let bootstrapNoticeHidden = $state(false);
   let loading = $state(false);
   let providerHealth = $state<any>(null);
   let providerHealthLoading = $state(false);
@@ -139,6 +140,7 @@
   let supportsHooks = $derived(component === "nullclaw");
   let supportsUsage = $derived(component === "nullclaw");
   let supportsVerboseStartup = $derived(component === "nullclaw");
+  let instanceKind = $derived(component === "nullclaw" ? "Agent" : component);
   let instanceRouteKey = $derived(`${component}/${name}`);
   const routeTabs = new Set([
     "overview",
@@ -969,6 +971,7 @@
     lastTicketsRefreshAt = 0;
     onboardingStatus = null;
     bootstrapChatAutoOpenedFor = "";
+    bootstrapNoticeHidden = false;
     lastUsageRefreshAt = 0;
     void refresh(true, true);
   });
@@ -1112,7 +1115,7 @@
   <div class="detail-header">
     <div>
       <h1>{name}</h1>
-      <span class="component-tag">{component}</span>
+      <span class="component-tag">{instanceKind}</span>
     </div>
     <div class="actions">
       <button class="btn" onclick={start} disabled={loading}>Start</button>
@@ -1296,9 +1299,9 @@
             <div class="integration-header">
               <span class="label"
                 >{component === "nullclaw"
-                  ? "NullWatch Telemetry"
+                  ? "Telemetry"
                   : component === "nullwatch"
-                    ? "Observed NullClaws"
+                    ? "Observed Agents"
                   : component === "nullboiler"
                     ? "NullTickets Link"
                     : "Linked NullBoilers"}</span
@@ -1385,7 +1388,7 @@
               {/if}
             {:else if component === "nullwatch"}
               <div class="integration-block">
-                <span class="integration-title">Linked NullClaws</span>
+                <span class="integration-title">Linked Agents</span>
                 {#if linkedClaws.length > 0}
                   <div class="integration-list">
                     {#each linkedClaws as claw}
@@ -1403,16 +1406,16 @@
                     {/each}
                   </div>
                 {:else}
-                  <span class="integration-muted">No NullClaw instances linked yet.</span>
+                  <span class="integration-muted">No agents linked yet.</span>
                 {/if}
               </div>
 
               {#if clawOptions.length > 0}
                 <div class="integration-form">
                   <label class="integration-field">
-                    <span>Local NullClaw</span>
+                    <span>Local Agent</span>
                     <select bind:value={selectedClaw} disabled={linkingIntegration}>
-                      <option value="">Select NullClaw</option>
+                      <option value="">Select Agent</option>
                       {#each clawOptions as claw}
                         <option value={claw.name}>
                           {claw.name}{claw.linked ? " - linked" : ""}{claw.running ? "" : " - stopped"}
@@ -1425,7 +1428,7 @@
                     onclick={linkNullClawToWatch}
                     disabled={linkingIntegration || !selectedClaw}
                   >
-                    {linkingIntegration ? "Linking..." : "Link NullClaw"}
+                    {linkingIntegration ? "Linking..." : "Link Agent"}
                   </button>
                   <a
                     class="btn integration-btn"
@@ -1434,7 +1437,7 @@
                   >
                 </div>
               {:else}
-                <span class="integration-muted">Install NullClaw to send telemetry here.</span>
+                <span class="integration-muted">Install an agent to send telemetry here.</span>
               {/if}
             {:else if component === "nullboiler"}
               <div class="integration-block">
@@ -1983,17 +1986,30 @@
         </div>
       {:else}
         <div class="chat-stack">
-          {#if onboardingPending}
-            <div class="chat-onboarding">
-              <div class="chat-onboarding-title">Bootstrap In Progress</div>
-              <div class="chat-onboarding-desc">
-                This is the defining chat that makes the agent itself instead of a blank instance.
+          {#if onboardingPending && !bootstrapNoticeHidden}
+            <details class="chat-onboarding">
+              <summary class="chat-onboarding-summary">
+                <span class="chat-onboarding-title">Bootstrap setup</span>
+                <span class="chat-onboarding-note">
+                  Auto-starts with <code>{onboardingStarterMessage}</code>
+                </span>
+                <button
+                  class="chat-onboarding-hide"
+                  type="button"
+                  aria-label="Hide bootstrap setup notice"
+                  onclick={(event) => {
+                    event.preventDefault();
+                    bootstrapNoticeHidden = true;
+                  }}
+                >
+                  Hide
+                </button>
+              </summary>
+              <div class="chat-onboarding-body">
+                This first chat helps define the agent's name, nature, vibe, emoji, and how it
+                should address you.
               </div>
-              <div class="chat-onboarding-note">
-                This chat auto-starts with <code>{onboardingStarterMessage}</code>. Then help it
-                figure out its name, nature, vibe, emoji, and how it should address you.
-              </div>
-            </div>
+            </details>
           {/if}
           {#key instanceRouteKey}
             <ChatPanel
@@ -2605,41 +2621,66 @@
   .chat-stack {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
+    gap: 0.75rem;
   }
   .chat-onboarding {
-    border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
-    background:
-      linear-gradient(
-        135deg,
-        color-mix(in srgb, var(--accent) 8%, transparent),
-        transparent 55%
-      ),
-      var(--bg-surface);
-    padding: 1rem 1.125rem;
-    border-radius: 4px;
-    box-shadow: inset 0 0 16px color-mix(in srgb, var(--accent) 8%, transparent);
+    border: 1px solid var(--border);
+    background: color-mix(in srgb, var(--bg-surface) 70%, transparent);
+    border-radius: 6px;
+    color: var(--fg-dim);
+  }
+  .chat-onboarding-summary {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    min-height: 2.25rem;
+    padding: 0.375rem 0.625rem;
+    cursor: pointer;
+    list-style: none;
+  }
+  .chat-onboarding-summary::-webkit-details-marker {
+    display: none;
   }
   .chat-onboarding-title {
-    font-size: 0.85rem;
+    color: var(--fg);
+    font-size: 0.75rem;
     font-weight: 700;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--accent);
-    margin-bottom: 0.35rem;
   }
-  .chat-onboarding-desc,
-  .chat-onboarding-note {
+  .chat-onboarding-note,
+  .chat-onboarding-body {
     color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-    line-height: 1.6;
+    font-size: 0.75rem;
+    line-height: 1.4;
   }
   .chat-onboarding-note {
-    margin-top: 0.55rem;
+    min-width: 0;
+    flex: 1;
   }
   .chat-onboarding code {
-    color: var(--accent);
+    color: var(--fg);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.0625rem 0.25rem;
+    font-size: 0.75rem;
+  }
+  .chat-onboarding-body {
+    border-top: 1px solid var(--border);
+    padding: 0.5rem 0.625rem 0.625rem;
+  }
+  .chat-onboarding-hide {
+    border: 0;
+    background: transparent;
+    color: var(--fg-dim);
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 600;
+    padding: 0.25rem 0.375rem;
+    border-radius: 4px;
+  }
+  .chat-onboarding-hide:hover {
+    background: var(--bg-muted);
+    color: var(--fg);
   }
   .link-btn {
     background: none;

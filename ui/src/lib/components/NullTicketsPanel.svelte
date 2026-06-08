@@ -65,11 +65,38 @@
     oldest_claimable_age_ms?: number | null;
   };
 
-  let { component, name, active = false, running = false } = $props<{
+  type PanelView = "tasks" | "pipelines" | "queue" | "runs" | "artifacts";
+  type ArtifactScope = "selected" | "custom" | "all";
+
+  const allPanelViews: PanelView[] = ["tasks", "pipelines", "queue", "runs", "artifacts"];
+  const panelViewLabels: Record<PanelView, string> = {
+    tasks: "Tasks",
+    pipelines: "Task Flows",
+    queue: "Queue",
+    runs: "Runs",
+    artifacts: "Artifacts",
+  };
+
+  let {
+    component,
+    name,
+    active = false,
+    running = false,
+    initialView = "tasks",
+    initialArtifactScope = "selected",
+    views = allPanelViews,
+    title = "NullTickets",
+    subtitle = "",
+  } = $props<{
     component: string;
     name: string;
     active?: boolean;
     running?: boolean;
+    initialView?: PanelView;
+    initialArtifactScope?: ArtifactScope;
+    views?: PanelView[];
+    title?: string;
+    subtitle?: string;
   }>();
 
   const defaultPipelineDefinition = JSON.stringify(
@@ -96,7 +123,8 @@
     2,
   );
 
-  let panelView = $state<"tasks" | "pipelines" | "queue" | "runs" | "artifacts">("tasks");
+  let panelView = $state<PanelView>("tasks");
+  let panelViewConfigKey = $state("");
   let loadKey = $state("");
   let loading = $state(false);
   let actionLoading = $state(false);
@@ -154,8 +182,9 @@
   let artifacts = $state<Artifact[]>([]);
   let artifactsCursor = $state<string | null>(null);
   let artifactsScopeKey = $state("");
+  let artifactLoadKey = $state("");
   let artifactLimit = $state("25");
-  let artifactScope = $state<"selected" | "custom" | "all">("selected");
+  let artifactScope = $state<ArtifactScope>("selected");
   let artifactTaskFilter = $state("");
   let artifactRunFilter = $state("");
   let artifactKind = $state("file");
@@ -185,6 +214,23 @@
         ? { id: selectedRunId, task_id: selectedTaskId }
         : null,
   );
+  const visiblePanelViews = $derived(
+    (views.length ? views : allPanelViews).filter(
+      (view, index, list) => allPanelViews.includes(view) && list.indexOf(view) === index,
+    ),
+  );
+
+  function fallbackPanelView(): PanelView {
+    return visiblePanelViews[0] || (allPanelViews.includes(initialView) ? initialView : "tasks");
+  }
+
+  function canShowPanelView(view: PanelView): boolean {
+    return visiblePanelViews.includes(view);
+  }
+
+  function setPanelView(view: PanelView) {
+    panelView = canShowPanelView(view) ? view : fallbackPanelView();
+  }
 
   function pipelineId(pipeline: Pipeline | null | undefined): string {
     return String(pipeline?.id || pipeline?.name || "");
@@ -300,17 +346,17 @@
     return `${artifactScope}:${scope.taskId || ""}:${scope.runId || ""}`;
   }
 
-  function setArtifactScope(scope: "selected" | "custom" | "all") {
+  function setArtifactScope(scope: ArtifactScope) {
     artifactScope = scope;
     artifactsCursor = null;
     artifactsScopeKey = "";
-    void loadArtifacts(false);
+    artifactLoadKey = "";
   }
 
   function openSelectedArtifacts() {
     artifactScope = "selected";
-    panelView = "artifacts";
-    void loadArtifacts(false);
+    artifactLoadKey = "";
+    setPanelView("artifacts");
   }
 
   function syncLeaseToSelectedRun() {
@@ -774,6 +820,21 @@
   }
 
   $effect(() => {
+    const configKey = `${initialView}:${visiblePanelViews.join("|")}:${initialArtifactScope}`;
+    if (panelViewConfigKey !== configKey) {
+      panelViewConfigKey = configKey;
+      panelView = canShowPanelView(initialView) ? initialView : fallbackPanelView();
+      artifactScope = initialArtifactScope;
+      artifactLoadKey = "";
+      artifactsScopeKey = "";
+      return;
+    }
+    if (!canShowPanelView(panelView)) {
+      panelView = fallbackPanelView();
+    }
+  });
+
+  $effect(() => {
     const key = `${component}/${name}/${active}/${running}`;
     if (!active || component !== "nulltickets") return;
     if (loadKey === key) return;
@@ -786,13 +847,24 @@
     artifacts = [];
     artifactsCursor = null;
     artifactsScopeKey = "";
-    artifactScope = "selected";
+    artifactLoadKey = "";
+    artifactScope = initialArtifactScope;
     artifactTaskFilter = "";
     artifactRunFilter = "";
     claimed = null;
     if (running) {
       void refreshAll();
     }
+  });
+
+  $effect(() => {
+    if (!active || component !== "nulltickets" || !running || panelView !== "artifacts") return;
+    const scope = artifactScopeParams();
+    const scopeKey = artifactScopeCacheKey(scope);
+    const nextLoadKey = `${component}/${name}/${scopeKey}/${artifactLimit}`;
+    if (artifactLoadKey === nextLoadKey) return;
+    artifactLoadKey = nextLoadKey;
+    void loadArtifacts(false);
   });
 </script>
 
@@ -801,23 +873,21 @@
     <div class="empty-state">Instance is stopped.</div>
   {:else}
     <div class="tickets-header">
-      <div class="tickets-tabs" role="tablist" aria-label="NullTickets views">
-        <button class:active={panelView === "tasks"} onclick={() => (panelView = "tasks")}>
-          Tasks
-        </button>
-        <button class:active={panelView === "pipelines"} onclick={() => (panelView = "pipelines")}>
-          Pipelines
-        </button>
-        <button class:active={panelView === "queue"} onclick={() => (panelView = "queue")}>
-          Queue
-        </button>
-        <button class:active={panelView === "runs"} onclick={() => (panelView = "runs")}>
-          Runs
-        </button>
-        <button class:active={panelView === "artifacts"} onclick={() => (panelView = "artifacts")}>
-          Artifacts
-        </button>
+      <div class="tickets-heading">
+        <h2>{title}</h2>
+        {#if subtitle}
+          <p>{subtitle}</p>
+        {/if}
       </div>
+      {#if visiblePanelViews.length > 1}
+        <div class="tickets-tabs" role="tablist" aria-label="NullTickets views">
+          {#each visiblePanelViews as view (view)}
+            <button class:active={panelView === view} onclick={() => setPanelView(view)}>
+              {panelViewLabels[view]}
+            </button>
+          {/each}
+        </div>
+      {/if}
       <button class="btn" onclick={refreshAll} disabled={loading || actionLoading}>
         {loading ? "Refreshing..." : "Refresh"}
       </button>
@@ -973,12 +1043,16 @@
                 <button class="btn" onclick={addDependency} disabled={actionLoading || !dependencyTaskId.trim()}>
                   Add
                 </button>
-                <button class="btn subtle" onclick={() => (panelView = "runs")} disabled={!selectedRunId}>
-                  Run Controls
-                </button>
-                <button class="btn subtle" onclick={openSelectedArtifacts}>
-                  Artifacts
-                </button>
+                {#if canShowPanelView("runs")}
+                  <button class="btn subtle" onclick={() => setPanelView("runs")} disabled={!selectedRunId}>
+                    Run Controls
+                  </button>
+                {/if}
+                {#if canShowPanelView("artifacts")}
+                  <button class="btn subtle" onclick={openSelectedArtifacts}>
+                    Artifacts
+                  </button>
+                {/if}
               </div>
             </div>
           {:else}
@@ -1433,6 +1507,30 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
+  }
+  .tickets-header {
+    flex-wrap: wrap;
+  }
+  .tickets-heading {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    min-width: min(100%, 18rem);
+    margin-right: auto;
+  }
+  .tickets-heading h2 {
+    margin: 0;
+    color: var(--accent);
+    font-size: 1.25rem;
+    line-height: 1.2;
+    letter-spacing: 0;
+  }
+  .tickets-heading p {
+    max-width: 46rem;
+    margin: 0;
+    color: var(--fg-dim);
+    font-size: 0.875rem;
+    line-height: 1.45;
   }
   .tickets-tabs {
     display: inline-flex;

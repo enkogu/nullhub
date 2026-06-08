@@ -139,6 +139,10 @@ type ApiRequestInit = RequestInit & {
   timeoutMs?: number;
 };
 
+const ADMIN_READ_TIMEOUT_MS = 10_000;
+const ADMIN_MUTATION_TIMEOUT_MS = 120_000;
+const ADMIN_INSTALL_TIMEOUT_MS = 600_000;
+
 function requestTimeoutMs(options?: ApiRequestInit): number {
   if (options?.timeoutMs && options.timeoutMs > 0) return options.timeoutMs;
   const method = (options?.method || 'GET').toUpperCase();
@@ -366,50 +370,56 @@ export const api = {
       }),
     ),
   getSkills: (c: string, n: string, name?: string) =>
-    request<any>(withQuery(instanceApiPath(c, n, '/skills'), { name }), { timeoutMs: 10000 }),
+    request<any>(withQuery(instanceApiPath(c, n, '/skills'), { name }), { timeoutMs: ADMIN_READ_TIMEOUT_MS }),
   getMcpServers: (c: string, n: string) =>
-    request<McpServerSummary[]>(instanceApiPath(c, n, '/mcp'), { timeoutMs: 10000 }),
+    request<McpServerSummary[]>(instanceApiPath(c, n, '/mcp'), { timeoutMs: ADMIN_READ_TIMEOUT_MS }),
   getMcpServer: (c: string, n: string, server: string) =>
     request<McpServerSummary>(withQuery(instanceApiPath(c, n, '/mcp'), { name: server }), { timeoutMs: 15000 }),
   createMcpServer: (c: string, n: string, server: McpServerDraft) =>
     request<McpMutationResult>(instanceApiPath(c, n, '/mcp'), {
       method: 'POST',
       body: JSON.stringify(server),
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   updateMcpServer: (c: string, n: string, serverName: string, server: McpServerDraft) =>
     request<McpMutationResult>(withQuery(instanceApiPath(c, n, '/mcp'), { name: serverName }), {
       method: 'PATCH',
       body: JSON.stringify(server),
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   deleteMcpServer: (c: string, n: string, serverName: string) =>
     request<McpMutationResult>(withQuery(instanceApiPath(c, n, '/mcp'), { name: serverName }), {
       method: 'DELETE',
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   validateMcpServer: (c: string, n: string, server: McpServerDraft) =>
     request<McpMutationResult>(instanceApiPath(c, n, '/mcp-validate'), {
       method: 'POST',
       body: JSON.stringify(server),
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   reloadMcp: (c: string, n: string) =>
-    request<any>(instanceApiPath(c, n, '/mcp-reload'), { method: 'POST' }),
+    request<any>(instanceApiPath(c, n, '/mcp-reload'), { method: 'POST', timeoutMs: ADMIN_MUTATION_TIMEOUT_MS }),
   probeMcpServer: (c: string, n: string, serverName: string) =>
     request<McpServerSummary>(withQuery(instanceApiPath(c, n, '/mcp-probe'), { name: serverName }), {
       method: 'POST',
       timeoutMs: 20000,
     }),
   getSkillCatalog: (c: string, n: string) =>
-    request<any>(withQuery(instanceApiPath(c, n, '/skills'), { catalog: 1 }), { timeoutMs: 10000 }),
+    request<any>(withQuery(instanceApiPath(c, n, '/skills'), { catalog: 1 }), { timeoutMs: ADMIN_READ_TIMEOUT_MS }),
   getCronJobs: (c: string, n: string) =>
     request<any>(instanceApiPath(c, n, '/cron'), { timeoutMs: 15000 }),
   createCronJob: (c: string, n: string, payload: CronJobCreateRequest) =>
     request<any>(instanceApiPath(c, n, '/cron'), {
       method: 'POST',
       body: JSON.stringify(payload),
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   createOneShotCronJob: (c: string, n: string, payload: CronJobCreateRequest) =>
     request<any>(instanceApiPath(c, n, '/cron/once'), {
       method: 'POST',
       body: JSON.stringify(payload),
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   getCronJob: (c: string, n: string, jobId: string) =>
     request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}`, { timeoutMs: 15000 }),
@@ -421,42 +431,51 @@ export const api = {
   runCronJob: (c: string, n: string, jobId: string) =>
     request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}/run`, {
       method: 'POST',
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   pauseCronJob: (c: string, n: string, jobId: string) =>
     request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}/pause`, {
       method: 'POST',
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   resumeCronJob: (c: string, n: string, jobId: string) =>
     request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}/resume`, {
       method: 'POST',
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   updateCronJob: (c: string, n: string, jobId: string, payload: CronJobUpdateRequest) =>
     request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   deleteCronJob: (c: string, n: string, jobId: string) =>
     request<any>(`${instanceApiPath(c, n, '/cron')}/${encodePathSegment(jobId)}`, {
       method: 'DELETE',
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   installBundledSkill: (c: string, n: string, bundled: string) =>
     request<any>(instanceApiPath(c, n, '/skills'), {
       method: 'POST',
       body: JSON.stringify({ bundled }),
+      timeoutMs: ADMIN_INSTALL_TIMEOUT_MS,
     }),
   installSkillFromClawhub: (c: string, n: string, clawhub_slug: string) =>
     request<any>(instanceApiPath(c, n, '/skills'), {
       method: 'POST',
       body: JSON.stringify({ clawhub_slug }),
+      timeoutMs: ADMIN_INSTALL_TIMEOUT_MS,
     }),
   installSkillFromSource: (c: string, n: string, source: string) =>
     request<any>(instanceApiPath(c, n, '/skills'), {
       method: 'POST',
       body: JSON.stringify({ source }),
+      timeoutMs: ADMIN_INSTALL_TIMEOUT_MS,
     }),
   removeSkill: (c: string, n: string, skillName: string) =>
     request<any>(withQuery(instanceApiPath(c, n, '/skills'), { name: skillName }), {
       method: 'DELETE',
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
     }),
   getIntegration: (c: string, n: string) =>
     request<any>(instanceApiPath(c, n, '/integration')),

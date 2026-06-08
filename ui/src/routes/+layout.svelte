@@ -13,16 +13,45 @@
   let { children } = $props();
 
   const routeTitles: { test: (path: string) => boolean; title: string; section?: string }[] = [
-    { test: (path) => path === '/', title: 'System Status' },
+    { test: (path) => path === '/', title: 'Work' },
     { test: (path) => path === '/dashboard', title: 'Dashboard' },
     { test: (path) => path === '/mission-control', title: 'Mission Control' },
+    { test: (path) => path === '/work', title: 'Board', section: 'Work' },
+    { test: (path) => path.startsWith('/work/tasks'), title: 'Tasks', section: 'Work' },
+    { test: (path) => path.startsWith('/work/task-flows'), title: 'Task Flows', section: 'Work' },
+    { test: (path) => path.startsWith('/work/planner'), title: 'Planner', section: 'Work' },
+    { test: (path) => path.startsWith('/work/dependencies'), title: 'Dependencies', section: 'Work' },
+    { test: (path) => path.startsWith('/task-flows'), title: 'Task Flows', section: 'Work' },
+    { test: (path) => path.startsWith('/automations/workflows'), title: 'Workflows', section: 'Automations' },
+    { test: (path) => path.startsWith('/automations/runs'), title: 'Runs', section: 'Automations' },
+    { test: (path) => path.startsWith('/automations'), title: 'Automations', section: 'Automations' },
+    { test: (path) => path.startsWith('/agents/roles'), title: 'Roles', section: 'Agents' },
+    { test: (path) => path.startsWith('/agents/profiles'), title: 'Profiles', section: 'Agents' },
+    { test: (path) => path.startsWith('/agents'), title: 'Agents' },
+    { test: (path) => path.startsWith('/capabilities/skills'), title: 'Skills', section: 'Capabilities' },
+    { test: (path) => path.startsWith('/capabilities/mcp'), title: 'MCP', section: 'Capabilities' },
+    { test: (path) => path.startsWith('/capabilities/hooks'), title: 'Hooks', section: 'Capabilities' },
+    { test: (path) => path.startsWith('/capabilities/instructions'), title: 'Instructions', section: 'Capabilities' },
+    { test: (path) => path.startsWith('/capabilities/memory'), title: 'Memory', section: 'Capabilities' },
+    { test: (path) => path.startsWith('/capabilities/schedules'), title: 'Schedules', section: 'Capabilities' },
+    { test: (path) => path.startsWith('/capabilities'), title: 'Skills', section: 'Capabilities' },
+    { test: (path) => path === '/dispatch', title: 'Monitor', section: 'Dispatch' },
+    { test: (path) => path.startsWith('/dispatch/queue'), title: 'Queue', section: 'Dispatch' },
+    { test: (path) => path.startsWith('/dispatch/runs'), title: 'Runs', section: 'Dispatch' },
+    { test: (path) => path.startsWith('/dispatch/failures'), title: 'Failures', section: 'Dispatch' },
+    { test: (path) => path.startsWith('/dispatch/telemetry'), title: 'Telemetry', section: 'Dispatch' },
+    { test: (path) => path.startsWith('/artifacts'), title: 'Artifacts' },
+    { test: (path) => path.startsWith('/inventory/components'), title: 'Components', section: 'Inventory' },
+    { test: (path) => path.startsWith('/inventory/instances'), title: 'Instances', section: 'Inventory' },
+    { test: (path) => path.startsWith('/inventory/providers'), title: 'Providers', section: 'Inventory' },
+    { test: (path) => path.startsWith('/inventory/channels'), title: 'Channels', section: 'Inventory' },
     { test: (path) => path.startsWith('/install'), title: 'Install Component' },
     { test: (path) => path.startsWith('/providers'), title: 'Providers' },
     { test: (path) => path.startsWith('/channels'), title: 'Channels' },
     { test: (path) => path.startsWith('/configs'), title: 'Configs' },
-    { test: (path) => path.startsWith('/nullboiler/workflows'), title: 'Workflows', section: 'NullBoiler' },
-    { test: (path) => path.startsWith('/nullboiler/runs'), title: 'Runs', section: 'NullBoiler' },
-    { test: (path) => path.startsWith('/nullboiler'), title: 'Dashboard', section: 'NullBoiler' },
+    { test: (path) => path.startsWith('/nullboiler/workflows'), title: 'Workflows', section: 'Automations' },
+    { test: (path) => path.startsWith('/nullboiler/runs'), title: 'Runs', section: 'Automations' },
+    { test: (path) => path.startsWith('/nullboiler'), title: 'Automations', section: 'Automations' },
     { test: (path) => path.startsWith('/nulltickets/store'), title: 'Store' },
     { test: (path) => path.startsWith('/nullwatch'), title: 'Observability' },
     { test: (path) => path.startsWith('/report'), title: 'Report Issue' },
@@ -40,6 +69,11 @@
   function routeCrumbs(path: string): { label: string; href?: string }[] {
     if (path.startsWith('/instances/')) {
       const [, , component = '', name = ''] = path.split('/');
+      if (component === 'nullclaw') {
+        return name
+          ? [{ label: 'Agents', href: '/agents' }, { label: decodeSegment(name) }]
+          : [{ label: 'Agents' }];
+      }
       const componentLabel = decodeSegment(component);
       const crumbs = [
         { label: 'Instances', href: '/' },

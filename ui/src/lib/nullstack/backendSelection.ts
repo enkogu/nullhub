@@ -53,10 +53,14 @@ function getUrlQueryParam(param: string): string {
   }
 }
 
+function pathStartsWithAny(pathname: string, prefixes: string[]): boolean {
+  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
 function syncCurrentBoilerUrl(value: string) {
   const location = currentLocation();
   const history = currentHistory();
-  if (!location || !history || !location.pathname.startsWith("/nullboiler")) return;
+  if (!location || !history || !pathStartsWithAny(location.pathname, ["/nullboiler", "/automations"])) return;
 
   const url = new URL(location.href);
   if (value) url.searchParams.set(BOILER_INSTANCE_QUERY_PARAM, value);
@@ -67,7 +71,11 @@ function syncCurrentBoilerUrl(value: string) {
 function syncCurrentTicketsUrl(value: string) {
   const location = currentLocation();
   const history = currentHistory();
-  if (!location || !history || !location.pathname.startsWith("/nulltickets/store")) return;
+  if (
+    !location ||
+    !history ||
+    !pathStartsWithAny(location.pathname, ["/nulltickets/store", "/work", "/dispatch", "/artifacts", "/task-flows"])
+  ) return;
 
   const url = new URL(location.href);
   if (value) url.searchParams.set(TICKETS_INSTANCE_QUERY_PARAM, value);

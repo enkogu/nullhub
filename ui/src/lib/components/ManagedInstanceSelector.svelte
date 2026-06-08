@@ -14,12 +14,14 @@
     getSelected,
     setSelected,
     onChange = () => {},
+    hideWhenSingleton = false,
   } = $props<{
     component: string;
     label: string;
     getSelected: () => string;
     setSelected: (name: string) => void;
     onChange?: (name: string) => void;
+    hideWhenSingleton?: boolean;
   }>();
 
   let instances = $state<InstanceOption[]>([]);
@@ -66,7 +68,7 @@
   }
 </script>
 
-{#if instances.length > 0}
+{#if instances.length > 0 && !(hideWhenSingleton && instances.length <= 1)}
   <label class="instance-selector" for={`${component}-instance-select`}>
     <span>{label}</span>
     <select
