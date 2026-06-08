@@ -55,6 +55,43 @@ export type LogSource = 'instance' | 'nullhub';
 export type ReportOption = { value: string; label: string };
 export type ReportTypeOption = ReportOption & { labels: string[] };
 export type ReportRepoOption = ReportOption & { repo: string };
+export type McpTransport = 'stdio' | 'http' | 'unknown';
+export type McpServerSummary = {
+  name: string;
+  transport: McpTransport;
+  command?: string;
+  args?: string[];
+  args_count?: number;
+  url?: string | null;
+  env_keys?: string[];
+  header_names?: string[];
+  timeout_ms?: number;
+  tool_count?: number | null;
+  status?: string;
+  last_error?: string | null;
+};
+export type McpServerDraft = {
+  name: string;
+  transport: 'stdio' | 'http';
+  command?: string;
+  args?: string[];
+  url?: string;
+  env?: Record<string, string>;
+  headers?: Record<string, string>;
+  replace_env?: boolean;
+  replace_headers?: boolean;
+  timeout_ms?: number;
+};
+export type McpMutationResult = {
+  action: string;
+  changed: boolean;
+  applied?: boolean;
+  requires_reload?: boolean;
+  requires_restart?: boolean;
+  server_name?: string;
+  message?: string;
+  valid?: boolean;
+};
 type InstanceStartOptions = {
   launch_mode?: string;
   verbose?: boolean;
@@ -297,6 +334,36 @@ export const api = {
     ),
   getSkills: (c: string, n: string, name?: string) =>
     request<any>(withQuery(instanceApiPath(c, n, '/skills'), { name }), { timeoutMs: 10000 }),
+  getMcpServers: (c: string, n: string) =>
+    request<McpServerSummary[]>(instanceApiPath(c, n, '/mcp'), { timeoutMs: 10000 }),
+  getMcpServer: (c: string, n: string, server: string) =>
+    request<McpServerSummary>(withQuery(instanceApiPath(c, n, '/mcp'), { name: server }), { timeoutMs: 15000 }),
+  createMcpServer: (c: string, n: string, server: McpServerDraft) =>
+    request<McpMutationResult>(instanceApiPath(c, n, '/mcp'), {
+      method: 'POST',
+      body: JSON.stringify(server),
+    }),
+  updateMcpServer: (c: string, n: string, serverName: string, server: McpServerDraft) =>
+    request<McpMutationResult>(withQuery(instanceApiPath(c, n, '/mcp'), { name: serverName }), {
+      method: 'PATCH',
+      body: JSON.stringify(server),
+    }),
+  deleteMcpServer: (c: string, n: string, serverName: string) =>
+    request<McpMutationResult>(withQuery(instanceApiPath(c, n, '/mcp'), { name: serverName }), {
+      method: 'DELETE',
+    }),
+  validateMcpServer: (c: string, n: string, server: McpServerDraft) =>
+    request<McpMutationResult>(instanceApiPath(c, n, '/mcp-validate'), {
+      method: 'POST',
+      body: JSON.stringify(server),
+    }),
+  reloadMcp: (c: string, n: string) =>
+    request<any>(instanceApiPath(c, n, '/mcp-reload'), { method: 'POST' }),
+  probeMcpServer: (c: string, n: string, serverName: string) =>
+    request<McpServerSummary>(withQuery(instanceApiPath(c, n, '/mcp-probe'), { name: serverName }), {
+      method: 'POST',
+      timeoutMs: 20000,
+    }),
   getSkillCatalog: (c: string, n: string) =>
     request<any>(withQuery(instanceApiPath(c, n, '/skills'), { catalog: 1 }), { timeoutMs: 10000 }),
   installBundledSkill: (c: string, n: string, bundled: string) =>

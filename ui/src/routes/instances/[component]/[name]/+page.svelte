@@ -8,6 +8,7 @@
   import ChatPanel from "$lib/components/ChatPanel.svelte";
   import InstanceHistoryPanel from "$lib/components/InstanceHistoryPanel.svelte";
   import InstanceMemoryPanel from "$lib/components/InstanceMemoryPanel.svelte";
+  import InstanceMcpPanel from "$lib/components/InstanceMcpPanel.svelte";
   import InstanceSkillsPanel from "$lib/components/InstanceSkillsPanel.svelte";
   import NullBoilerPanel from "$lib/components/NullBoilerPanel.svelte";
   import NullTicketsPanel from "$lib/components/NullTicketsPanel.svelte";
@@ -847,7 +848,7 @@
     if (activeTab === "chat" && !supportsChat) {
       activeTab = "overview";
     }
-    if ((activeTab === "history" || activeTab === "memory" || activeTab === "skills") && !supportsAgentData) {
+    if ((activeTab === "history" || activeTab === "memory" || activeTab === "skills" || activeTab === "mcp") && !supportsAgentData) {
       activeTab = "overview";
     }
     if (activeTab === "tickets" && !supportsTicketsUi) {
@@ -1080,6 +1081,10 @@
       <button
         class:active={activeTab === "skills"}
         onclick={() => (activeTab = "skills")}>Skills</button
+      >
+      <button
+        class:active={activeTab === "mcp"}
+        onclick={() => (activeTab = "mcp")}>MCP</button
       >
     {/if}
     {#if supportsTicketsUi}
@@ -1765,6 +1770,10 @@
     {:else if activeTab === "skills"}
       {#key instanceRouteKey}
         <InstanceSkillsPanel {component} {name} active={activeTab === "skills"} />
+      {/key}
+    {:else if activeTab === "mcp"}
+      {#key instanceRouteKey}
+        <InstanceMcpPanel {component} {name} active={activeTab === "mcp"} />
       {/key}
     {:else if activeTab === "tickets"}
       {#key instanceRouteKey}

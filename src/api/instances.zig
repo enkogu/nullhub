@@ -14,6 +14,7 @@ const integration_mod = @import("../core/integration.zig");
 const launch_args_mod = @import("../core/launch_args.zig");
 const managed_skills = @import("../managed_skills.zig");
 const manifest_mod = @import("../core/manifest.zig");
+const durable_file = @import("../core/durable_file.zig");
 const managed_cli = @import("managed_cli.zig");
 const nullclaw_web_channel = @import("../core/nullclaw_web_channel.zig");
 const nullclaw_gateway_config = @import("../core/nullclaw_gateway_config.zig");
@@ -811,10 +812,17 @@ fn writeJsonConfigValue(allocator: std.mem.Allocator, config_path: []const u8, v
     });
     defer allocator.free(rendered);
 
-    const out = try std_compat.fs.createFileAbsolute(config_path, .{ .truncate = true });
-    defer out.close();
-    try out.writeAll(rendered);
-    try out.writeAll("\n");
+    var mode: ?std_compat.fs.File.Mode = null;
+    if (std_compat.fs.openFileAbsolute(config_path, .{})) |file| {
+        defer file.close();
+        const stat = try file.stat();
+        mode = stat.mode;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+
+    try durable_file.writeTextFileAtomicallyWithMode(allocator, config_path, rendered, mode);
 }
 
 pub const GatewayProxyUpstream = struct {
@@ -3268,7 +3276,7 @@ fn handleCapabilities(allocator: std.mem.Allocator, s: *state_mod.State, paths: 
     return managed_cli.runJson(allocator, s, paths, component, name, &.{ "capabilities", "--json" });
 }
 
-fn handleMcp(allocator: std.mem.Allocator, s: *state_mod.State, paths: paths_mod.Paths, component: []const u8, name: []const u8, target: []const u8) ApiResponse {
+fn handleMcpRead(allocator: std.mem.Allocator, s: *state_mod.State, paths: paths_mod.Paths, component: []const u8, name: []const u8, target: []const u8) ApiResponse {
     if (!managed_cli.supports(component)) return badRequest("{\"error\":\"mcp inspection is only supported for nullclaw instances\"}");
     const server_name = query_api.valueAlloc(allocator, target, "name") catch return helpers.serverError();
     defer if (server_name) |value| allocator.free(value);
@@ -3290,6 +3298,498 @@ fn handleMcp(allocator: std.mem.Allocator, s: *state_mod.State, paths: paths_mod
         else
             &.{},
     });
+}
+
+fn cloneJsonValue(allocator: std.mem.Allocator, value: std.json.Value) !std.json.Value {
+    const rendered = try std.json.Stringify.valueAlloc(allocator, value, .{});
+    defer allocator.free(rendered);
+    return try std.json.parseFromSliceLeaky(std.json.Value, allocator, rendered, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    });
+}
+
+fn validMcpServerName(name: []const u8) bool {
+    if (name.len == 0 or name.len > 96) return false;
+    if (std.mem.indexOf(u8, name, "..") != null) return false;
+    for (name) |ch| {
+        if (std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_' or ch == '.') continue;
+        return false;
+    }
+    return true;
+}
+
+fn stripMcpHostBrackets(host: []const u8) []const u8 {
+    if (std.mem.startsWith(u8, host, "[") and std.mem.endsWith(u8, host, "]")) {
+        return host[1 .. host.len - 1];
+    }
+    return host;
+}
+
+fn stripMcpIpv6ZoneId(host: []const u8) []const u8 {
+    if (std.mem.indexOfScalar(u8, host, '%')) |pct| return host[0..pct];
+    return host;
+}
+
+fn parseMcpIpv4(host: []const u8) ?[4]u8 {
+    var octets: [4]u8 = undefined;
+    var count: u8 = 0;
+    var start: usize = 0;
+    for (host, 0..) |ch, i| {
+        if (ch == '.') {
+            if (count >= 3) return null;
+            octets[count] = std.fmt.parseInt(u8, host[start..i], 10) catch return null;
+            count += 1;
+            start = i + 1;
+        } else if (ch < '0' or ch > '9') {
+            return null;
+        }
+    }
+    if (count != 3) return null;
+    octets[3] = std.fmt.parseInt(u8, host[start..], 10) catch return null;
+    return octets;
+}
+
+fn isMcpNonGlobalIpv4(addr: [4]u8) bool {
+    const a = addr[0];
+    const b = addr[1];
+    const c = addr[2];
+    if (a == 127) return true;
+    if (a == 10) return true;
+    if (a == 172 and b >= 16 and b <= 31) return true;
+    if (a == 192 and b == 168) return true;
+    if (a == 0) return true;
+    if (a == 169 and b == 254) return true;
+    if (a >= 224) return true;
+    if (a == 100 and b >= 64 and b <= 127) return true;
+    if (a == 192 and b == 0 and c == 2) return true;
+    if (a == 198 and b == 51 and c == 100) return true;
+    if (a == 203 and b == 0 and c == 113) return true;
+    if (a == 198 and (b == 18 or b == 19)) return true;
+    if (a == 192 and b == 0 and c == 0) return true;
+    return false;
+}
+
+fn isMcpNonGlobalIpv6(host: []const u8) bool {
+    const address = std_compat.net.Address.parseIp6(host, 0) catch return false;
+    const bytes = address.in6.sa.addr;
+    var all_zero = true;
+    for (bytes) |byte| {
+        if (byte != 0) {
+            all_zero = false;
+            break;
+        }
+    }
+    if (all_zero) return true;
+    if (bytes[0] == 0 and bytes[1] == 0 and bytes[2] == 0 and bytes[3] == 0 and
+        bytes[4] == 0 and bytes[5] == 0 and bytes[6] == 0 and bytes[7] == 0 and
+        bytes[8] == 0 and bytes[9] == 0 and bytes[10] == 0 and bytes[11] == 0 and
+        bytes[12] == 0 and bytes[13] == 0 and bytes[14] == 0 and bytes[15] == 1)
+        return true;
+    if (bytes[0] == 0xff) return true;
+    if ((bytes[0] & 0xfe) == 0xfc) return true;
+    if (bytes[0] == 0xfe and (bytes[1] & 0xc0) == 0x80) return true;
+    if (bytes[0] == 0x20 and bytes[1] == 0x01 and bytes[2] == 0x0d and bytes[3] == 0xb8) return true;
+    if (bytes[0] == 0 and bytes[1] == 0 and bytes[2] == 0 and bytes[3] == 0 and
+        bytes[4] == 0 and bytes[5] == 0 and bytes[6] == 0 and bytes[7] == 0 and
+        bytes[8] == 0 and bytes[9] == 0 and bytes[10] == 0xff and bytes[11] == 0xff)
+    {
+        const ipv4 = [4]u8{ bytes[12], bytes[13], bytes[14], bytes[15] };
+        return isMcpNonGlobalIpv4(ipv4);
+    }
+    return false;
+}
+
+fn isMcpLocalHttpHost(host: []const u8) bool {
+    const bare = stripMcpHostBrackets(host);
+    const unscoped = stripMcpIpv6ZoneId(bare);
+    if (unscoped.len == 0) return false;
+    if (std.mem.eql(u8, unscoped, "localhost")) return true;
+    if (std.mem.endsWith(u8, unscoped, ".localhost")) return true;
+    if (std.mem.endsWith(u8, unscoped, ".local")) return true;
+    if (std.ascii.eqlIgnoreCase(unscoped, "host.docker.internal")) return true;
+    if (std.ascii.eqlIgnoreCase(unscoped, "host.containers.internal")) return true;
+    if (parseMcpIpv4(unscoped)) |ipv4| return isMcpNonGlobalIpv4(ipv4);
+    if (std.mem.indexOfScalar(u8, unscoped, ':') != null) return isMcpNonGlobalIpv6(unscoped);
+    return false;
+}
+
+fn validMcpHttpUrl(raw: []const u8) bool {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    if (trimmed.len == 0) return false;
+    if (std.mem.indexOfAny(u8, trimmed, " \t\r\n") != null) return false;
+
+    const uri = std.Uri.parse(trimmed) catch return false;
+    const is_https = std.ascii.eqlIgnoreCase(uri.scheme, "https");
+    const is_http = std.ascii.eqlIgnoreCase(uri.scheme, "http");
+    if (!is_https and !is_http) return false;
+
+    const host_comp = uri.host orelse return false;
+    const host = switch (host_comp) {
+        .raw => |h| h,
+        .percent_encoded => |h| blk: {
+            if (std.mem.indexOfScalar(u8, h, '%') != null) return false;
+            break :blk h;
+        },
+    };
+    if (host.len == 0) return false;
+    if (std.mem.indexOfAny(u8, host, " \t\r\n") != null) return false;
+    if (host[0] == ':') return false;
+    if (is_http and !isMcpLocalHttpHost(host)) return false;
+
+    if (host[0] == '[') {
+        const close = std.mem.indexOfScalar(u8, host, ']') orelse return false;
+        if (close != host.len - 1) return false;
+    }
+    if (std.mem.indexOfScalar(u8, trimmed, '#') != null) return false;
+    if (uri.port) |port| if (port == 0) return false;
+    return true;
+}
+
+fn mcpDraftObject(value: std.json.Value) ?std.json.ObjectMap {
+    if (value != .object) return null;
+    if (value.object.get("server")) |server| {
+        if (server == .object) return server.object;
+        return null;
+    }
+    return value.object;
+}
+
+fn mcpDraftName(obj: std.json.ObjectMap) ?[]const u8 {
+    const name_value = obj.get("name") orelse return null;
+    if (name_value != .string) return null;
+    return name_value.string;
+}
+
+fn mcpDraftTransport(obj: std.json.ObjectMap) ?[]const u8 {
+    if (obj.get("transport")) |transport_value| {
+        if (transport_value != .string) return null;
+        return transport_value.string;
+    }
+    return if (obj.get("url") != null) "http" else "stdio";
+}
+
+fn validateStringArrayField(obj: std.json.ObjectMap, key: []const u8) bool {
+    const value = obj.get(key) orelse return true;
+    if (value != .array) return false;
+    for (value.array.items) |item| {
+        if (item != .string) return false;
+    }
+    return true;
+}
+
+fn validateStringObjectField(obj: std.json.ObjectMap, key: []const u8) bool {
+    const value = obj.get(key) orelse return true;
+    if (value != .object) return false;
+    var it = value.object.iterator();
+    while (it.next()) |entry| {
+        if (!validMcpServerName(entry.key_ptr.*)) return false;
+        if (entry.value_ptr.* != .string) return false;
+    }
+    return true;
+}
+
+fn validMcpHttpHeaderName(raw: []const u8) bool {
+    if (raw.len == 0) return false;
+    for (raw) |ch| {
+        if (ch <= 0x20 or ch >= 0x7f) return false;
+        if (ch == ':' or ch == '"' or ch == '\\') return false;
+    }
+    return true;
+}
+
+fn validMcpHttpHeaderValue(raw: []const u8) bool {
+    return std.mem.indexOfAny(u8, raw, "\r\n") == null;
+}
+
+fn validateHeadersField(obj: std.json.ObjectMap) bool {
+    const value = obj.get("headers") orelse return true;
+    if (value != .object) return false;
+    var it = value.object.iterator();
+    while (it.next()) |entry| {
+        if (!validMcpHttpHeaderName(entry.key_ptr.*)) return false;
+        if (entry.value_ptr.* != .string) return false;
+        if (!validMcpHttpHeaderValue(entry.value_ptr.string)) return false;
+    }
+    return true;
+}
+
+fn validateBooleanFlagField(obj: std.json.ObjectMap, key: []const u8) bool {
+    const value = obj.get(key) orelse return true;
+    return value == .bool;
+}
+
+fn mcpBooleanFlag(obj: std.json.ObjectMap, key: []const u8) bool {
+    const value = obj.get(key) orelse return false;
+    return value == .bool and value.bool;
+}
+
+fn validateMcpDraftObject(obj: std.json.ObjectMap, require_name: bool) ApiResponse {
+    if (mcpDraftName(obj)) |server_name| {
+        if (!validMcpServerName(server_name)) return badRequest("{\"error\":\"invalid MCP server name\"}");
+    } else if (require_name) {
+        return badRequest("{\"error\":\"name is required\"}");
+    }
+
+    const transport = mcpDraftTransport(obj) orelse return badRequest("{\"error\":\"transport must be a string\"}");
+    const is_stdio = std.mem.eql(u8, transport, "stdio");
+    const is_http = std.mem.eql(u8, transport, "http");
+    if (!is_stdio and !is_http) return badRequest("{\"error\":\"unsupported MCP transport\"}");
+
+    if (is_stdio) {
+        const command = obj.get("command") orelse return badRequest("{\"error\":\"stdio MCP servers require command\"}");
+        if (command != .string or std.mem.trim(u8, command.string, " \t\r\n").len == 0) {
+            return badRequest("{\"error\":\"stdio MCP servers require command\"}");
+        }
+    }
+    if (is_http) {
+        const url = obj.get("url") orelse return badRequest("{\"error\":\"http MCP servers require url\"}");
+        if (url != .string or std.mem.trim(u8, url.string, " \t\r\n").len == 0) {
+            return badRequest("{\"error\":\"http MCP servers require url\"}");
+        }
+        if (!validMcpHttpUrl(url.string)) return badRequest("{\"error\":\"http MCP url must be an absolute https URL or local/private http URL\"}");
+    }
+
+    if (!validateStringArrayField(obj, "args")) return badRequest("{\"error\":\"args must be an array of strings\"}");
+    if (!validateStringObjectField(obj, "env")) return badRequest("{\"error\":\"env must be an object of string values\"}");
+    if (!validateHeadersField(obj)) return badRequest("{\"error\":\"headers must be an object with valid HTTP header names and values\"}");
+    if (!validateBooleanFlagField(obj, "replace_env")) return badRequest("{\"error\":\"replace_env must be a boolean\"}");
+    if (!validateBooleanFlagField(obj, "replace_headers")) return badRequest("{\"error\":\"replace_headers must be a boolean\"}");
+    if (obj.get("timeout_ms")) |timeout| {
+        if (timeout != .integer or timeout.integer < 1 or timeout.integer > 600_000) {
+            return badRequest("{\"error\":\"timeout_ms must be an integer between 1 and 600000\"}");
+        }
+    }
+    return .{ .status = "200 OK", .content_type = "application/json", .body = "" };
+}
+
+fn validateMcpPatchObject(obj: std.json.ObjectMap) ApiResponse {
+    if (mcpDraftName(obj)) |server_name| {
+        if (!validMcpServerName(server_name)) return badRequest("{\"error\":\"invalid MCP server name\"}");
+    }
+    if (obj.get("transport")) |transport_value| {
+        if (transport_value != .string) return badRequest("{\"error\":\"transport must be a string\"}");
+        if (!std.mem.eql(u8, transport_value.string, "stdio") and !std.mem.eql(u8, transport_value.string, "http")) {
+            return badRequest("{\"error\":\"unsupported MCP transport\"}");
+        }
+    }
+    if (obj.get("command")) |command| {
+        if (command != .string or std.mem.trim(u8, command.string, " \t\r\n").len == 0) {
+            return badRequest("{\"error\":\"command must be a non-empty string\"}");
+        }
+    }
+    if (obj.get("url")) |url| {
+        if (url != .string or std.mem.trim(u8, url.string, " \t\r\n").len == 0) {
+            return badRequest("{\"error\":\"url must be a non-empty string\"}");
+        }
+        if (!validMcpHttpUrl(url.string)) return badRequest("{\"error\":\"http MCP url must be an absolute https URL or local/private http URL\"}");
+    }
+    if (!validateStringArrayField(obj, "args")) return badRequest("{\"error\":\"args must be an array of strings\"}");
+    if (!validateStringObjectField(obj, "env")) return badRequest("{\"error\":\"env must be an object of string values\"}");
+    if (!validateHeadersField(obj)) return badRequest("{\"error\":\"headers must be an object with valid HTTP header names and values\"}");
+    if (!validateBooleanFlagField(obj, "replace_env")) return badRequest("{\"error\":\"replace_env must be a boolean\"}");
+    if (!validateBooleanFlagField(obj, "replace_headers")) return badRequest("{\"error\":\"replace_headers must be a boolean\"}");
+    if (obj.get("timeout_ms")) |timeout| {
+        if (timeout != .integer or timeout.integer < 1 or timeout.integer > 600_000) {
+            return badRequest("{\"error\":\"timeout_ms must be an integer between 1 and 600000\"}");
+        }
+    }
+    return .{ .status = "200 OK", .content_type = "application/json", .body = "" };
+}
+
+fn readMcpConfig(allocator: std.mem.Allocator, paths: paths_mod.Paths, component: []const u8, name: []const u8) !std.json.Parsed(std.json.Value) {
+    const config_path = try paths.instanceConfig(allocator, component, name);
+    defer allocator.free(config_path);
+    const raw = std_compat.fs.openFileAbsolute(config_path, .{}) catch |err| switch (err) {
+        error.FileNotFound => return std.json.parseFromSlice(std.json.Value, allocator, "{}", .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        }),
+        else => return err,
+    };
+    defer raw.close();
+    const bytes = try raw.readToEndAlloc(allocator, 4 * 1024 * 1024);
+    defer allocator.free(bytes);
+    return try std.json.parseFromSlice(std.json.Value, allocator, bytes, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    });
+}
+
+fn ensureMcpServersObject(allocator: std.mem.Allocator, root: *std.json.Value) !*std.json.ObjectMap {
+    if (root.* != .object) return error.InvalidConfig;
+    if (root.object.getPtr("mcp_servers")) |value| {
+        if (value.* != .object) return error.InvalidMcpServers;
+        return &value.object;
+    }
+    const empty: std.json.ObjectMap = .empty;
+    try root.object.put(allocator, "mcp_servers", .{ .object = empty });
+    return &root.object.getPtr("mcp_servers").?.object;
+}
+
+fn cloneMcpDraftForStorage(allocator: std.mem.Allocator, obj: std.json.ObjectMap) !std.json.Value {
+    var cloned = try cloneJsonValue(allocator, .{ .object = obj });
+    if (cloned == .object) {
+        _ = cloned.object.swapRemove("name");
+        _ = cloned.object.swapRemove("replace_env");
+        _ = cloned.object.swapRemove("replace_headers");
+    }
+    return cloned;
+}
+
+fn mergeMcpDraftIntoExisting(allocator: std.mem.Allocator, existing: *std.json.Value, obj: std.json.ObjectMap) !void {
+    if (existing.* != .object) return error.InvalidMcpServer;
+    const replace_env = mcpBooleanFlag(obj, "replace_env");
+    const replace_headers = mcpBooleanFlag(obj, "replace_headers");
+    var it = obj.iterator();
+    while (it.next()) |entry| {
+        if (std.mem.eql(u8, entry.key_ptr.*, "name")) continue;
+        if (std.mem.eql(u8, entry.key_ptr.*, "replace_env") or std.mem.eql(u8, entry.key_ptr.*, "replace_headers")) continue;
+        if (std.mem.eql(u8, entry.key_ptr.*, "env") or std.mem.eql(u8, entry.key_ptr.*, "headers")) {
+            if (entry.value_ptr.* != .object) return error.InvalidMcpServer;
+            const replace_nested = (std.mem.eql(u8, entry.key_ptr.*, "env") and replace_env) or
+                (std.mem.eql(u8, entry.key_ptr.*, "headers") and replace_headers);
+            if (replace_nested) {
+                const cloned = try cloneJsonValue(allocator, entry.value_ptr.*);
+                try existing.object.put(allocator, entry.key_ptr.*, cloned);
+                continue;
+            }
+            var target = existing.object.getPtr(entry.key_ptr.*);
+            if (target == null) {
+                const empty: std.json.ObjectMap = .empty;
+                try existing.object.put(allocator, entry.key_ptr.*, .{ .object = empty });
+                target = existing.object.getPtr(entry.key_ptr.*);
+            }
+            if (target.?.* != .object) return error.InvalidMcpServer;
+            var nested_it = entry.value_ptr.object.iterator();
+            while (nested_it.next()) |nested| {
+                const cloned = try cloneJsonValue(allocator, nested.value_ptr.*);
+                try target.?.object.put(allocator, nested.key_ptr.*, cloned);
+            }
+            continue;
+        }
+        const cloned = try cloneJsonValue(allocator, entry.value_ptr.*);
+        try existing.object.put(allocator, entry.key_ptr.*, cloned);
+    }
+}
+
+fn saveMcpConfig(allocator: std.mem.Allocator, paths: paths_mod.Paths, component: []const u8, name: []const u8, value: std.json.Value) !void {
+    const inst_dir = try paths.instanceDir(allocator, component, name);
+    defer allocator.free(inst_dir);
+    std_compat.fs.makeDirAbsolute(inst_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+    const config_path = try paths.instanceConfig(allocator, component, name);
+    defer allocator.free(config_path);
+    try writeJsonConfigValue(allocator, config_path, value);
+}
+
+fn mcpMutationOk(allocator: std.mem.Allocator, action: []const u8, server_name: []const u8, changed: bool) ApiResponse {
+    const message = if (changed)
+        "MCP config changed. Reload config or restart the instance to apply it."
+    else
+        "MCP config unchanged.";
+    const body = std.json.Stringify.valueAlloc(allocator, .{
+        .action = action,
+        .changed = changed,
+        .applied = false,
+        .requires_reload = changed,
+        .requires_restart = changed,
+        .server_name = server_name,
+        .message = message,
+    }, .{}) catch return helpers.serverError();
+    return jsonOk(body);
+}
+
+fn handleMcpValidate(allocator: std.mem.Allocator, component: []const u8, body: []const u8) ApiResponse {
+    if (!managed_cli.supports(component)) return badRequest("{\"error\":\"mcp validation is only supported for nullclaw instances\"}");
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, body, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    }) catch return badRequest("{\"error\":\"invalid JSON body\"}");
+    defer parsed.deinit();
+    const obj = mcpDraftObject(parsed.value) orelse return badRequest("{\"error\":\"server object is required\"}");
+    const validation = validateMcpDraftObject(obj, true);
+    if (!std.mem.eql(u8, validation.status, "200 OK")) return validation;
+    const name_value = mcpDraftName(obj).?;
+    const response = std.json.Stringify.valueAlloc(allocator, .{
+        .action = "validate",
+        .changed = false,
+        .valid = true,
+        .server_name = name_value,
+    }, .{}) catch return helpers.serverError();
+    return jsonOk(response);
+}
+
+fn handleMcpMutation(allocator: std.mem.Allocator, s: *state_mod.State, paths: paths_mod.Paths, component: []const u8, name: []const u8, method: []const u8, target: []const u8, body: []const u8) ApiResponse {
+    if (!managed_cli.supports(component)) return badRequest("{\"error\":\"mcp mutation is only supported for nullclaw instances\"}");
+    _ = s.getInstance(component, name) orelse return notFound();
+
+    var parsed_config = readMcpConfig(allocator, paths, component, name) catch return badRequest("{\"error\":\"invalid config JSON\"}");
+    defer parsed_config.deinit();
+
+    const servers = ensureMcpServersObject(allocator, &parsed_config.value) catch |err| switch (err) {
+        error.InvalidConfig => return badRequest("{\"error\":\"config root must be an object\"}"),
+        error.InvalidMcpServers => return badRequest("{\"error\":\"mcp_servers must be an object\"}"),
+        else => return helpers.serverError(),
+    };
+
+    if (std.mem.eql(u8, method, "DELETE")) {
+        const server_name = query_api.valueAlloc(allocator, target, "name") catch return helpers.serverError();
+        defer if (server_name) |value| allocator.free(value);
+        const value = server_name orelse return badRequest("{\"error\":\"name is required\"}");
+        if (!validMcpServerName(value)) return badRequest("{\"error\":\"invalid MCP server name\"}");
+        const changed = servers.swapRemove(value);
+        if (!changed) return notFound();
+        saveMcpConfig(allocator, paths, component, name, parsed_config.value) catch return helpers.serverError();
+        return mcpMutationOk(allocator, "delete", value, true);
+    }
+
+    const parsed_body = std.json.parseFromSlice(std.json.Value, allocator, body, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    }) catch return badRequest("{\"error\":\"invalid JSON body\"}");
+    defer parsed_body.deinit();
+    const obj = mcpDraftObject(parsed_body.value) orelse return badRequest("{\"error\":\"server object is required\"}");
+    const query_name = query_api.valueAlloc(allocator, target, "name") catch return helpers.serverError();
+    defer if (query_name) |value| allocator.free(value);
+    const server_name = query_name orelse mcpDraftName(obj) orelse return badRequest("{\"error\":\"name is required\"}");
+    if (!validMcpServerName(server_name)) return badRequest("{\"error\":\"invalid MCP server name\"}");
+    if (mcpDraftName(obj)) |body_name| {
+        if (!std.mem.eql(u8, body_name, server_name)) return badRequest("{\"error\":\"body name must match query name\"}");
+    }
+
+    const existing_server = servers.getPtr(server_name);
+
+    if (std.mem.eql(u8, method, "PATCH")) {
+        const patch_validation = validateMcpPatchObject(obj);
+        if (!std.mem.eql(u8, patch_validation.status, "200 OK")) return patch_validation;
+        if (existing_server == null) return notFound();
+        mergeMcpDraftIntoExisting(allocator, existing_server.?, obj) catch |err| switch (err) {
+            error.InvalidMcpServer => return badRequest("{\"error\":\"existing MCP server config must be an object\"}"),
+            else => return helpers.serverError(),
+        };
+        if (existing_server.?.* != .object) return badRequest("{\"error\":\"existing MCP server config must be an object\"}");
+        const merged_validation = validateMcpDraftObject(existing_server.?.object, false);
+        if (!std.mem.eql(u8, merged_validation.status, "200 OK")) return merged_validation;
+    } else {
+        const validation = validateMcpDraftObject(obj, false);
+        if (!std.mem.eql(u8, validation.status, "200 OK")) return validation;
+        if (existing_server != null) return conflict("{\"error\":\"MCP server already exists\"}");
+        const cloned = cloneMcpDraftForStorage(allocator, obj) catch return helpers.serverError();
+        servers.put(allocator, server_name, cloned) catch return helpers.serverError();
+    }
+    saveMcpConfig(allocator, paths, component, name, parsed_config.value) catch return helpers.serverError();
+    return mcpMutationOk(allocator, if (std.mem.eql(u8, method, "POST")) "create" else "update", server_name, true);
+}
+
+fn handleMcp(allocator: std.mem.Allocator, s: *state_mod.State, paths: paths_mod.Paths, component: []const u8, name: []const u8, method: []const u8, target: []const u8, body: []const u8) ApiResponse {
+    if (std.mem.eql(u8, method, "GET")) return handleMcpRead(allocator, s, paths, component, name, target);
+    if (std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "PATCH") or std.mem.eql(u8, method, "DELETE")) {
+        return handleMcpMutation(allocator, s, paths, component, name, method, target, body);
+    }
+    return methodNotAllowed();
 }
 
 fn handleModelsAction(
@@ -5172,8 +5672,19 @@ pub fn dispatch(
             return handleCapabilities(allocator, s, paths, parsed.component, parsed.name);
         }
         if (std.mem.eql(u8, action, "mcp")) {
-            if (!std.mem.eql(u8, method, "GET")) return methodNotAllowed();
-            return handleMcp(allocator, s, paths, parsed.component, parsed.name, target);
+            return handleMcp(allocator, s, paths, parsed.component, parsed.name, method, target, body);
+        }
+        if (std.mem.eql(u8, action, "mcp-validate")) {
+            if (!std.mem.eql(u8, method, "POST")) return methodNotAllowed();
+            return handleMcpValidate(allocator, parsed.component, body);
+        }
+        if (std.mem.eql(u8, action, "mcp-reload")) {
+            if (!std.mem.eql(u8, method, "POST")) return methodNotAllowed();
+            return handleConfigReload(allocator, s, paths, parsed.component, parsed.name);
+        }
+        if (std.mem.eql(u8, action, "mcp-probe")) {
+            if (!std.mem.eql(u8, method, "POST")) return methodNotAllowed();
+            return handleMcpRead(allocator, s, paths, parsed.component, parsed.name, target);
         }
         if (std.mem.eql(u8, action, "models")) {
             return handleModelsAction(allocator, s, paths, parsed.component, parsed.name, method, target);
@@ -9190,6 +9701,306 @@ test "dispatch routes doctor capabilities mcp and models detail" {
 
     const refresh_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "POST", "/api/instances/nullclaw/my-agent/models", "").?;
     try std.testing.expectEqualStrings("501 Not Implemented", refresh_resp.status);
+}
+
+test "dispatch mutates mcp server config subtree" {
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var state_fixture = try test_helpers.TempPaths.init(allocator);
+    defer state_fixture.deinit();
+    const state_path = try state_fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var s = state_mod.State.init(allocator, state_path);
+    defer s.deinit();
+    var mctx = TestManagerCtx.init(allocator);
+    defer mctx.deinit(allocator);
+
+    try s.addInstance("nullclaw", "my-agent", .{ .version = "1.0.10" });
+
+    const validate_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp-validate",
+        "{\"name\":\"context7\",\"transport\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@upstash/context7-mcp\"]}",
+    ).?;
+    defer allocator.free(validate_resp.body);
+    try std.testing.expectEqualStrings("200 OK", validate_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, validate_resp.body, "\"valid\":true") != null);
+
+    const invalid_http_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp-validate",
+        "{\"name\":\"remote-http\",\"transport\":\"http\",\"url\":\"http://example.com/mcp\"}",
+    ).?;
+    defer allocator.free(invalid_http_resp.body);
+    try std.testing.expectEqualStrings("400 Bad Request", invalid_http_resp.status);
+
+    const invalid_ipv6_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp-validate",
+        "{\"name\":\"bad-ipv6\",\"transport\":\"http\",\"url\":\"http://[fczz::1]:6000/mcp\"}",
+    ).?;
+    defer allocator.free(invalid_ipv6_resp.body);
+    try std.testing.expectEqualStrings("400 Bad Request", invalid_ipv6_resp.status);
+
+    const invalid_timeout_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp",
+        "{\"name\":\"bad-timeout\",\"transport\":\"stdio\",\"command\":\"npx\",\"timeout_ms\":0}",
+    ).?;
+    defer allocator.free(invalid_timeout_resp.body);
+    try std.testing.expectEqualStrings("400 Bad Request", invalid_timeout_resp.status);
+
+    const invalid_header_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp-validate",
+        "{\"name\":\"bad-header\",\"transport\":\"http\",\"url\":\"http://localhost:6000/mcp\",\"headers\":{\"X-Trace\":\"bad\\nvalue\"}}",
+    ).?;
+    defer allocator.free(invalid_header_resp.body);
+    try std.testing.expectEqualStrings("400 Bad Request", invalid_header_resp.status);
+
+    const invalid_header_name_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp-validate",
+        "{\"name\":\"bad-header-name\",\"transport\":\"http\",\"url\":\"http://localhost:6000/mcp\",\"headers\":{\"\\nX-Trace\":\"value\"}}",
+    ).?;
+    defer allocator.free(invalid_header_name_resp.body);
+    try std.testing.expectEqualStrings("400 Bad Request", invalid_header_name_resp.status);
+
+    const create_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp",
+        "{\"name\":\"context7\",\"transport\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@upstash/context7-mcp\"],\"env\":{\"CONTEXT7_API_KEY\":\"${CONTEXT7_API_KEY}\"}}",
+    ).?;
+    defer allocator.free(create_resp.body);
+    try std.testing.expectEqualStrings("200 OK", create_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, create_resp.body, "\"action\":\"create\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, create_resp.body, "\"requires_restart\":true") != null);
+
+    {
+        const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
+        defer allocator.free(config_path);
+        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        defer allocator.free(config_bytes);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        const server = parsed.value.object.get("mcp_servers").?.object.get("context7").?.object;
+        try std.testing.expectEqualStrings("npx", server.get("command").?.string);
+        try std.testing.expectEqual(@as(usize, 2), server.get("args").?.array.items.len);
+        if (comptime std_compat.fs.has_executable_bit) {
+            var config_file = try std_compat.fs.openFileAbsolute(config_path, .{});
+            defer config_file.close();
+            try config_file.chmod(0o600);
+        }
+    }
+
+    const update_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "PATCH",
+        "/api/instances/nullclaw/my-agent/mcp?name=context7",
+        "{\"name\":\"context7\",\"transport\":\"stdio\",\"command\":\"node\",\"args\":[\"server.js\"]}",
+    ).?;
+    defer allocator.free(update_resp.body);
+    try std.testing.expectEqualStrings("200 OK", update_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, update_resp.body, "\"action\":\"update\"") != null);
+
+    {
+        const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
+        defer allocator.free(config_path);
+        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        defer allocator.free(config_bytes);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        const server = parsed.value.object.get("mcp_servers").?.object.get("context7").?.object;
+        try std.testing.expectEqualStrings("node", server.get("command").?.string);
+        try std.testing.expectEqualStrings("${CONTEXT7_API_KEY}", server.get("env").?.object.get("CONTEXT7_API_KEY").?.string);
+        try std.testing.expect(server.get("name") == null);
+        if (comptime std_compat.fs.has_executable_bit) {
+            var config_file = try std_compat.fs.openFileAbsolute(config_path, .{});
+            defer config_file.close();
+            const stat = try config_file.stat();
+            try std.testing.expectEqual(@as(std_compat.fs.File.Mode, 0o600), stat.mode & 0o777);
+        }
+    }
+
+    const env_patch_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "PATCH",
+        "/api/instances/nullclaw/my-agent/mcp?name=context7",
+        "{\"env\":{\"EXTRA\":\"1\"}}",
+    ).?;
+    defer allocator.free(env_patch_resp.body);
+    try std.testing.expectEqualStrings("200 OK", env_patch_resp.status);
+
+    {
+        const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
+        defer allocator.free(config_path);
+        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        defer allocator.free(config_bytes);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        const env = parsed.value.object.get("mcp_servers").?.object.get("context7").?.object.get("env").?.object;
+        try std.testing.expectEqualStrings("${CONTEXT7_API_KEY}", env.get("CONTEXT7_API_KEY").?.string);
+        try std.testing.expectEqualStrings("1", env.get("EXTRA").?.string);
+    }
+
+    const env_replace_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "PATCH",
+        "/api/instances/nullclaw/my-agent/mcp?name=context7",
+        "{\"env\":{},\"replace_env\":true}",
+    ).?;
+    defer allocator.free(env_replace_resp.body);
+    try std.testing.expectEqualStrings("200 OK", env_replace_resp.status);
+
+    {
+        const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
+        defer allocator.free(config_path);
+        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        defer allocator.free(config_bytes);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        const context_server = parsed.value.object.get("mcp_servers").?.object.get("context7").?.object;
+        try std.testing.expectEqual(@as(usize, 0), context_server.get("env").?.object.count());
+        try std.testing.expect(context_server.get("replace_env") == null);
+    }
+
+    const http_create_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nullclaw/my-agent/mcp",
+        "{\"name\":\"http-one\",\"transport\":\"http\",\"url\":\"http://localhost:6000/mcp\",\"headers\":{\"Authorization\":\"Bearer old\"}}",
+    ).?;
+    defer allocator.free(http_create_resp.body);
+    try std.testing.expectEqualStrings("200 OK", http_create_resp.status);
+
+    const header_patch_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "PATCH",
+        "/api/instances/nullclaw/my-agent/mcp?name=http-one",
+        "{\"headers\":{\"X-Trace\":\"1\"}}",
+    ).?;
+    defer allocator.free(header_patch_resp.body);
+    try std.testing.expectEqualStrings("200 OK", header_patch_resp.status);
+
+    {
+        const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
+        defer allocator.free(config_path);
+        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        defer allocator.free(config_bytes);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        const headers = parsed.value.object.get("mcp_servers").?.object.get("http-one").?.object.get("headers").?.object;
+        try std.testing.expectEqualStrings("Bearer old", headers.get("Authorization").?.string);
+        try std.testing.expectEqualStrings("1", headers.get("X-Trace").?.string);
+    }
+
+    const header_replace_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "PATCH",
+        "/api/instances/nullclaw/my-agent/mcp?name=http-one",
+        "{\"headers\":{},\"replace_headers\":true}",
+    ).?;
+    defer allocator.free(header_replace_resp.body);
+    try std.testing.expectEqualStrings("200 OK", header_replace_resp.status);
+
+    {
+        const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
+        defer allocator.free(config_path);
+        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        defer allocator.free(config_bytes);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        const http_server = parsed.value.object.get("mcp_servers").?.object.get("http-one").?.object;
+        try std.testing.expectEqual(@as(usize, 0), http_server.get("headers").?.object.count());
+        try std.testing.expect(http_server.get("replace_headers") == null);
+    }
+
+    const delete_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "DELETE", "/api/instances/nullclaw/my-agent/mcp?name=context7", "").?;
+    defer allocator.free(delete_resp.body);
+    try std.testing.expectEqualStrings("200 OK", delete_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, delete_resp.body, "\"action\":\"delete\"") != null);
+
+    const missing_delete_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "DELETE", "/api/instances/nullclaw/my-agent/mcp?name=context7", "").?;
+    defer allocator.free(missing_delete_resp.body);
+    try std.testing.expectEqualStrings("404 Not Found", missing_delete_resp.status);
 }
 
 test "dispatch routes agent invoke stream and sessions" {

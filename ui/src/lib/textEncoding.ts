@@ -52,21 +52,59 @@ function latinishBytes(value: string): Uint8Array | null {
   return Uint8Array.from(bytes);
 }
 
+function cyrillicLeadBytes(value: string): Uint8Array | null {
+  const bytes: number[] = [];
+  for (const char of value) {
+    const code = char.codePointAt(0);
+    if (code === undefined) return null;
+    if (code === 0xf0) {
+      bytes.push(0xd0);
+      continue;
+    }
+    if (code === 0xf1) {
+      bytes.push(0xd1);
+      continue;
+    }
+    if (code <= 0xff) {
+      bytes.push(code);
+      continue;
+    }
+    const byte = cp1252Bytes[code];
+    if (byte === undefined) return null;
+    bytes.push(byte);
+  }
+  return Uint8Array.from(bytes);
+}
+
+function decodeUtf8(bytes: Uint8Array | null): string | null {
+  if (!bytes) return null;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
 export function normalizeMojibakeText(value: string): string {
   if (!mojibakePattern.test(value)) return value;
 
-  const bytes = latinishBytes(value);
-  if (!bytes) return value;
-
-  let decoded = "";
-  try {
-    decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  } catch {
-    return value;
-  }
+  const decoded = decodeUtf8(latinishBytes(value)) ?? decodeUtf8(cyrillicLeadBytes(value));
+  if (!decoded) return value;
 
   if (decoded === value) return value;
   if (suspiciousScore(decoded) >= suspiciousScore(value)) return value;
 
   return cyrillicPattern.test(decoded) || suspiciousScore(value) >= 2 ? decoded : value;
+}
+
+export function normalizeMojibakeValue<T>(value: T): T {
+  if (typeof value === "string") return normalizeMojibakeText(value) as T;
+  if (Array.isArray(value)) return value.map((item) => normalizeMojibakeValue(item)) as T;
+  if (!value || typeof value !== "object") return value;
+
+  const normalized: Record<string, unknown> = {};
+  for (const [key, nested] of Object.entries(value)) {
+    normalized[key] = normalizeMojibakeValue(nested);
+  }
+  return normalized as T;
 }
