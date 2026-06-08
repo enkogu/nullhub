@@ -1,4 +1,9 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
+  import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+  import FileTextIcon from '@lucide/svelte/icons/file-text';
+  import FolderIcon from '@lucide/svelte/icons/folder';
+  import FolderOpenIcon from '@lucide/svelte/icons/folder-open';
   import { marked } from 'marked';
   import {
     deleteMarkdownDocument,
@@ -10,6 +15,16 @@
     type MarkdownDocument,
     type MarkdownDocumentEntry,
   } from '$lib/api/markdownDocuments';
+  import { headerToolbar } from '$lib/headerToolbar';
+
+  type DocumentTreeNode = {
+    id: string;
+    name: string;
+    path: string;
+    kind: 'folder' | 'file';
+    children: DocumentTreeNode[];
+    entry?: MarkdownDocumentEntry;
+  };
 
   let {
     component,
@@ -38,6 +53,7 @@
   let loadKey = $state('');
   let deleteConfirmKey = $state('');
   let viewMode = $state<'preview' | 'source'>('preview');
+  let expandedFolders = $state<Set<string>>(new Set());
   let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   const normalizedDraftPath = $derived(normalizeMarkdownPath(draftPath));
@@ -57,6 +73,8 @@
   const softStoreError = $derived(error.trim().toLowerCase() === 'not found');
   const renderedMarkdown = $derived(renderMarkdown(draftContent));
   const saveState = $derived(saving ? 'Saving' : dirty ? 'Unsaved' : selectedKey ? 'Saved' : 'Draft');
+  const documentTree = $derived(buildDocumentTree(documents));
+  const selectedFileName = $derived(fileName(draftPath) || 'Docs');
 
   function parseTags(value: string): string[] {
     return value
@@ -99,6 +117,88 @@
     return file.replace(/\.(md|markdown)$/i, '').replaceAll('-', ' ').replaceAll('_', ' ');
   }
 
+  function fileName(path: string): string {
+    const normalized = normalizeMarkdownPath(path);
+    return normalized.split('/').pop() || normalized;
+  }
+
+  function directoryName(path: string): string {
+    const normalized = normalizeMarkdownPath(path);
+    const slash = normalized.lastIndexOf('/');
+    return slash > 0 ? normalized.slice(0, slash) : '';
+  }
+
+  function fileExtension(path: string): string {
+    const name = fileName(path);
+    const dot = name.lastIndexOf('.');
+    return dot >= 0 ? name.slice(dot + 1).toUpperCase() : 'MD';
+  }
+
+  function pathAncestors(path: string): string[] {
+    const parts = normalizeMarkdownPath(path).split('/').filter(Boolean);
+    const ancestors: string[] = [];
+    for (let index = 0; index < parts.length - 1; index += 1) {
+      ancestors.push(parts.slice(0, index + 1).join('/'));
+    }
+    return ancestors;
+  }
+
+  function expandAncestors(path: string) {
+    const ancestors = pathAncestors(path);
+    if (ancestors.length === 0) return;
+    expandedFolders = new Set([...expandedFolders, ...ancestors]);
+  }
+
+  function toggleFolder(path: string) {
+    const next = new Set(expandedFolders);
+    if (next.has(path)) next.delete(path);
+    else next.add(path);
+    expandedFolders = next;
+  }
+
+  function sortTreeNodes(nodes: DocumentTreeNode[]): DocumentTreeNode[] {
+    return nodes.sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'folder' ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+  }
+
+  function buildDocumentTree(entries: MarkdownDocumentEntry[]): DocumentTreeNode[] {
+    const roots: DocumentTreeNode[] = [];
+    const folders = new Map<string, DocumentTreeNode>();
+
+    function folderNode(path: string, name: string): DocumentTreeNode {
+      const existing = folders.get(path);
+      if (existing) return existing;
+      const node: DocumentTreeNode = { id: `folder:${path}`, name, path, kind: 'folder', children: [] };
+      folders.set(path, node);
+      const parentPath = directoryName(path);
+      if (parentPath) folderNode(parentPath, fileName(parentPath)).children.push(node);
+      else roots.push(node);
+      return node;
+    }
+
+    for (const entry of entries) {
+      const path = normalizeMarkdownPath(entry.document.path);
+      const dir = directoryName(path);
+      const node: DocumentTreeNode = {
+        id: entry.key,
+        name: fileName(path),
+        path,
+        kind: 'file',
+        children: [],
+        entry,
+      };
+      if (dir) folderNode(dir, fileName(dir)).children.push(node);
+      else roots.push(node);
+    }
+
+    for (const folder of folders.values()) {
+      folder.children = sortTreeNodes(folder.children);
+    }
+    return sortTreeNodes(roots);
+  }
+
   function emptySnapshot(): string {
     return JSON.stringify({
       title: '',
@@ -130,6 +230,7 @@
     draftArtifactId = entry.document.artifact_id || null;
     lastSavedSnapshot = entry.key ? documentSnapshot(entry.document) : '';
     deleteConfirmKey = '';
+    expandAncestors(entry.document.path);
     viewMode = 'preview';
   }
 
@@ -178,7 +279,7 @@
       tags: [],
       owner_component: component,
       owner_instance: name,
-      source: 'store',
+      source: 'workspace',
       created_at_ms: Date.now(),
       updated_at_ms: Date.now(),
       artifact_id: null,
@@ -340,18 +441,127 @@
       }
     };
   });
+
+  $effect(() => {
+    if (!active) {
+      headerToolbar.set(null);
+      return;
+    }
+    headerToolbar.set({
+      crumbLabel: selectedFileName,
+      path: {
+        value: draftPath,
+        placeholder: 'docs/runbook.md',
+        invalid: Boolean(!pathValid && draftPath.trim()),
+        onInput: (value: string) => {
+          draftPath = value;
+          draftTitle = titleFromPath(value);
+        },
+      },
+      status: {
+        label: error && !softStoreError ? 'Error' : saveState,
+        tone: error && !softStoreError ? 'error' : saving ? 'saving' : dirty ? 'dirty' : 'muted',
+      },
+      actions: [
+        {
+          id: 'preview',
+          label: 'Preview',
+          active: viewMode === 'preview',
+          onClick: () => {
+            viewMode = 'preview';
+          },
+        },
+        {
+          id: 'source',
+          label: 'Source',
+          active: viewMode === 'source',
+          onClick: () => {
+            viewMode = 'source';
+          },
+        },
+        {
+          id: 'new',
+          label: 'New',
+          onClick: newDocument,
+        },
+        {
+          id: 'delete',
+          label: selectedKey && deleteConfirmKey === selectedKey ? 'Confirm' : 'Delete',
+          danger: true,
+          disabled: !selectedKey || deleting,
+          onClick: removeDraft,
+        },
+        {
+          id: 'save',
+          label: 'Save',
+          primary: canSave,
+          disabled: !canSave,
+          onClick: saveDraft,
+        },
+        ...(onExit
+          ? [
+              {
+                id: 'back',
+                label: 'Back',
+                onClick: onExit,
+              },
+            ]
+          : []),
+      ],
+    });
+  });
+
+  onDestroy(() => {
+    headerToolbar.set(null);
+  });
 </script>
+
+{#snippet treeNode(node: DocumentTreeNode, depth: number)}
+  {@const expanded = expandedFolders.has(node.path)}
+  <button
+    class="tree-row"
+    class:folder={node.kind === 'folder'}
+    class:file={node.kind === 'file'}
+    class:active={node.entry?.key === selectedKey}
+    style={`--depth: ${depth}`}
+    aria-expanded={node.kind === 'folder' ? expanded : undefined}
+    onclick={() => {
+      if (node.kind === 'folder') toggleFolder(node.path);
+      else if (node.entry) void selectDocument(node.entry.key);
+    }}
+  >
+    {#if node.kind === 'folder'}
+      <ChevronRightIcon class={expanded ? 'tree-chevron open' : 'tree-chevron'} />
+      {#if expanded}
+        <FolderOpenIcon class="tree-icon folder-icon" />
+      {:else}
+        <FolderIcon class="tree-icon folder-icon" />
+      {/if}
+      <span class="tree-name">{node.name}</span>
+    {:else}
+      <span class="tree-spacer" aria-hidden="true"></span>
+      <FileTextIcon class="tree-icon file-icon" />
+      <span class="tree-name">{node.name}</span>
+      <span class="tree-badge">{fileExtension(node.path)}</span>
+    {/if}
+  </button>
+  {#if node.kind === 'folder' && expanded}
+    {#each node.children as child (child.id)}
+      {@render treeNode(child, depth + 1)}
+    {/each}
+  {/if}
+{/snippet}
 
 <div class="markdown-manager">
   <section class="document-list" aria-label="Markdown files">
-    <div class="document-list-header">Files</div>
-    {#if documents.length > 0}
+    <div class="document-list-header">
+      <span>Files</span>
+      <span>{documents.length}</span>
+    </div>
+    {#if documentTree.length > 0}
       <div class="doc-scroll">
-        {#each documents as entry}
-          <button class="doc-row" class:active={entry.key === selectedKey} onclick={() => selectDocument(entry.key)}>
-            <span class="doc-title">{entry.document.title}</span>
-            <span class="doc-path">{entry.document.path}</span>
-          </button>
+        {#each documentTree as node (node.id)}
+          {@render treeNode(node, 0)}
         {/each}
       </div>
     {:else}
@@ -360,26 +570,6 @@
   </section>
 
   <section class="editor-shell" aria-label="Markdown editor">
-    <div class="fields-row">
-      <input aria-label="Path" class:invalid={!pathValid && draftPath.trim()} bind:value={draftPath} placeholder="docs/runbook.md" />
-      <div class="mode-switch" aria-label="File view mode">
-        <button type="button" aria-pressed={viewMode === 'preview'} class:active={viewMode === 'preview'} onclick={() => (viewMode = 'preview')}>
-          Preview
-        </button>
-        <button type="button" aria-pressed={viewMode === 'source'} class:active={viewMode === 'source'} onclick={() => (viewMode = 'source')}>
-          Source
-        </button>
-      </div>
-      <button class="btn" onclick={newDocument}>New</button>
-      <button class="btn danger" onclick={removeDraft} disabled={!selectedKey || deleting}>
-        {selectedKey && deleteConfirmKey === selectedKey ? 'Confirm' : 'Delete'}
-      </button>
-      {#if onExit}
-        <button class="btn" onclick={onExit}>Back</button>
-      {/if}
-      <span class:dirty class:saving class="save-state">{saveState}</span>
-    </div>
-
     <div class="status-row">
       {#if error && !softStoreError}
         <span class="inline-error">{error}</span>
@@ -413,11 +603,11 @@
 <style>
   .markdown-manager {
     display: grid;
-    grid-template-columns: minmax(190px, 260px) minmax(0, 1fr);
+    grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
     gap: 10px;
     width: 100%;
     height: 100%;
-    padding: 10px;
+    padding: 8px;
     overflow: hidden;
   }
 
@@ -443,12 +633,6 @@
     color: #fff;
   }
 
-  .btn.danger {
-    border-color: var(--error);
-    color: var(--error);
-  }
-
-  input,
   textarea {
     width: 100%;
     border: 1px solid var(--border);
@@ -457,10 +641,6 @@
     color: var(--fg);
     padding: 5px 8px;
     font: inherit;
-  }
-
-  input.invalid {
-    border-color: var(--error);
   }
 
   textarea {
@@ -494,33 +674,6 @@
 
   .inline-message {
     color: var(--success);
-  }
-
-  .mode-switch {
-    display: inline-flex;
-    min-height: 26px;
-    overflow: hidden;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg);
-  }
-
-  .mode-switch button {
-    min-width: 62px;
-    min-height: 24px;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
-    color: var(--fg-dim);
-  }
-
-  .mode-switch button + button {
-    border-left: 1px solid var(--border);
-  }
-
-  .mode-switch button.active {
-    background: var(--bg-hover);
-    color: var(--fg);
   }
 
   .document-surface {
@@ -648,7 +801,7 @@
   .document-list,
   .editor-shell {
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 6px;
     background: var(--bg-elevated);
   }
 
@@ -660,7 +813,7 @@
   .editor-shell {
     min-height: 0;
     display: grid;
-    grid-template-rows: auto minmax(0, auto) minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .document-list {
@@ -671,7 +824,11 @@
   }
 
   .document-list-header {
-    padding: 4px 6px 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 4px 6px 7px;
     color: var(--fg-dim);
     font-size: 12px;
     font-weight: 700;
@@ -685,31 +842,100 @@
     width: 100%;
   }
 
-  .doc-row {
-    display: grid;
-    gap: 2px;
+  .tree-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     width: 100%;
     min-width: 0;
-    min-height: 44px;
-    margin-bottom: 4px;
+    min-height: 28px;
+    margin-bottom: 1px;
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--fg);
+    padding: 0 6px;
+    padding-left: calc(6px + var(--depth, 0) * 14px);
     text-align: left;
-    padding: 7px 8px;
   }
 
-  .doc-title {
+  .tree-row:hover {
+    background: var(--bg-hover);
+  }
+
+  .tree-row.active {
+    background: #18181b;
+    color: #fff;
+  }
+
+  .tree-row.active .tree-name {
+    color: #fff;
+  }
+
+  .tree-row :global(.tree-chevron) {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+    color: var(--fg-dim);
+    transition: transform 120ms ease;
+  }
+
+  .tree-row :global(.tree-chevron.open) {
+    transform: rotate(90deg);
+  }
+
+  .tree-row.active :global(.tree-chevron) {
+    color: currentColor;
+  }
+
+  .tree-spacer {
+    width: 13px;
+    height: 13px;
+    flex: 0 0 auto;
+  }
+
+  .tree-row :global(.tree-icon) {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    color: var(--fg-dim);
+  }
+
+  .tree-row :global(.folder-icon) {
+    color: color-mix(in srgb, var(--accent) 62%, var(--fg-dim));
+  }
+
+  .tree-row :global(.file-icon) {
+    color: color-mix(in srgb, var(--fg) 72%, var(--fg-dim));
+  }
+
+  .tree-row.active :global(.tree-icon) {
+    color: currentColor;
+  }
+
+  .tree-name {
+    min-width: 0;
+    flex: 1;
     overflow: hidden;
-    font-weight: 700;
+    font-size: 13px;
+    font-weight: 600;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .doc-path {
+  .tree-badge {
+    flex: 0 0 auto;
     color: var(--fg-dim);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    font-size: 12px;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
     white-space: nowrap;
+  }
+
+  .tree-row.active .tree-badge {
+    color: currentColor;
+    opacity: 0.72;
   }
 
   .empty-list {
@@ -720,38 +946,11 @@
     min-height: 120px;
   }
 
-  .fields-row {
-    display: grid;
-    grid-template-columns: minmax(180px, 1fr) auto auto auto auto minmax(56px, auto);
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 5px;
-  }
-
-  .save-state {
-    color: var(--fg-dim);
-    font-size: 12px;
-    text-align: right;
-    white-space: nowrap;
-  }
-
-  .save-state.dirty {
-    color: var(--warning);
-  }
-
-  .save-state.saving {
-    color: var(--accent);
-  }
-
   @media (max-width: 920px) {
     .markdown-manager {
       grid-template-columns: 1fr;
       grid-template-rows: minmax(120px, 28vh) minmax(0, 1fr);
       padding: 8px;
-    }
-
-    .fields-row {
-      grid-template-columns: 1fr;
     }
 
     textarea {

@@ -7,6 +7,7 @@
   import * as Breadcrumb from '$lib/components/ui/breadcrumb/index.js';
   import { Separator } from '$lib/components/ui/separator/index.js';
   import * as Sidebar from '$lib/components/ui/sidebar/index.js';
+  import { headerToolbar } from '$lib/headerToolbar';
   import { redirectToPreferredOrigin } from '$lib/nullhubAccess';
 
   let { children } = $props();
@@ -55,6 +56,7 @@
   }
 
   let crumbs = $derived(routeCrumbs($page.url.pathname));
+  let visibleCrumbs = $derived($headerToolbar?.crumbLabel ? [...crumbs, { label: $headerToolbar.crumbLabel }] : crumbs);
 
   onMount(() => {
     void redirectToPreferredOrigin(window.location);
@@ -68,25 +70,59 @@
       <header
         class="app-header flex h-16 shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
       >
-        <div class="flex min-w-0 items-center gap-2 px-4">
-          <Sidebar.Trigger class="-ms-1" />
-          <Separator orientation="vertical" class="me-2 data-[orientation=vertical]:h-4" />
-          <Breadcrumb.Root>
-            <Breadcrumb.List>
-              {#each crumbs as crumb, index (index)}
-                <Breadcrumb.Item class={index === 0 && crumbs.length > 1 ? 'hidden md:block' : ''}>
-                  {#if crumb.href && index < crumbs.length - 1}
-                    <Breadcrumb.Link href={crumb.href}>{crumb.label}</Breadcrumb.Link>
-                  {:else}
-                    <Breadcrumb.Page>{crumb.label}</Breadcrumb.Page>
+        <div class="header-content">
+          <div class="header-breadcrumb">
+            <Sidebar.Trigger class="-ms-1" />
+            <Separator orientation="vertical" class="me-2 data-[orientation=vertical]:h-4" />
+            <Breadcrumb.Root>
+              <Breadcrumb.List>
+                {#each visibleCrumbs as crumb, index (index)}
+                  <Breadcrumb.Item class={index === 0 && visibleCrumbs.length > 1 ? 'hidden md:block' : ''}>
+                    {#if crumb.href && index < visibleCrumbs.length - 1}
+                      <Breadcrumb.Link href={crumb.href}>{crumb.label}</Breadcrumb.Link>
+                    {:else}
+                      <Breadcrumb.Page>{crumb.label}</Breadcrumb.Page>
+                    {/if}
+                  </Breadcrumb.Item>
+                  {#if index < visibleCrumbs.length - 1}
+                    <Breadcrumb.Separator class={index === 0 ? 'hidden md:block' : ''} />
                   {/if}
-                </Breadcrumb.Item>
-                {#if index < crumbs.length - 1}
-                  <Breadcrumb.Separator class={index === 0 ? 'hidden md:block' : ''} />
-                {/if}
-              {/each}
-            </Breadcrumb.List>
-          </Breadcrumb.Root>
+                {/each}
+              </Breadcrumb.List>
+            </Breadcrumb.Root>
+          </div>
+          {#if $headerToolbar}
+            <div class="route-toolbar" aria-label="Page actions">
+              {#if $headerToolbar.path}
+                <input
+                  aria-label="Document path"
+                  class:invalid={$headerToolbar.path.invalid}
+                  value={$headerToolbar.path.value}
+                  placeholder={$headerToolbar.path.placeholder}
+                  oninput={(event) => $headerToolbar?.path?.onInput((event.currentTarget as HTMLInputElement).value)}
+                />
+              {/if}
+              <div class="route-actions">
+                {#each $headerToolbar.actions as action (action.id)}
+                  <button
+                    type="button"
+                    class:active={action.active}
+                    class:danger={action.danger}
+                    class:primary={action.primary}
+                    disabled={action.disabled}
+                    onclick={() => action.onClick()}
+                  >
+                    {action.label}
+                  </button>
+                {/each}
+              </div>
+              {#if $headerToolbar.status}
+                <span class:dirty={$headerToolbar.status.tone === 'dirty'} class:saving={$headerToolbar.status.tone === 'saving'} class:error={$headerToolbar.status.tone === 'error'} class="route-status">
+                  {$headerToolbar.status.label}
+                </span>
+              {/if}
+            </div>
+          {/if}
         </div>
       </header>
       <main class="real-content">
@@ -156,6 +192,114 @@
     z-index: 20;
   }
 
+  .header-content {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    min-width: 0;
+    padding: 0 1rem;
+  }
+
+  .header-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .route-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .route-toolbar input {
+    width: clamp(180px, 28vw, 520px);
+    height: 32px;
+    min-width: 120px;
+    border: 1px solid var(--shadcn-border);
+    border-radius: 6px;
+    background: var(--shadcn-background);
+    color: var(--shadcn-foreground);
+    padding: 0 0.6rem;
+    font: inherit;
+    font-size: 0.875rem;
+  }
+
+  .route-toolbar input.invalid {
+    border-color: var(--error);
+  }
+
+  .route-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
+  .route-actions button {
+    height: 32px;
+    border: 1px solid var(--shadcn-border);
+    border-radius: 6px;
+    background: var(--shadcn-background);
+    color: var(--shadcn-foreground);
+    padding: 0 0.65rem;
+    font-size: 0.875rem;
+    font-weight: 650;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .route-actions button:hover:not(:disabled) {
+    background: var(--shadcn-accent);
+  }
+
+  .route-actions button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .route-actions button.active {
+    background: var(--shadcn-accent);
+    color: var(--shadcn-foreground);
+  }
+
+  .route-actions button.primary {
+    border-color: var(--accent);
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .route-actions button.danger {
+    border-color: var(--error);
+    color: var(--error);
+  }
+
+  .route-status {
+    min-width: 42px;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .route-status.dirty {
+    color: var(--warning);
+  }
+
+  .route-status.saving {
+    color: var(--accent);
+  }
+
+  .route-status.error {
+    color: var(--error);
+  }
+
   .shadcn-app :global([data-slot="sidebar-container"][data-side="left"]) {
     left: 0;
     right: auto;
@@ -200,6 +344,28 @@
       padding: 0;
     }
 
+    .app-header {
+      height: auto;
+      min-height: 4rem;
+      padding-block: 0.5rem;
+    }
+
+    .header-content {
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
+
+    .header-breadcrumb,
+    .route-toolbar {
+      flex: 1 1 100%;
+    }
+
+    .route-toolbar {
+      justify-content: flex-start;
+      flex-wrap: wrap;
+    }
+
     .shadcn-app :global([data-slot="sidebar-wrapper"]) {
       min-height: 100dvh;
       border: 0;
@@ -208,6 +374,15 @@
 
     .real-content {
       padding: 1rem;
+    }
+
+    .route-toolbar input {
+      flex: 1 1 180px;
+      width: 100%;
+    }
+
+    .route-actions button {
+      padding: 0 0.5rem;
     }
   }
 </style>
