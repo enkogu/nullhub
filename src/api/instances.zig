@@ -4250,6 +4250,16 @@ fn handleDocsRead(allocator: std.mem.Allocator, workspace_dir: []const u8, rel_p
 fn writeMarkdownDocAtomically(allocator: std.mem.Allocator, abs_path: []const u8, contents: []const u8) !void {
     const dir_path = std.fs.path.dirname(abs_path) orelse return error.InvalidPath;
     const base_name = std.fs.path.basename(abs_path);
+    var mode: ?std_compat.fs.File.Mode = null;
+    if (std_compat.fs.openFileAbsolute(abs_path, .{ .follow_symlinks = false })) |existing| {
+        defer existing.close();
+        const stat = try existing.stat();
+        mode = stat.mode;
+    } else |err| switch (err) {
+        error.FileNotFound => {},
+        else => return err,
+    }
+
     const tmp_name = try std.fmt.allocPrint(allocator, ".{s}.{x}.tmp", .{
         base_name,
         std_compat.crypto.random.int(u64),
@@ -4263,6 +4273,9 @@ fn writeMarkdownDocAtomically(allocator: std.mem.Allocator, abs_path: []const u8
     {
         const file = try std_compat.fs.createFileAbsolute(tmp_path, .{ .truncate = true });
         defer file.close();
+        if (mode) |file_mode| {
+            if (comptime std_compat.fs.has_executable_bit) try file.chmod(file_mode);
+        }
         try file.writeAll(contents);
         try file.sync();
     }
@@ -8455,6 +8468,30 @@ test "dispatch manages markdown docs in instance workspace" {
     defer allocator.free(read_resp.body);
     try std.testing.expectEqualStrings("200 OK", read_resp.status);
     try std.testing.expect(std.mem.indexOf(u8, read_resp.body, "\"content\":\"# Runbook\\n\\n- Check status\\n\"") != null);
+
+    if (comptime std_compat.fs.has_executable_bit) {
+        {
+            var runbook_file = try std_compat.fs.openFileAbsolute(runbook_path, .{});
+            defer runbook_file.close();
+            try runbook_file.chmod(0o600);
+        }
+        const update_private_resp = dispatch(
+            allocator,
+            &s,
+            &mctx.manager,
+            &mctx.mutex,
+            mctx.paths,
+            "PUT",
+            "/api/instances/nullclaw/my-agent/docs",
+            "{\"path\":\"docs/runbook.md\",\"content\":\"# Private runbook\\n\"}",
+        ).?;
+        defer allocator.free(update_private_resp.body);
+        try std.testing.expectEqualStrings("200 OK", update_private_resp.status);
+        var updated_private_file = try std_compat.fs.openFileAbsolute(runbook_path, .{});
+        defer updated_private_file.close();
+        const updated_private_stat = try updated_private_file.stat();
+        try std.testing.expectEqual(@as(std_compat.fs.File.Mode, 0o600), updated_private_stat.mode & 0o777);
+    }
 
     const control_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "GET", "/api/instances/nullclaw/my-agent/docs?path=docs%2Fcontrol.md", "").?;
     defer allocator.free(control_resp.body);
