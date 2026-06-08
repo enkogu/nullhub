@@ -7,6 +7,7 @@ const helpers = @import("helpers.zig");
 
 pub const ApiResponse = helpers.ApiResponse;
 const admin_max_output_bytes = 2 * 1024 * 1024;
+const admin_timeout_ms = 10_000;
 
 pub const JsonOptions = struct {
     null_is_not_found: bool = false,
@@ -52,7 +53,7 @@ pub fn capture(
     const inst_dir = paths.instanceDir(allocator, component, name) catch return .{ .response = helpers.serverError() };
     defer allocator.free(inst_dir);
 
-    const result = component_cli.runWithComponentHomeLimited(
+    const result = component_cli.runWithComponentHomeLimitedTimeout(
         allocator,
         component,
         bin_path,
@@ -60,6 +61,7 @@ pub fn capture(
         null,
         inst_dir,
         admin_max_output_bytes,
+        admin_timeout_ms,
     ) catch {
         return .{ .response = jsonError(
             allocator,
