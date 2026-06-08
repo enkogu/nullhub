@@ -66,7 +66,6 @@
   const storeTicketsInstance = $derived(component === 'nulltickets' ? name : '');
   const softStoreError = $derived(error.trim().toLowerCase() === 'not found');
   const renderedMarkdown = $derived(renderMarkdown(draftContent));
-  const saveState = $derived(saving ? 'Saving' : dirty ? 'Unsaved' : selectedKey ? 'Saved' : 'Draft');
   const documentTree = $derived(buildDocumentTree(documents));
   const selectedFileName = $derived(fileName(draftPath) || 'Docs');
   const materialIconBase = '/file-icons/material';
@@ -460,10 +459,6 @@
     }
     headerToolbar.set({
       crumbLabel: selectedFileName,
-      status: {
-        label: error && !softStoreError ? 'Error' : saveState,
-        tone: error && !softStoreError ? 'error' : saving ? 'saving' : dirty ? 'dirty' : 'muted',
-      },
       actions: [
         {
           id: 'preview',
@@ -486,20 +481,17 @@
           label: 'New',
           onClick: newDocument,
         },
-        {
-          id: 'delete',
-          label: selectedKey && deleteConfirmKey === selectedKey ? 'Confirm' : 'Delete',
-          danger: true,
-          disabled: !selectedKey || deleting,
-          onClick: removeDraft,
-        },
-        {
-          id: 'save',
-          label: 'Save',
-          primary: canSave,
-          disabled: !canSave,
-          onClick: saveDraft,
-        },
+        ...(dirty || saving
+          ? [
+              {
+                id: 'save',
+                label: saving ? 'Saving' : 'Save',
+                primary: canSave,
+                disabled: !canSave,
+                onClick: saveDraft,
+              },
+            ]
+          : []),
       ],
     });
   });
@@ -544,7 +536,14 @@
   <section class="document-list" aria-label="Markdown files">
     <div class="document-list-header">
       <span>Files</span>
-      <span>{documents.length}</span>
+      <span class="document-list-meta">
+        <span>{documents.length}</span>
+        {#if selectedKey}
+          <button class="panel-delete" type="button" disabled={deleting} onclick={removeDraft}>
+            {deleteConfirmKey === selectedKey ? 'Confirm' : 'Delete'}
+          </button>
+        {/if}
+      </span>
     </div>
     {#if documentTree.length > 0}
       <div class="doc-scroll">
@@ -821,6 +820,28 @@
     font-size: 12px;
     font-weight: 650;
     letter-spacing: 0;
+  }
+
+  .document-list-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .panel-delete {
+    min-width: 0;
+    min-height: 0;
+    height: 24px;
+    border: 0;
+    background: transparent;
+    color: var(--error);
+    padding: 0 4px;
+    font-size: 12px;
+    font-weight: 650;
+  }
+
+  .panel-delete:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--error) 8%, transparent);
   }
 
   .doc-scroll {
