@@ -818,7 +818,7 @@ fn writeJsonConfigValue(allocator: std.mem.Allocator, config_path: []const u8, v
         const stat = try file.stat();
         mode = stat.mode;
     } else |err| switch (err) {
-        error.FileNotFound => {},
+        error.FileNotFound => mode = 0o600,
         else => return err,
     }
 
@@ -10476,6 +10476,8 @@ test "dispatch mutates mcp server config subtree" {
         if (comptime std_compat.fs.has_executable_bit) {
             var config_file = try std_compat.fs.openFileAbsolute(config_path, .{});
             defer config_file.close();
+            const stat = try config_file.stat();
+            try std.testing.expectEqual(@as(std_compat.fs.File.Mode, 0o600), stat.mode & 0o777);
             try config_file.chmod(0o600);
         }
     }

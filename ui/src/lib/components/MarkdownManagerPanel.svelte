@@ -372,8 +372,7 @@
   function escapeRawHtml(markdown: string): string {
     return markdown
       .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+      .replace(/</g, '&lt;');
   }
 
   function decodeHtmlEntities(value: string): string {
