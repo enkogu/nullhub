@@ -112,6 +112,27 @@ body.theme-light {
 		padding-top: 0.9rem !important;
 	}
 
+	[data-slot="sidebar"][data-state="collapsed"] [data-slot="sidebar-header"],
+	[data-slot="sidebar"][data-state="collapsed"] [data-slot="sidebar-content"],
+	[data-slot="sidebar"][data-state="collapsed"] [data-slot="sidebar-footer"] {
+		align-items: center;
+		padding-left: 0.5rem !important;
+		padding-right: 0.5rem !important;
+	}
+
+	[data-slot="sidebar"][data-state="collapsed"] [data-slot="sidebar-content"] {
+		gap: 0.375rem !important;
+	}
+
+	[data-slot="sidebar"][data-state="collapsed"] [data-slot="sidebar-menu"] {
+		align-items: center;
+		gap: 0.375rem;
+	}
+
+	[data-slot="sidebar"][data-state="collapsed"] [data-slot="sidebar-menu-button"] {
+		justify-content: center;
+	}
+
 	[data-slot="sidebar-menu-button"],
 	[data-slot="sidebar-menu-sub-button"],
 	[data-slot="sidebar-trigger"] {
