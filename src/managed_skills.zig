@@ -31,8 +31,8 @@ const bundled_skills = [_]BundledSkill{
     .{
         .entry = .{
             .name = "nullhub-admin",
-            .version = "0.1.1",
-            .description = "Teach managed nullclaw agents to discover NullHub routes first and then use nullhub api for instance, provider, component, NullTickets task, and NullBoiler workflow tasks.",
+            .version = "0.1.2",
+            .description = "Teach managed nullclaw agents to discover NullHub routes first and then use nullhub api for instance, provider, component, NullTickets task, queue, and NullBoiler workflow operations.",
             .recommended = true,
             .install_kind = "bundled",
             .homepage_url = clawhub_url,
