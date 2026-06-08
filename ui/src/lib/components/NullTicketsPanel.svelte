@@ -463,6 +463,10 @@
     return visiblePanelViews.includes(view);
   }
 
+  function shouldLoadVisibleTaskDetails(): boolean {
+    return panelView === "tasks" || workMode === "planner" || workMode === "dependencies";
+  }
+
   function setPanelView(view: PanelView) {
     const nextView = canShowPanelView(view) ? view : fallbackPanelView();
     if (panelView === nextView) return;
@@ -832,7 +836,7 @@
   }
 
   async function loadVisibleTaskDetails(items = tasks, force = false) {
-    if (workMode !== "dependencies" || component !== "nulltickets" || !running) return;
+    if (component !== "nulltickets" || !running || !shouldLoadVisibleTaskDetails()) return;
     const ids = items.map((task) => taskId(task)).filter(Boolean);
     if (ids.length === 0) {
       taskDetailsLoadToken += 1;
@@ -1353,7 +1357,7 @@
   });
 
   $effect(() => {
-    if (!active || component !== "nulltickets" || !running || workMode !== "dependencies") return;
+    if (!active || component !== "nulltickets" || !running || !shouldLoadVisibleTaskDetails()) return;
     if (tasks.length === 0) return;
     void loadVisibleTaskDetails(tasks);
   });
