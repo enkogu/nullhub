@@ -12,6 +12,7 @@
   import InstanceMcpPanel from "$lib/components/InstanceMcpPanel.svelte";
   import InstanceSkillsPanel from "$lib/components/InstanceSkillsPanel.svelte";
   import InstanceCronPanel from "$lib/components/InstanceCronPanel.svelte";
+  import MarkdownManagerPanel from "$lib/components/MarkdownManagerPanel.svelte";
   import NullBoilerPanel from "$lib/components/NullBoilerPanel.svelte";
   import NullTicketsPanel from "$lib/components/NullTicketsPanel.svelte";
   import { api, type ApiRequestError } from "$lib/api/client";
@@ -148,6 +149,7 @@
     "mcp",
     "hooks",
     "cron",
+    "docs",
     "tickets",
     "boiler",
     "config",
@@ -901,6 +903,9 @@
     if (activeTab === "cron" && !supportsCron) {
       activeTab = "overview";
     }
+    if (activeTab === "docs" && !component) {
+      activeTab = "overview";
+    }
     if (activeTab === "tickets" && !supportsTicketsUi) {
       activeTab = "overview";
     }
@@ -1094,7 +1099,7 @@
   }
 </script>
 
-<div class="instance-detail">
+<div class="instance-detail" class:docs-focus={activeTab === "docs"}>
   <div class="detail-header">
     <div>
       <h1>{name}</h1>
@@ -1162,6 +1167,10 @@
         onclick={() => selectTab("tickets")}>Tickets</button
       >
     {/if}
+    <button
+      class:active={activeTab === "docs"}
+      onclick={() => selectTab("docs")}>Docs</button
+    >
     {#if supportsBoilerUi}
       <button
         class:active={activeTab === "boiler"}
@@ -1852,6 +1861,15 @@
       {#key instanceRouteKey}
         <InstanceCronPanel {component} {name} active={activeTab === "cron"} />
       {/key}
+    {:else if activeTab === "docs"}
+      {#key instanceRouteKey}
+        <MarkdownManagerPanel
+          {component}
+          {name}
+          active={activeTab === "docs"}
+          onExit={() => selectTab("overview")}
+        />
+      {/key}
     {:else if activeTab === "tickets"}
       {#key instanceRouteKey}
         <NullTicketsPanel
@@ -2096,6 +2114,23 @@
   }
   .tab-content {
     min-height: 400px;
+  }
+  .instance-detail.docs-focus {
+    max-width: none;
+    height: calc(100% + 3rem);
+    margin: -1.5rem;
+    padding: 0;
+  }
+  .docs-focus .detail-header {
+    display: none;
+  }
+  .docs-focus .tabs {
+    display: none;
+  }
+  .docs-focus .tab-content {
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
   }
   .overview-grid {
     display: grid;
