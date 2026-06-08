@@ -3,6 +3,7 @@
   import { nullBoilerApi } from '$lib/api/client';
   import { nullboilerUiRoutes } from '$lib/nullboiler/routes';
   import BoilerInstanceSelector from '$lib/components/nullboiler/BoilerInstanceSelector.svelte';
+  import { Button } from '$lib/components/ui/button';
   import {
     UniversalEntityView,
     createViewSet,
@@ -14,6 +15,7 @@
   let runs = $state<any[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  let offline = $state(false);
   let stats = $state({ active: 0, completed: 0, failed: 0, interrupted: 0 });
 
   const runColumns: EntityColumn[] = [
@@ -51,6 +53,20 @@
     })) satisfies EntityRecord[],
   );
 
+  function isOfflineError(message: string): boolean {
+    const text = (message || '').toLowerCase();
+    return (
+      text.includes('unreachable') ||
+      text.includes('offline') ||
+      text.includes('econnrefused') ||
+      text.includes('connection refused') ||
+      text.includes('failed to fetch') ||
+      text.includes('networkerror') ||
+      text.includes('network error') ||
+      /\b5\d\d\b/.test(text)
+    );
+  }
+
   async function loadRuns() {
     try {
       runs = await nullBoilerApi.listRuns() || [];
@@ -61,8 +77,18 @@
         interrupted: runs.filter((r: any) => r.status === 'interrupted').length,
       };
       error = null;
+      offline = false;
     } catch (e) {
-      error = (e as Error).message;
+      const message = (e as Error).message;
+      if (isOfflineError(message)) {
+        offline = true;
+        error = null;
+        runs = [];
+        stats = { active: 0, completed: 0, failed: 0, interrupted: 0 };
+      } else {
+        offline = false;
+        error = message;
+      }
     } finally {
       loading = false;
     }
@@ -90,36 +116,23 @@
   }
 </script>
 
-<div class="dashboard">
-  <div class="header">
-    <h1>NullBoiler</h1>
-    <div class="header-actions">
-      <BoilerInstanceSelector onChange={() => { loading = true; error = null; void loadRuns(); }} />
-      <a href={nullboilerUiRoutes.workflows()} class="action-btn">Workflows</a>
-      <a href={nullboilerUiRoutes.runs()} class="action-btn">Runs</a>
-    </div>
-  </div>
-
-  {#if error}
-    <div class="error-banner">ERR: {error}</div>
-  {/if}
-
+<div class="page">
   <div class="cards">
     <div class="card">
       <div class="card-label">Active</div>
-      <div class="card-value" style="color: var(--accent); text-shadow: 0 0 8px var(--accent);">{stats.active}</div>
+      <div class="card-value">{stats.active}</div>
     </div>
     <div class="card">
       <div class="card-label">Completed</div>
-      <div class="card-value" style="color: var(--success); text-shadow: 0 0 8px var(--success);">{stats.completed}</div>
+      <div class="card-value">{stats.completed}</div>
     </div>
     <div class="card">
       <div class="card-label">Failed</div>
-      <div class="card-value" style="color: var(--error); text-shadow: 0 0 8px var(--error);">{stats.failed}</div>
+      <div class="card-value">{stats.failed}</div>
     </div>
     <div class="card">
       <div class="card-label">Interrupted</div>
-      <div class="card-value" style="color: var(--warning); text-shadow: 0 0 8px var(--warning);">{stats.interrupted}</div>
+      <div class="card-value">{stats.interrupted}</div>
     </div>
   </div>
 
@@ -131,139 +144,67 @@
     views={runViews}
     defaultViewId="table"
     {loading}
+    error={offline ? null : error}
     actions={runActions}
-    emptyTitle="No NullBoiler runs"
-    emptyDescription="Create a workflow to produce runs."
+    emptyTitle={offline ? 'NullBoiler is offline' : 'No NullBoiler runs'}
+    emptyDescription={offline
+      ? 'Start the NullBoiler instance to load runs.'
+      : 'Create a workflow to produce runs.'}
     onRefresh={loadRuns}
-  />
+  >
+    {#snippet headerControls()}
+      <BoilerInstanceSelector onChange={() => { loading = true; error = null; offline = false; void loadRuns(); }} />
+    {/snippet}
+    {#snippet headerActions()}
+      <Button variant="outline" size="sm" href={nullboilerUiRoutes.workflows()}>Workflows</Button>
+      <Button variant="outline" size="sm" href={nullboilerUiRoutes.runs()}>Runs</Button>
+    {/snippet}
+  </UniversalEntityView>
 
-  {#if !loading && runs.length === 0}
-    <a href={nullboilerUiRoutes.workflows()} class="btn">Create a Workflow</a>
+  {#if !loading && !offline && runs.length === 0}
+    <div class="footer-row">
+      <Button href={nullboilerUiRoutes.workflows()} size="sm">Create a workflow</Button>
+    </div>
   {/if}
 
   {#if runs.length > 20}
-    <div class="more-link">
-      <a href={nullboilerUiRoutes.runs()}>View all {runs.length} runs</a>
+    <div class="footer-row">
+      <Button variant="ghost" size="sm" href={nullboilerUiRoutes.runs()}>View all {runs.length} runs</Button>
     </div>
   {/if}
 </div>
 
 <style>
-  .dashboard {
-    padding: 2rem;
-    max-width: 1400px;
-    margin: 0 auto;
-  }
-  .header {
+  .page {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 2rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-  }
-  h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    text-shadow: var(--text-glow);
-    text-transform: uppercase;
-    letter-spacing: 2px;
-  }
-  .action-btn {
-    padding: 0.5rem 1rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
-  }
-  .action-btn:hover {
-    text-decoration: none;
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    text-shadow: 0 0 8px var(--accent);
+    min-width: 0;
+    flex-direction: column;
+    gap: 1rem;
   }
   .cards {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    gap: 1rem;
-    margin-bottom: 2rem;
+    gap: 0.75rem;
   }
   .card {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1.25rem;
+    background: var(--shadcn-card);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    padding: 1rem 1.25rem;
   }
   .card-label {
     font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
-    margin-bottom: 0.5rem;
+    color: var(--shadcn-muted-foreground);
+    margin-bottom: 0.375rem;
   }
   .card-value {
-    font-size: 2rem;
-    font-weight: 700;
-    font-family: var(--font-mono);
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: var(--shadcn-foreground);
   }
-  .error-banner {
-    padding: 0.75rem 1rem;
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-    color: var(--error);
-    border: 1px solid var(--error);
-    border-radius: 4px;
-    margin-bottom: 1.5rem;
-    font-size: 0.875rem;
-    font-weight: bold;
-    text-shadow: 0 0 5px var(--error);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error) 20%, transparent);
-  }
-  .btn {
-    display: inline-block;
-    align-self: flex-start;
-    padding: 0.75rem 1.5rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: var(--radius);
-    font-size: 0.875rem;
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
-  }
-  .btn:hover {
-    text-decoration: none;
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    text-shadow: 0 0 8px var(--accent);
-  }
-  .more-link {
-    text-align: center;
-    padding: 0.75rem;
-  }
-  .more-link a {
-    color: var(--accent);
-    font-size: 0.8125rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .more-link a:hover {
-    text-shadow: var(--text-glow);
+  .footer-row {
+    display: flex;
+    justify-content: center;
   }
   @media (max-width: 900px) {
     .cards { grid-template-columns: repeat(2, 1fr); }

@@ -117,10 +117,6 @@
 </script>
 
 <div class="configs-page" aria-busy={loading}>
-  <div class="page-header">
-    <h1>Configs</h1>
-  </div>
-
   <UniversalEntityView
     title="Config Sections"
     description="Saved provider and channel configuration areas with validation coverage."
@@ -148,19 +144,6 @@
     margin: 0 auto;
     max-width: 1120px;
     padding: 1.5rem;
-  }
-
-  .page-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  h1 {
-    color: var(--shadcn-foreground);
-    font-size: 1.5rem;
-    font-weight: 600;
-    letter-spacing: 0;
   }
 
   @media (max-width: 760px) {

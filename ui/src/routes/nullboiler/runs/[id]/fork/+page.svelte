@@ -7,6 +7,9 @@
   import BoilerInstanceSelector from '$lib/components/nullboiler/BoilerInstanceSelector.svelte';
   import CheckpointTimeline from '$lib/components/nullboiler/CheckpointTimeline.svelte';
   import StateInspector from '$lib/components/nullboiler/StateInspector.svelte';
+  import { PageHeader } from '$lib/components/ui/page-header';
+  import { Button } from '$lib/components/ui/button';
+  import GitForkIcon from '@lucide/svelte/icons/git-fork';
 
   let runId = $derived($page.params.id);
 
@@ -84,26 +87,21 @@
 </script>
 
 <div class="fork-page">
-  <div class="toolbar">
-    <div class="toolbar-left">
-      <a href={runHref(runId)} class="back-link">Run {(runId || '').slice(0, 8)}</a>
-      <span class="sep">/</span>
-      <span class="page-title">Fork</span>
-    </div>
-    <div class="toolbar-actions">
+  <PageHeader title="Fork run" subtitle={`Run ${(runId || '').slice(0, 8)}`}>
+    {#snippet controls()}
+      <Button variant="ghost" size="sm" href={runHref(runId)}>Back to run</Button>
       <BoilerInstanceSelector onChange={() => { void loadCheckpoints(); }} />
-      <button
-        class="fork-btn"
-        onclick={forkRun}
-        disabled={!selectedCp || !overridesValid || forking}
-      >
-        {forking ? 'Forking...' : 'Fork Run'}
-      </button>
-    </div>
-  </div>
+    {/snippet}
+    {#snippet actions()}
+      <Button size="sm" onclick={forkRun} disabled={!selectedCp || !overridesValid || forking}>
+        <GitForkIcon />
+        {forking ? 'Forking…' : 'Fork run'}
+      </Button>
+    {/snippet}
+  </PageHeader>
 
   {#if error}
-    <div class="error-banner">ERR: {error}</div>
+    <div class="error-banner">{error}</div>
   {/if}
 
   {#if loading}
@@ -123,7 +121,7 @@
           <StateInspector currentState={selectedState} />
         </div>
         <div class="state-bottom">
-          <label class="override-label" for="overrides">State Overrides (JSON)</label>
+          <label class="override-label" for="overrides">State overrides (JSON)</label>
           <textarea
             id="overrides"
             class="override-editor"
@@ -143,77 +141,19 @@
 
 <style>
   .fork-page {
-    padding: 1.5rem;
-    max-width: 1400px;
-    margin: 0 auto;
     display: flex;
     flex-direction: column;
     gap: 1rem;
     height: calc(100vh - 3rem);
   }
-  .toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
+  .error-banner {
     padding: 0.75rem 1rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    flex-shrink: 0;
-  }
-  .toolbar-left {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .back-link {
-    font-size: 0.8125rem;
-    color: var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .back-link:hover {
-    text-shadow: var(--text-glow);
-  }
-  .sep {
-    color: var(--fg-dim);
-    font-size: 0.8125rem;
-  }
-  .page-title {
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
+    color: var(--shadcn-foreground);
     font-size: 0.875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg);
-  }
-  .toolbar-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .fork-btn {
-    padding: 0.5rem 1rem;
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    font-size: 0.8125rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
-  }
-  .fork-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    text-shadow: 0 0 8px var(--accent);
-  }
-  .fork-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+    flex-shrink: 0;
   }
   .fork-panels {
     display: grid;
@@ -223,19 +163,17 @@
     min-height: 0;
   }
   .panel-timeline {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    background: var(--shadcn-card);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
     overflow-y: auto;
   }
   .panel-label {
     padding: 0.625rem 1rem;
     font-size: 0.8125rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--accent);
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
+    font-weight: 600;
+    color: var(--shadcn-foreground);
+    border-bottom: 1px solid var(--shadcn-border);
   }
   .panel-state {
     display: flex;
@@ -255,54 +193,39 @@
     flex-shrink: 0;
   }
   .override-label {
-    font-size: 0.6875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--shadcn-muted-foreground);
   }
   .override-editor {
     width: 100%;
     min-height: 120px;
     padding: 0.75rem;
-    background: var(--bg-surface);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    font-family: var(--font-mono);
+    background: var(--shadcn-background);
+    color: var(--shadcn-foreground);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    font-family: var(--font-mono, ui-monospace, monospace);
     font-size: 0.8125rem;
     line-height: 1.5;
     resize: vertical;
   }
   .override-editor:focus {
-    border-color: var(--accent-dim);
-    box-shadow: 0 0 6px var(--border-glow);
+    outline: none;
+    border-color: var(--shadcn-ring, var(--shadcn-border));
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--shadcn-ring, var(--shadcn-border)) 35%, transparent);
   }
   .override-editor.invalid {
-    border-color: var(--error);
-    box-shadow: 0 0 6px color-mix(in srgb, var(--error) 30%, transparent);
+    border-color: var(--shadcn-destructive, #dc2626);
   }
   .json-err {
-    font-size: 0.6875rem;
-    color: var(--error);
-    font-family: var(--font-mono);
-  }
-  .error-banner {
-    padding: 0.75rem 1rem;
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-    color: var(--error);
-    border: 1px solid var(--error);
-    border-radius: 4px;
-    font-size: 0.875rem;
-    font-weight: bold;
-    text-shadow: 0 0 5px var(--error);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error) 20%, transparent);
-    flex-shrink: 0;
+    font-size: 0.75rem;
+    color: var(--shadcn-destructive, #dc2626);
   }
   .loading {
     text-align: center;
     padding: 4rem 2rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
   }
   @media (max-width: 900px) {
     .fork-panels {

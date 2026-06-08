@@ -356,25 +356,6 @@
     text-transform: none !important;
   }
 
-  .shadcn-app :global([data-slot="sidebar-wrapper"] button),
-  .shadcn-app :global([data-slot="sidebar-wrapper"] a),
-  .shadcn-app :global([data-slot="sidebar-wrapper"] input),
-  .shadcn-app :global([data-slot="sidebar-wrapper"] select),
-  .shadcn-app :global([data-slot="sidebar-wrapper"] textarea) {
-    color: inherit;
-    letter-spacing: 0;
-    text-shadow: none;
-    text-transform: none;
-    backdrop-filter: none;
-  }
-
-  .shadcn-app :global([data-slot="sidebar-wrapper"] button:hover:not(:disabled)),
-  .shadcn-app :global([data-slot="sidebar-wrapper"] a:hover) {
-    box-shadow: none;
-    text-decoration: none;
-    text-shadow: none;
-  }
-
   @media (max-width: 768px) {
     .shadcn-app {
       padding: 0;

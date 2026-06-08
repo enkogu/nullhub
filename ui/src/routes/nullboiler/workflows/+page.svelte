@@ -3,6 +3,7 @@
   import { nullBoilerApi } from "$lib/api/client";
   import { nullboilerUiRoutes } from "$lib/nullboiler/routes";
   import BoilerInstanceSelector from "$lib/components/nullboiler/BoilerInstanceSelector.svelte";
+  import { Button } from "$lib/components/ui/button";
   import {
     UniversalEntityView,
     createViewSet,
@@ -14,6 +15,7 @@
   let workflows = $state<any[]>([]);
   let loading = $state(true);
   let error = $state<string | null>(null);
+  let offline = $state(false);
   let deleteConfirm = $state<string | null>(null);
 
   const workflowColumns: EntityColumn[] = [
@@ -79,13 +81,36 @@
     }) satisfies EntityRecord[],
   );
 
+  function isOfflineError(message: string): boolean {
+    const text = (message || "").toLowerCase();
+    return (
+      text.includes("unreachable") ||
+      text.includes("offline") ||
+      text.includes("econnrefused") ||
+      text.includes("connection refused") ||
+      text.includes("failed to fetch") ||
+      text.includes("networkerror") ||
+      text.includes("network error") ||
+      /\b5\d\d\b/.test(text)
+    );
+  }
+
   async function loadWorkflows() {
     loading = true;
     try {
       workflows = (await nullBoilerApi.listWorkflows()) || [];
       error = null;
+      offline = false;
     } catch (e) {
-      error = (e as Error).message;
+      const message = (e as Error).message;
+      if (isOfflineError(message)) {
+        offline = true;
+        error = null;
+        workflows = [];
+      } else {
+        offline = false;
+        error = message;
+      }
     } finally {
       loading = false;
     }
@@ -128,11 +153,6 @@
 </script>
 
 <div class="page">
-  <div class="topbar">
-    <BoilerInstanceSelector onChange={() => { error = null; void loadWorkflows(); }} />
-    <a href={nullboilerUiRoutes.newWorkflow()} class="primary-link">New Workflow</a>
-  </div>
-
   <UniversalEntityView
     title="Workflows"
     description="Reusable automation definitions from the selected NullBoiler instance."
@@ -141,12 +161,21 @@
     views={workflowViews}
     defaultViewId="cards"
     {loading}
-    {error}
+    error={offline ? null : error}
     actions={workflowActions}
-    emptyTitle="No workflows"
-    emptyDescription="Create a workflow to populate this collection."
+    emptyTitle={offline ? "NullBoiler is offline" : "No workflows"}
+    emptyDescription={offline
+      ? "Start the NullBoiler instance to load workflows."
+      : "Create a workflow to populate this collection."}
     onRefresh={loadWorkflows}
-  />
+  >
+    {#snippet headerControls()}
+      <BoilerInstanceSelector onChange={() => { error = null; offline = false; void loadWorkflows(); }} />
+    {/snippet}
+    {#snippet headerActions()}
+      <Button size="sm" href={nullboilerUiRoutes.newWorkflow()}>+ New workflow</Button>
+    {/snippet}
+  </UniversalEntityView>
 </div>
 
 <style>
@@ -155,33 +184,5 @@
     min-width: 0;
     flex-direction: column;
     gap: 1rem;
-  }
-
-  .topbar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: flex-end;
-    gap: 0.75rem;
-  }
-
-  .primary-link {
-    display: inline-flex;
-    min-height: 2.25rem;
-    align-items: center;
-    justify-content: center;
-    border: 1px solid var(--shadcn-border);
-    border-radius: var(--shadcn-radius);
-    padding: 0 0.875rem;
-    background: var(--shadcn-primary);
-    color: var(--shadcn-primary-foreground);
-    font-size: 0.875rem;
-    font-weight: 600;
-    text-decoration: none;
-  }
-
-  .primary-link:hover,
-  .primary-link:focus-visible {
-    opacity: 0.92;
   }
 </style>

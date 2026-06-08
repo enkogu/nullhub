@@ -3,6 +3,16 @@
   import { api } from "$lib/api/client";
   import { OPENAI_COMPATIBLE_VALUE, LOCAL_PROVIDERS, mergeWithManifestOptions } from "$lib/providers";
   import type { ProviderOption } from "$lib/providers";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Select } from "$lib/components/ui/select";
+  import { Label } from "$lib/components/ui/label";
+  import { Card } from "$lib/components/ui/card";
+  import { Badge } from "$lib/components/ui/badge";
+  import PlusIcon from "@lucide/svelte/icons/plus";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import ArrowUpIcon from "@lucide/svelte/icons/arrow-up";
+  import ArrowDownIcon from "@lucide/svelte/icons/arrow-down";
 
   let {
     providers = [],
@@ -365,16 +375,10 @@
   </p>
 
   {#each entries as entry, i}
-    <div class="provider-row">
+    <Card class="provider-row px-5">
       <div class="provider-row-header">
         <span class="provider-number">{i + 1}.</span>
-        {#each [validationResultForEntry(entry)] as result}
-          {#if result}
-            <span class="status-dot" class:ok={result.live_ok} class:error={!result.live_ok}
-              title={result.reason}></span>
-          {/if}
-        {/each}
-        <select
+        <Select
           value={entry.provider}
           onchange={(e) => updateProvider(i, e.currentTarget.value)}
         >
@@ -383,35 +387,52 @@
               >{formatRecommendedLabel(opt.label, opt.recommended)}</option
             >
           {/each}
-        </select>
+        </Select>
+        {#each [validationResultForEntry(entry)] as result}
+          {#if result}
+            <Badge variant={result.live_ok ? "success" : "destructive"} title={result.reason}>
+              {result.live_ok ? "Connected" : "Failed"}
+            </Badge>
+          {/if}
+        {/each}
         <div class="provider-row-actions">
-          <button
-            class="icon-btn"
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onclick={() => moveUp(i)}
             disabled={i === 0}
             aria-label="Move provider up"
-            title="Move up"><span aria-hidden="true">&#8593;</span></button
+            title="Move up"
           >
-          <button
-            class="icon-btn"
+            <ArrowUpIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
             onclick={() => moveDown(i)}
             disabled={i === entries.length - 1}
             aria-label="Move provider down"
-            title="Move down"><span aria-hidden="true">&#8595;</span></button
+            title="Move down"
           >
-          <button
-            class="icon-btn remove-btn"
+            <ArrowDownIcon />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            class="danger-icon remove-btn"
             onclick={() => removeEntry(i)}
             aria-label="Remove provider"
-            title="Remove"><span aria-hidden="true">&#215;</span></button
+            title="Remove"
           >
+            <Trash2Icon />
+          </Button>
         </div>
       </div>
 
       {#if !isLocal(entry.provider)}
         <div class="provider-field">
-          <label for={`provider-api-key-${i}`}>API Key</label>
-          <input
+          <Label for={`provider-api-key-${i}`}>API key</Label>
+          <Input
             id={`provider-api-key-${i}`}
             type="password"
             value={entry.api_key}
@@ -423,8 +444,8 @@
 
       {#if entry.provider === OPENAI_COMPATIBLE_VALUE}
         <div class="provider-field">
-          <label for={`provider-name-${i}`}>Provider Name</label>
-          <input
+          <Label for={`provider-name-${i}`}>Provider name</Label>
+          <Input
             id={`provider-name-${i}`}
             type="text"
             value={entry.provider_name}
@@ -433,8 +454,8 @@
           />
         </div>
         <div class="provider-field">
-          <label for={`provider-base-url-${i}`}>Base URL</label>
-          <input
+          <Label for={`provider-base-url-${i}`}>Base URL</Label>
+          <Input
             id={`provider-base-url-${i}`}
             type="text"
             value={entry.base_url}
@@ -445,9 +466,9 @@
       {/if}
 
       <div class="provider-field">
-        <label for={`provider-model-${i}`}>Model</label>
+        <Label for={`provider-model-${i}`}>Model</Label>
         <div class="model-picker">
-          <input
+          <Input
             id={`provider-model-${i}`}
             type="text"
             value={entry.model}
@@ -501,16 +522,19 @@
         </div>
         <div class="provider-field-hint">{modelFieldHint(entry)}</div>
       </div>
-    </div>
+    </Card>
   {/each}
 
   <div class="add-row">
-    <button class="add-btn" onclick={addEntry}>+ Add Provider</button>
+    <Button variant="outline" class="add-btn" onclick={addEntry}>
+      <PlusIcon />
+      Add provider
+    </Button>
     {#if savedProviders.length > 0}
       <div class="saved-dropdown-container">
-        <button class="add-btn saved-btn" onclick={toggleSavedDropdown} disabled={loadingSavedProviders}>
-          {loadingSavedProviders ? "Loading..." : "Use Saved"}
-        </button>
+        <Button variant="secondary" onclick={toggleSavedDropdown} disabled={loadingSavedProviders}>
+          {loadingSavedProviders ? "Loading..." : "Use saved"}
+        </Button>
         {#if showSavedDropdown}
           <div class="saved-dropdown">
             {#each savedProviders as sp}
@@ -533,150 +557,60 @@
 
   .step-title {
     display: block;
-    font-size: 0.9rem;
-    font-weight: 700;
-    color: var(--accent);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--shadcn-foreground);
     margin-bottom: 0.25rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    text-shadow: var(--text-glow);
   }
 
   .step-description {
     font-size: 0.8rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     margin-bottom: 1rem;
-    font-family: var(--font-mono);
   }
 
-  .provider-row {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    padding: 1rem;
+  :global(.provider-row.provider-row) {
+    gap: 0.75rem;
     margin-bottom: 0.75rem;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-
-  .provider-row:hover {
-    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
   }
 
   .provider-row-header {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
-    margin-bottom: 0.75rem;
+    gap: 0.5rem;
     min-width: 0;
   }
 
   .provider-number {
-    font-weight: 700;
+    font-weight: 600;
     font-size: 0.875rem;
-    color: var(--accent-dim);
+    color: var(--shadcn-muted-foreground);
     min-width: 1.5rem;
-    font-family: var(--font-mono);
-  }
-
-  .provider-row-header select {
-    flex: 1;
-    min-width: 0;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    padding: 0.5rem 0.75rem;
-    color: var(--fg);
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-
-  .provider-row-header select:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
+    font-family: var(--prin7r-font-mono-standard);
   }
 
   .provider-row-actions {
     display: flex;
-    gap: 0.375rem;
+    gap: 0.25rem;
     flex: 0 0 auto;
   }
 
-  .icon-btn {
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    color: var(--fg-dim);
-    font-size: 1rem;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
+  :global(.danger-icon) {
+    color: var(--shadcn-destructive);
   }
-
-  .icon-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    border-color: var(--accent);
-    color: var(--accent);
-    box-shadow: 0 0 5px var(--border-glow);
-    text-shadow: var(--text-glow);
-  }
-
-  .icon-btn:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-  }
-
-  .remove-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--error, #e55) 15%, transparent);
-    border-color: var(--error, #e55);
-    color: var(--error, #e55);
-    box-shadow: 0 0 5px color-mix(in srgb, var(--error, #e55) 50%, transparent);
-    text-shadow: 0 0 5px var(--error, #e55);
+  :global(.danger-icon:hover) {
+    color: var(--shadcn-destructive);
   }
 
   .provider-field {
-    margin-top: 0.75rem;
-  }
-
-  .provider-field label {
-    display: block;
-    font-size: 0.75rem;
-    color: var(--fg-dim);
-    margin-bottom: 0.35rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
-  }
-
-  .provider-field input {
-    width: 100%;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    padding: 0.5rem 0.75rem;
-    color: var(--fg);
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-  }
-
-  .provider-field input:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
   }
 
   .provider-field-hint {
-    margin-top: 0.35rem;
     font-size: 0.72rem;
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
+    color: var(--shadcn-muted-foreground);
   }
 
   .model-picker {
@@ -690,10 +624,10 @@
     right: 0;
     max-height: 280px;
     overflow-y: auto;
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    background: var(--shadcn-card);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
     z-index: 20;
   }
 
@@ -703,10 +637,10 @@
     padding: 0.625rem 0.75rem;
     background: none;
     border: none;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-    color: var(--fg);
+    border-bottom: 1px solid var(--shadcn-border);
+    color: var(--shadcn-foreground);
     text-align: left;
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.82rem;
     cursor: pointer;
     transition: background 0.15s ease, color 0.15s ease;
@@ -718,8 +652,7 @@
 
   .model-option:hover,
   .model-option.selected {
-    background: color-mix(in srgb, var(--accent) 12%, transparent);
-    color: var(--accent);
+    background: var(--shadcn-accent);
   }
 
   .model-value {
@@ -730,51 +663,11 @@
   .model-summary {
     padding: 0.75rem;
     font-size: 0.78rem;
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
+    color: var(--shadcn-muted-foreground);
   }
 
   .model-error {
-    color: var(--error, #e55);
-  }
-
-  .add-btn {
-    width: 100%;
-    padding: 0.75rem;
-    background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
-    border: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
-    border-radius: 2px;
-    color: var(--fg-dim);
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-
-  .status-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: var(--radius);
-    flex-shrink: 0;
-  }
-  .status-dot.ok {
-    background: var(--success, #4a4);
-    box-shadow: 0 0 6px var(--success, #4a4);
-  }
-  .status-dot.error {
-    background: var(--error, #e55);
-    box-shadow: 0 0 6px var(--error, #e55);
-  }
-
-  .add-btn:hover {
-    border-color: var(--accent);
-    border-style: solid;
-    color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    box-shadow: 0 0 8px var(--border-glow);
-    text-shadow: var(--text-glow);
+    color: var(--shadcn-destructive);
   }
 
   .add-row {
@@ -782,7 +675,7 @@
     gap: 0.5rem;
   }
 
-  .add-row .add-btn {
+  :global(.add-btn) {
     flex: 1;
   }
 
@@ -791,24 +684,16 @@
     flex: 0 0 auto;
   }
 
-  .saved-btn {
-    border-style: solid !important;
-    border-color: var(--accent-dim) !important;
-    color: var(--accent) !important;
-    width: auto !important;
-    padding: 0.75rem 1.25rem !important;
-  }
-
   .saved-dropdown {
     position: absolute;
     bottom: 100%;
     right: 0;
     min-width: 220px;
-    background: var(--bg-surface);
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
+    background: var(--shadcn-card);
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
     margin-bottom: 0.25rem;
-    box-shadow: 0 0 15px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
     z-index: 10;
     max-height: 200px;
     overflow-y: auto;
@@ -821,12 +706,11 @@
     padding: 0.625rem 1rem;
     background: none;
     border: none;
-    border-bottom: 1px solid var(--border);
-    color: var(--fg);
+    border-bottom: 1px solid var(--shadcn-border);
+    color: var(--shadcn-foreground);
     cursor: pointer;
     text-align: left;
-    font-family: var(--font-mono);
-    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, transform 0.15s ease, text-shadow 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease;
   }
 
   .saved-item:last-child {
@@ -834,18 +718,18 @@
   }
 
   .saved-item:hover {
-    background: var(--bg-hover);
-    color: var(--accent);
+    background: var(--shadcn-accent);
   }
 
   .saved-name {
     font-size: 0.875rem;
-    font-weight: 700;
+    font-weight: 600;
   }
 
   .saved-detail {
     font-size: 0.75rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     margin-top: 0.125rem;
+    font-family: var(--prin7r-font-mono-standard);
   }
 </style>

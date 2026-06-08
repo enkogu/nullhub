@@ -4,6 +4,15 @@
     describeInstanceCliError,
     isInstanceCliError,
   } from "$lib/instanceCli";
+  import { Card } from "$lib/components/ui/card";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Label } from "$lib/components/ui/label";
+  import { Badge } from "$lib/components/ui/badge";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+  import DownloadIcon from "@lucide/svelte/icons/download";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
 
   type Skill = {
     name: string;
@@ -244,11 +253,20 @@
       <h2>Skills</h2>
       <p>Installed prompt skills visible to this instance workspace.</p>
     </div>
-    <button class="toolbar-btn" onclick={() => void refreshAll()} disabled={loading || catalogLoading || busyAction !== null}>Refresh</button>
+    <Button
+      variant="outline"
+      size="icon"
+      onclick={() => void refreshAll()}
+      disabled={loading || catalogLoading || busyAction !== null}
+      title="Refresh"
+      aria-label="Refresh skills"
+    >
+      <RefreshCwIcon />
+    </Button>
   </div>
 
   {#if supportsInstall}
-    <section class="skill-section">
+    <Card class="skill-section px-5">
       <div class="section-header">
         <div>
           <h3>Recommended</h3>
@@ -282,13 +300,13 @@
                 </div>
                 <div class="skill-badges">
                   {#if entry.recommended}
-                    <span class="badge accent">recommended</span>
+                    <Badge variant="secondary">recommended</Badge>
                   {/if}
                   {#if entry.always}
-                    <span class="badge accent">always</span>
+                    <Badge variant="secondary">always</Badge>
                   {/if}
                   {#if installedSkillNames.has(entry.name)}
-                    <span class="badge ok">installed</span>
+                    <Badge variant="success">installed</Badge>
                   {/if}
                 </div>
               </header>
@@ -309,15 +327,20 @@
               </div>
 
               <div class="skill-actions">
-                <button
-                  class="toolbar-btn"
+                <Button
+                  variant="default"
+                  size="sm"
                   onclick={() => void installBundled(entry)}
                   disabled={busyAction !== null || entry.install_kind !== "bundled"}
                 >
+                  <DownloadIcon />
                   {installedSkillNames.has(entry.name) ? "Reinstall" : "Install"}
-                </button>
+                </Button>
                 {#if entry.homepage_url}
-                  <a class="toolbar-link" href={entry.homepage_url} target="_blank" rel="noreferrer">Browse</a>
+                  <Button variant="ghost" size="sm" href={entry.homepage_url} target="_blank" rel="noreferrer">
+                    <ExternalLinkIcon />
+                    Browse
+                  </Button>
                 {/if}
               </div>
             </article>
@@ -331,18 +354,28 @@
           void installFromClawhub();
         }}>
           <div>
-            <h4>Install From ClawHub</h4>
+            <h4>Install from ClawHub</h4>
             <p>Paste a published ClawHub slug. NullHub will run <code>clawhub install</code> inside this instance workspace.</p>
           </div>
-          <input
-            bind:value={clawhubSlug}
-            type="text"
-            placeholder="my-skill"
-            disabled={busyAction !== null}
-          />
+          <div class="control-field">
+            <Label for="clawhub-slug">ClawHub slug</Label>
+            <Input
+              id="clawhub-slug"
+              bind:value={clawhubSlug}
+              type="text"
+              placeholder="my-skill"
+              disabled={busyAction !== null}
+            />
+          </div>
           <div class="skill-actions">
-            <button class="toolbar-btn" type="submit" disabled={busyAction !== null}>Install</button>
-            <a class="toolbar-link" href="https://clawhub.ai" target="_blank" rel="noreferrer">Browse ClawHub</a>
+            <Button variant="default" size="sm" type="submit" disabled={busyAction !== null}>
+              <DownloadIcon />
+              Install
+            </Button>
+            <Button variant="ghost" size="sm" href="https://clawhub.ai" target="_blank" rel="noreferrer">
+              <ExternalLinkIcon />
+              Browse ClawHub
+            </Button>
           </div>
         </form>
 
@@ -351,21 +384,28 @@
           void installFromSource();
         }}>
           <div>
-            <h4>Install From Source</h4>
+            <h4>Install from source</h4>
             <p>Use a git URL or local skill path. This goes through <code>nullclaw skills install</code>.</p>
           </div>
-          <input
-            bind:value={sourceInput}
-            type="text"
-            placeholder="https://github.com/owner/repo.git"
-            disabled={busyAction !== null}
-          />
+          <div class="control-field">
+            <Label for="source-input">Git URL or path</Label>
+            <Input
+              id="source-input"
+              bind:value={sourceInput}
+              type="text"
+              placeholder="https://github.com/owner/repo.git"
+              disabled={busyAction !== null}
+            />
+          </div>
           <div class="skill-actions">
-            <button class="toolbar-btn" type="submit" disabled={busyAction !== null}>Install</button>
+            <Button variant="default" size="sm" type="submit" disabled={busyAction !== null}>
+              <DownloadIcon />
+              Install
+            </Button>
           </div>
         </form>
       </div>
-    </section>
+    </Card>
   {/if}
 
   {#if error}
@@ -389,12 +429,12 @@
               {/if}
             </div>
             <div class="skill-badges">
-              <span class:ok={skill.available} class="badge">{skill.available ? "available" : "missing deps"}</span>
+              <Badge variant={skill.available ? "success" : "warning"}>{skill.available ? "available" : "missing deps"}</Badge>
               {#if skill.always}
-                <span class="badge accent">always</span>
+                <Badge variant="secondary">always</Badge>
               {/if}
               {#if skill.enabled}
-                <span class="badge">enabled</span>
+                <Badge variant="outline">enabled</Badge>
               {/if}
             </div>
           </header>
@@ -422,7 +462,10 @@
 
           {#if skill.source === "workspace" && supportsInstall}
             <div class="skill-actions">
-              <button class="toolbar-btn danger" onclick={() => void removeSkill(skill.name)} disabled={busyAction !== null}>Remove</button>
+              <Button variant="destructive" size="sm" onclick={() => void removeSkill(skill.name)} disabled={busyAction !== null}>
+                <Trash2Icon />
+                Remove
+              </Button>
             </div>
           {/if}
         </article>
@@ -437,14 +480,8 @@
     flex-direction: column;
     gap: 1rem;
   }
-  .skill-section {
-    display: flex;
-    flex-direction: column;
+  :global(.skill-section) {
     gap: 0.9rem;
-    padding: 1rem;
-    border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--border));
-    background: color-mix(in srgb, var(--bg-surface) 94%, transparent);
-    border-radius: 4px;
   }
   .section-header {
     display: flex;
@@ -454,12 +491,13 @@
   }
   .section-header h3 {
     margin: 0;
-    color: var(--accent);
+    color: var(--shadcn-foreground);
     font-size: 1rem;
+    font-weight: 600;
   }
   .section-header p {
     margin: 0.25rem 0 0;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.84rem;
     line-height: 1.45;
   }
@@ -473,29 +511,30 @@
     flex-direction: column;
     gap: 0.75rem;
     padding: 1rem;
-    border: 1px solid var(--border);
-    background: color-mix(in srgb, var(--bg-panel, var(--bg-surface)) 90%, transparent);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
   }
   .install-card h4 {
     margin: 0;
     font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--shadcn-foreground);
   }
   .install-card p {
     margin: 0.25rem 0 0;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.82rem;
     line-height: 1.45;
   }
-  .install-card input {
-    width: 100%;
-    padding: 0.7rem 0.8rem;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--fg);
-    border-radius: 3px;
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
+  .install-card code {
+    font-family: var(--prin7r-font-mono-standard);
+    font-size: 0.8rem;
+  }
+  .control-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
   }
   .panel-toolbar {
     display: flex;
@@ -505,56 +544,32 @@
   }
   .panel-toolbar h2 {
     margin: 0;
-    color: var(--accent);
+    color: var(--shadcn-foreground);
     font-size: 1.1rem;
+    font-weight: 600;
   }
   .panel-toolbar p {
     margin: 0.25rem 0 0;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.875rem;
-  }
-  .toolbar-btn,
-  .toolbar-link {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.55rem 0.9rem;
-    border: 1px solid var(--accent-dim);
-    background: var(--bg-surface);
-    color: var(--accent);
-    border-radius: 2px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    text-decoration: none;
-  }
-  .toolbar-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .toolbar-btn.danger {
-    border-color: color-mix(in srgb, var(--danger, #000000) 50%, transparent);
-    color: var(--danger, #000000);
   }
   .panel-state {
     padding: 1rem 1.15rem;
-    border: 1px dashed color-mix(in srgb, var(--border) 75%, transparent);
-    background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
-    color: var(--fg-dim);
-    border-radius: 4px;
+    border: 1px dashed var(--shadcn-border);
+    background: var(--shadcn-muted);
+    color: var(--shadcn-muted-foreground);
+    border-radius: var(--shadcn-radius);
     text-align: center;
   }
   .panel-state.warning {
-    border-color: color-mix(in srgb, var(--warning, #777777) 50%, transparent);
-    color: var(--warning, #777777);
-    background: color-mix(in srgb, var(--warning, #777777) 8%, transparent);
+    border-color: color-mix(in srgb, var(--shadcn-destructive) 35%, var(--shadcn-border));
+    color: var(--shadcn-destructive);
+    background: color-mix(in srgb, var(--shadcn-destructive) 6%, var(--shadcn-card));
   }
   .panel-state.success {
-    border-color: color-mix(in srgb, var(--success, #166534) 50%, transparent);
-    color: var(--success, #166534);
-    background: color-mix(in srgb, var(--success, #166534) 8%, transparent);
+    border-color: color-mix(in srgb, #16a34a 35%, var(--shadcn-border));
+    color: #166534;
+    background: color-mix(in srgb, #16a34a 6%, var(--shadcn-card));
   }
   .skill-grid {
     display: grid;
@@ -566,18 +581,15 @@
     flex-direction: column;
     gap: 0.9rem;
     padding: 1rem;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
-  }
-  .skill-card.recommended {
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
   }
   .skill-card.installed {
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--success, #166534) 28%, transparent);
+    border-color: color-mix(in srgb, #16a34a 28%, var(--shadcn-border));
   }
   .skill-card.missing {
-    border-color: color-mix(in srgb, var(--warning, #777777) 45%, transparent);
+    border-color: color-mix(in srgb, var(--shadcn-destructive) 25%, var(--shadcn-border));
   }
   .skill-card header {
     display: flex;
@@ -586,17 +598,18 @@
   }
   .skill-name {
     font-size: 0.95rem;
-    font-weight: 700;
+    font-weight: 600;
+    color: var(--shadcn-foreground);
   }
   .skill-version {
     margin-left: 0.35rem;
-    color: var(--accent-dim);
-    font-family: var(--font-mono);
+    color: var(--shadcn-muted-foreground);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.78rem;
   }
   .skill-description {
     margin-top: 0.35rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.82rem;
     line-height: 1.45;
   }
@@ -605,23 +618,6 @@
     flex-wrap: wrap;
     gap: 0.35rem;
     justify-content: flex-end;
-  }
-  .badge {
-    padding: 0.18rem 0.45rem;
-    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-    border-radius: 999px;
-    color: var(--fg-dim);
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .badge.ok {
-    border-color: color-mix(in srgb, var(--success, #166534) 45%, transparent);
-    color: var(--success, #166534);
-  }
-  .badge.accent {
-    border-color: color-mix(in srgb, var(--accent) 45%, transparent);
-    color: var(--accent);
   }
   .skill-meta {
     display: grid;
@@ -635,25 +631,25 @@
     min-width: 0;
   }
   .skill-meta span {
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-muted);
+    font-size: 0.72rem;
+    color: var(--shadcn-muted-foreground);
   }
   .skill-meta strong {
     font-size: 0.82rem;
     line-height: 1.35;
+    color: var(--shadcn-foreground);
     word-break: break-word;
   }
   .skill-path,
   .missing-deps {
     font-size: 0.8rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
   }
   .skill-path {
     padding: 0.6rem 0.75rem;
-    border-radius: 3px;
-    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    background: var(--shadcn-muted);
+    font-family: var(--prin7r-font-mono-standard);
     overflow-wrap: anywhere;
   }
   .skill-actions {

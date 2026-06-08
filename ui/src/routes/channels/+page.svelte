@@ -9,6 +9,11 @@
     type EntityRecord,
     type EntityViewAction,
   } from "$lib/entity-view";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Select } from "$lib/components/ui/select";
+  import { Label } from "$lib/components/ui/label";
 
   const DEFAULT_CHANNELS = ['web', 'cli'];
   const CHANNEL_OPTIONS = Object.entries(channelSchemas)
@@ -51,6 +56,7 @@
 
   let addSchema = $derived(channelSchemas[addForm.channel_type]);
   let editingChannel = $derived(channels.find((channel) => channel.id === editingId) || null);
+  let editSchema = $derived(channelSchemas[editChannelType]);
 
   const channelColumns: EntityColumn[] = [
     { id: "channel", label: "Channel", type: "select", width: "minmax(150px,.55fr)" },
@@ -148,6 +154,12 @@
       account: schema?.hasAccounts ? "default" : type,
       config: defaults,
     };
+  }
+
+  function openAdd() {
+    resetAddConfig(addForm.channel_type || "telegram");
+    addError = "";
+    showAddForm = true;
   }
 
   function passwordFieldKeys(type: string): string[] {
@@ -308,14 +320,14 @@
 
 {#snippet channelField(prefix: string, field: any, config: Record<string, any>, update: (key: string, value: any) => void)}
   <div class="field">
-    <label for={`${prefix}-${field.key}`}>
+    <Label for={`${prefix}-${field.key}`}>
       {field.label}
       {#if field.hint}
         <span class="field-hint">{field.hint}</span>
       {/if}
-    </label>
+    </Label>
     {#if field.type === 'password'}
-      <input
+      <Input
         id={`${prefix}-${field.key}`}
         type="password"
         value={config[field.key] ?? field.default ?? ""}
@@ -323,7 +335,7 @@
         placeholder={prefix.startsWith("edit") ? "Leave empty to keep current" : "Enter value..."}
       />
     {:else if field.type === 'number'}
-      <input
+      <Input
         id={`${prefix}-${field.key}`}
         type="number"
         value={config[field.key] ?? field.default ?? ""}
@@ -342,7 +354,7 @@
         <span class="toggle-slider"></span>
       </label>
     {:else if field.type === 'select'}
-      <select
+      <Select
         id={`${prefix}-${field.key}`}
         value={config[field.key] ?? field.default ?? ""}
         onchange={(e) => update(field.key, e.currentTarget.value)}
@@ -350,9 +362,9 @@
         {#each field.options || [] as opt}
           <option value={opt}>{opt}</option>
         {/each}
-      </select>
+      </Select>
     {:else if field.type === 'list'}
-      <input
+      <Input
         id={`${prefix}-${field.key}`}
         type="text"
         value={(config[field.key] ?? field.default ?? []).join(', ')}
@@ -360,7 +372,7 @@
         placeholder={field.hint || "Comma-separated values..."}
       />
     {:else}
-      <input
+      <Input
         id={`${prefix}-${field.key}`}
         type="text"
         value={config[field.key] ?? field.default ?? ""}
@@ -372,18 +384,6 @@
 {/snippet}
 
 <div class="channels-page">
-  <div class="page-header">
-    <h1>Channels</h1>
-    {#if hasNullclaw}
-      <button class="primary-btn" onclick={() => {
-        if (!showAddForm) resetAddConfig(addForm.channel_type || "telegram");
-        showAddForm = !showAddForm;
-      }}>
-        {showAddForm ? "Cancel" : "+ Add Channel"}
-      </button>
-    {/if}
-  </div>
-
   {#if message}
     <div class="message">{message}</div>
   {/if}
@@ -395,43 +395,6 @@
   {#if !hasNullclaw && channels.length > 0}
     <div class="warning-message">
       Install a nullclaw instance to add new channels or re-validate saved ones.
-    </div>
-  {/if}
-
-  {#if hasNullclaw && showAddForm}
-    <div class="add-form">
-      <h2>Add Channel</h2>
-      <div class="field">
-        <label for="add-channel-type">Channel Type</label>
-        <select id="add-channel-type" bind:value={addForm.channel_type} onchange={(e) => resetAddConfig(e.currentTarget.value)}>
-          {#each CHANNEL_OPTIONS as opt}
-            <option value={opt.value}>{opt.label}</option>
-          {/each}
-        </select>
-      </div>
-      {#if addSchema?.hasAccounts}
-        <div class="field">
-          <label for="add-account">Account Name</label>
-          <input id="add-account" type="text" bind:value={addForm.account} placeholder="default" />
-        </div>
-      {/if}
-      {#each (addSchema?.fields || []).filter(f => !f.advanced) as field}
-        {@render channelField("add", field, addForm.config, (k, v) => { addForm.config = { ...addForm.config, [k]: v }; })}
-      {/each}
-      {#if (addSchema?.fields || []).some(f => f.advanced)}
-        <details class="advanced-section">
-          <summary>Advanced</summary>
-          {#each (addSchema?.fields || []).filter(f => f.advanced) as field}
-            {@render channelField("add", field, addForm.config, (k, v) => { addForm.config = { ...addForm.config, [k]: v }; })}
-          {/each}
-        </details>
-      {/if}
-      {#if addError}
-        <div class="error-message">{addError}</div>
-      {/if}
-      <button class="primary-btn" onclick={handleAdd} disabled={addValidating}>
-        {addValidating ? "Validating..." : "Validate & Save"}
-      </button>
     </div>
   {/if}
 
@@ -449,57 +412,95 @@
       ? "Add a channel above or install a component to save channel configuration automatically."
       : "Install a nullclaw instance first to add and validate channels."}
     onRefresh={loadChannels}
-  />
+  >
+    {#snippet headerActions()}
+      {#if hasNullclaw}
+        <Button size="sm" onclick={openAdd}>+ Add channel</Button>
+      {/if}
+    {/snippet}
+  </UniversalEntityView>
 
   {#if !hasNullclaw && channels.length === 0}
     <a href="/install" class="link-btn">Install NullClaw</a>
   {/if}
+</div>
 
+<Dialog bind:open={showAddForm} title="Add channel" size="md">
+  <div class="field">
+    <Label for="add-channel-type">Channel Type</Label>
+    <Select id="add-channel-type" bind:value={addForm.channel_type} onchange={(e) => resetAddConfig(e.currentTarget.value)}>
+      {#each CHANNEL_OPTIONS as opt}
+        <option value={opt.value}>{opt.label}</option>
+      {/each}
+    </Select>
+  </div>
+  {#if addSchema?.hasAccounts}
+    <div class="field">
+      <Label for="add-account">Account Name</Label>
+      <Input id="add-account" type="text" bind:value={addForm.account} placeholder="default" />
+    </div>
+  {/if}
+  {#each (addSchema?.fields || []).filter(f => !f.advanced) as field}
+    {@render channelField("add", field, addForm.config, (k, v) => { addForm.config = { ...addForm.config, [k]: v }; })}
+  {/each}
+  {#if (addSchema?.fields || []).some(f => f.advanced)}
+    <details class="advanced-section">
+      <summary>Advanced</summary>
+      {#each (addSchema?.fields || []).filter(f => f.advanced) as field}
+        {@render channelField("add", field, addForm.config, (k, v) => { addForm.config = { ...addForm.config, [k]: v }; })}
+      {/each}
+    </details>
+  {/if}
+  {#if addError}
+    <div class="error-message">{addError}</div>
+  {/if}
+  {#snippet footer()}
+    <Button variant="outline" onclick={() => (showAddForm = false)}>Cancel</Button>
+    <Button onclick={handleAdd} disabled={addValidating}>
+      {addValidating ? "Validating..." : "Validate & Save"}
+    </Button>
+  {/snippet}
+</Dialog>
+
+<Dialog
+  bind:open={() => !!editingChannel, (v) => { if (!v) cancelEdit(); }}
+  title="Edit channel"
+  description={editingChannel?.name}
+  size="md"
+>
   {#if editingChannel}
-    {@const editSchema = channelSchemas[editChannelType]}
-    <section class="edit-panel">
-      <div class="edit-panel-header">
-        <div>
-          <p>Edit Channel</p>
-          <h2>{editingChannel.name}</h2>
-        </div>
-        <button class="btn" onclick={cancelEdit}>Cancel</button>
+    <div class="field">
+      <Label for="edit-name-{editingChannel.id}">Name</Label>
+      <Input id="edit-name-{editingChannel.id}" type="text" bind:value={editForm.name} />
+    </div>
+    {#if editSchema?.hasAccounts}
+      <div class="field">
+        <Label for="edit-account-{editingChannel.id}">Account</Label>
+        <Input id="edit-account-{editingChannel.id}" type="text" bind:value={editForm.account} />
       </div>
-      <div class="edit-form">
-        <div class="field">
-          <label for="edit-name-{editingChannel.id}">Name</label>
-          <input id="edit-name-{editingChannel.id}" type="text" bind:value={editForm.name} />
-        </div>
-        {#if editSchema?.hasAccounts}
-          <div class="field">
-            <label for="edit-account-{editingChannel.id}">Account</label>
-            <input id="edit-account-{editingChannel.id}" type="text" bind:value={editForm.account} />
-          </div>
-        {/if}
-        {#each (editSchema?.fields || []).filter(f => !f.advanced) as field}
+    {/if}
+    {#each (editSchema?.fields || []).filter(f => !f.advanced) as field}
+      {@render channelField(`edit-${editingChannel.id}`, field, editForm.config, (k, v) => { editForm.config = { ...editForm.config, [k]: v }; })}
+    {/each}
+    {#if (editSchema?.fields || []).some(f => f.advanced)}
+      <details class="advanced-section">
+        <summary>Advanced</summary>
+        {#each (editSchema?.fields || []).filter(f => f.advanced) as field}
           {@render channelField(`edit-${editingChannel.id}`, field, editForm.config, (k, v) => { editForm.config = { ...editForm.config, [k]: v }; })}
         {/each}
-        {#if (editSchema?.fields || []).some(f => f.advanced)}
-          <details class="advanced-section">
-            <summary>Advanced</summary>
-            {#each (editSchema?.fields || []).filter(f => f.advanced) as field}
-              {@render channelField(`edit-${editingChannel.id}`, field, editForm.config, (k, v) => { editForm.config = { ...editForm.config, [k]: v }; })}
-            {/each}
-          </details>
-        {/if}
-        {#if editError}
-          <div class="error-message">{editError}</div>
-        {/if}
-        <div class="edit-actions">
-          <button class="primary-btn" onclick={() => saveEdit(editingChannel.id)} disabled={editValidating}>
-            {editValidating ? "Saving..." : "Save"}
-          </button>
-          <button class="btn" onclick={cancelEdit}>Cancel</button>
-        </div>
-      </div>
-    </section>
+      </details>
+    {/if}
+    {#if editError}
+      <div class="error-message">{editError}</div>
+    {/if}
   {/if}
-</div>
+  {#snippet footer()}
+    <Button variant="outline" onclick={cancelEdit}>Cancel</Button>
+    <Button onclick={() => editingChannel && saveEdit(editingChannel.id)} disabled={editValidating}>
+      {editValidating ? "Saving..." : "Save"}
+    </Button>
+  {/snippet}
+</Dialog>
 
 <style>
   .channels-page {
@@ -511,69 +512,10 @@
     padding: 1.5rem;
   }
 
-  .page-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  h1 {
-    color: var(--shadcn-foreground);
-    font-size: 1.5rem;
-    font-weight: 600;
-    letter-spacing: 0;
-  }
-
-  h2 {
-    color: var(--shadcn-foreground);
-    font-size: 1rem;
-    font-weight: 700;
-    letter-spacing: 0;
-  }
-
-  .add-form,
-  .edit-panel {
-    background: var(--shadcn-card);
-    border: 1px solid var(--shadcn-border);
-    border-radius: var(--shadcn-radius);
-    color: var(--shadcn-card-foreground);
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding: 1.25rem;
-  }
-
   .field {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
-  }
-
-  .field label {
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0;
-  }
-
-  .field input,
-  .field select {
-    background: var(--shadcn-background);
-    border: 1px solid var(--shadcn-input);
-    border-radius: calc(var(--shadcn-radius) - 2px);
-    color: var(--shadcn-foreground);
-    font: inherit;
-    min-height: 2.25rem;
-    outline: none;
-    padding: 0.5rem 0.75rem;
-    width: 100%;
-  }
-
-  .field input:focus,
-  .field select:focus {
-    border-color: var(--shadcn-ring);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--shadcn-ring) 18%, transparent);
   }
 
   .field-hint {
@@ -605,71 +547,6 @@
 
   .advanced-section summary:hover {
     color: var(--shadcn-foreground);
-  }
-
-  .edit-panel-header,
-  .edit-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    justify-content: space-between;
-  }
-
-  .edit-panel-header p {
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.75rem;
-    font-weight: 700;
-  }
-
-  .btn {
-    align-items: center;
-    background: var(--shadcn-secondary);
-    border: 1px solid var(--shadcn-border);
-    border-radius: calc(var(--shadcn-radius) - 2px);
-    color: var(--shadcn-secondary-foreground);
-    cursor: pointer;
-    display: inline-flex;
-    font-size: 0.75rem;
-    font-weight: 600;
-    justify-content: center;
-    min-height: 2rem;
-    padding: 0.375rem 0.75rem;
-    transition: background-color 0.15s ease, border-color 0.15s ease;
-    white-space: nowrap;
-  }
-
-  .btn:hover:not(:disabled) {
-    background: var(--shadcn-accent);
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .primary-btn {
-    align-items: center;
-    background: var(--shadcn-primary) !important;
-    border: 1px solid var(--shadcn-primary);
-    border-radius: calc(var(--shadcn-radius) - 2px);
-    color: var(--shadcn-primary-foreground, #fff) !important;
-    cursor: pointer;
-    display: inline-flex;
-    font-size: 0.875rem;
-    font-weight: 600;
-    justify-content: center;
-    min-height: 2.25rem;
-    padding: 0.5rem 1rem;
-    white-space: nowrap;
-  }
-
-  .primary-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--shadcn-primary) 88%, var(--shadcn-background));
-  }
-
-  .primary-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
 
   .message {
@@ -715,12 +592,6 @@
     background: var(--shadcn-accent);
   }
 
-  .edit-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
   .toggle {
     position: relative;
     display: inline-block;
@@ -763,13 +634,6 @@
   @media (max-width: 720px) {
     .channels-page {
       padding: 1rem;
-    }
-
-    .page-header,
-    .edit-panel-header,
-    .edit-actions {
-      align-items: stretch;
-      flex-direction: column;
     }
   }
 </style>

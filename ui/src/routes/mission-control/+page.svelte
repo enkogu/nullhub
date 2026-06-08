@@ -47,6 +47,13 @@
     nextReplayAutomationTransition,
   } from '$lib/missionControl/replayAutomation.js';
   import { nullboilerUiRoutes } from '$lib/nullboiler/routes';
+  import { PageHeader } from '$lib/components/ui/page-header';
+  import { Card } from '$lib/components/ui/card';
+  import { Button } from '$lib/components/ui/button';
+  import { Badge, type BadgeVariant } from '$lib/components/ui/badge';
+  import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
+  import PlayIcon from '@lucide/svelte/icons/play';
+  import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 
   type MissionAction = 'launch' | 'reset' | 'recover';
   type ReplayAutomationStage = 'idle' | 'resetting' | 'preroll' | 'launching' | 'waiting_failure' | 'holding_failure' | 'recovering' | 'watching';
@@ -101,6 +108,25 @@
   const displayTelemetry = $derived(hydratedTelemetry(telemetry, [failedTrace, recoveredTrace]));
   const pageBusy = $derived(loading || acting !== null || exporting || replayAutomationActive);
   const canSaveReplay = $derived(Boolean(mission?.status === 'completed' && mission?.replay_comparison));
+
+  const statusBadgeVariants: Record<string, BadgeVariant> = {
+    done: 'success',
+    active: 'secondary',
+    error: 'destructive',
+    warning: 'warning',
+    pending: 'muted',
+  };
+
+  function statusVariant(value: string | undefined): BadgeVariant {
+    return statusBadgeVariants[statusClass(value)] || 'muted';
+  }
+
+  function verdictVariant(value: string | undefined): BadgeVariant {
+    if (!value || value === '-') return 'muted';
+    if (value === 'pass') return 'success';
+    if (value === 'fail') return 'destructive';
+    return 'secondary';
+  }
 
   function schedulePoll() {
     if (disposed) return;
@@ -364,6 +390,10 @@
     return 'done';
   }
 
+  function storyVariant(phase: MissionControlPhase, tone: 'error' | 'success' | undefined): BadgeVariant {
+    return statusBadgeVariants[storyClass(phase, tone)] || 'muted';
+  }
+
   function nullwatchHref(runId: string | null | undefined): string {
     const params = new URLSearchParams();
     if (runId) params.set('run_id', runId);
@@ -478,81 +508,98 @@
 </script>
 
 <div class="mission-page" aria-busy={pageBusy}>
-  <header class="mission-header">
-    <div>
-      <h1>Mission Control</h1>
-      <p>{mission?.headline || 'Loading mission state...'}</p>
-    </div>
-    <div class="actions">
-      <button onclick={() => runAction('reset')} disabled={acting !== null || loading || replayAutomationActive}>Reset</button>
-      <button class="primary" onclick={() => runReplayAutomation()} disabled={loading || acting !== null || exporting || replayAutomationActive}>
+  <PageHeader title="Mission Control" subtitle={mission?.headline || 'Loading mission state...'}>
+    {#snippet actions()}
+      <Button
+        variant="outline"
+        onclick={() => runAction('reset')}
+        disabled={acting !== null || loading || replayAutomationActive}
+      >
+        Reset
+      </Button>
+      <Button
+        onclick={() => runReplayAutomation()}
+        disabled={loading || acting !== null || exporting || replayAutomationActive}
+      >
         {replayAutomationButtonLabel()}
-      </button>
-      <button onclick={() => runAction('launch')} disabled={!controls.can_launch || acting !== null || loading || replayAutomationActive}>
-        {acting === 'launch' ? 'Launching...' : 'Launch Mission'}
-      </button>
-      <button class="danger" onclick={() => runAction('recover')} disabled={!controls.can_recover || acting !== null || loading || replayAutomationActive}>
+      </Button>
+      <Button
+        variant="outline"
+        size="icon"
+        onclick={() => runAction('launch')}
+        disabled={!controls.can_launch || acting !== null || loading || replayAutomationActive}
+        title={acting === 'launch' ? 'Launching...' : 'Launch Mission'}
+        aria-label="Launch Mission"
+      >
+        <PlayIcon />
+      </Button>
+      <Button
+        variant="destructive"
+        onclick={() => runAction('recover')}
+        disabled={!controls.can_recover || acting !== null || loading || replayAutomationActive}
+      >
         {acting === 'recover' ? 'Forking...' : 'Fork From Checkpoint'}
-      </button>
-      <button onclick={() => exportReplay()} disabled={!canSaveReplay || exporting || loading || replayAutomationActive}>
+      </Button>
+      <Button
+        variant="outline"
+        onclick={() => exportReplay()}
+        disabled={!canSaveReplay || exporting || loading || replayAutomationActive}
+      >
         {exporting ? 'Saving...' : 'Save Replay'}
-      </button>
-    </div>
-  </header>
+      </Button>
+    {/snippet}
+  </PageHeader>
 
   {#if error}
     <div class="error-banner" role="alert">
-      <span>ERR: {error}</span>
-      <button onclick={() => loadMission()} disabled={acting !== null}>Retry</button>
+      <span>{error}</span>
+      <Button variant="outline" size="sm" onclick={() => loadMission()} disabled={acting !== null}>
+        <RefreshCwIcon />
+        Retry
+      </Button>
     </div>
   {/if}
 
   {#if loading && !mission}
     <div class="loading">Loading mission...</div>
   {:else if mission}
-    <section class="mode-strip" aria-label="Mission replay metadata">
-      <div>
-        <span>Mode</span>
-        <strong>{modeLabel}</strong>
-      </div>
-      <div>
-        <span>Scenario</span>
-        <strong>{mission.scenario_id}</strong>
-      </div>
-      <div>
-        <span>Schema</span>
-        <strong>v{mission.schema_version}</strong>
-      </div>
-      <div>
-        <span>Polling</span>
-        <strong>{activePoll ? 'live' : 'idle'}</strong>
-      </div>
-    </section>
+    <div class="strip" aria-label="Mission replay metadata">
+      <Card class="px-5">
+        <div class="stat"><span>Mode</span><strong>{modeLabel}</strong></div>
+      </Card>
+      <Card class="px-5">
+        <div class="stat"><span>Scenario</span><strong>{mission.scenario_id}</strong></div>
+      </Card>
+      <Card class="px-5">
+        <div class="stat"><span>Schema</span><strong>v{mission.schema_version}</strong></div>
+      </Card>
+      <Card class="px-5">
+        <div class="stat"><span>Polling</span><strong>{activePoll ? 'live' : 'idle'}</strong></div>
+      </Card>
+    </div>
 
-    <section class="command-strip">
-      <div>
-        <span>Status</span>
-        <strong class={statusClass(mission.status)}>{mission.status}</strong>
-      </div>
-      <div>
-        <span>Phase</span>
-        <strong>{mission.phase}</strong>
-      </div>
-      <div>
-        <span>Elapsed</span>
-        <strong>{formatDuration(mission.elapsed_ms)}</strong>
-      </div>
-      <div>
-        <span>Run</span>
-        <strong>{mission.active_run_id || '-'}</strong>
-      </div>
-    </section>
+    <div class="strip">
+      <Card class="px-5">
+        <div class="stat">
+          <span>Status</span>
+          <Badge variant={statusVariant(mission.status)}>{mission.status}</Badge>
+        </div>
+      </Card>
+      <Card class="px-5">
+        <div class="stat"><span>Phase</span><strong>{mission.phase}</strong></div>
+      </Card>
+      <Card class="px-5">
+        <div class="stat"><span>Elapsed</span><strong>{formatDuration(mission.elapsed_ms)}</strong></div>
+      </Card>
+      <Card class="px-5">
+        <div class="stat"><span>Run</span><strong>{mission.active_run_id || '-'}</strong></div>
+      </Card>
+    </div>
 
     {#if savedReplays.length > 0 || savedReplaysLoading || savedReplaysError}
-      <section class="saved-replays-panel">
-        <div class="panel-heading">
+      <Card class="px-5">
+        <div class="section-head">
           <h2>Saved Replays</h2>
-          <span>{savedReplaysLoading ? 'loading' : savedReplaysError ? 'unavailable' : `${savedReplays.length} stored`}</span>
         </div>
         {#if savedReplaysError}
           <p class="saved-replay-error">{savedReplaysError}</p>
@@ -560,35 +607,38 @@
         {#if savedReplays.length > 0}
           <div class="saved-replay-list">
             {#each savedReplays.slice(0, 4) as replay}
-              <button class="saved-replay-row" onclick={() => downloadStoredReplay(replay)}>
+              <Button variant="outline" class="saved-replay-row" onclick={() => downloadStoredReplay(replay)}>
                 <span>{replaySavedAt(replay)}</span>
                 <strong>{replay.phase} · {replay.status}</strong>
                 <small>{replay.scenario_id} · {formatBytes(replay.size_bytes)}</small>
-              </button>
+              </Button>
             {/each}
           </div>
         {/if}
-      </section>
+      </Card>
     {/if}
 
-    <section class="story-strip" aria-label="Mission phase milestones">
+    <div class="strip story-strip" aria-label="Mission phase milestones">
       {#each phaseMilestones as beat}
-        <div class="story-beat {storyClass(beat.phase, beat.tone)}">
-          <span>{beat.time}</span>
-          <strong>{beat.title}</strong>
-          <p>{beat.detail}</p>
-        </div>
+        <Card class="px-5">
+          <div class="story-beat">
+            <span>{beat.time}</span>
+            <strong>{beat.title}</strong>
+            <p>{beat.detail}</p>
+            <Badge variant={storyVariant(beat.phase, beat.tone)}>{storyClass(beat.phase, beat.tone)}</Badge>
+          </div>
+        </Card>
       {/each}
-    </section>
+    </div>
 
     <div class="progress-track" aria-label="Mission progress">
       <div style="width: {mission.progress}%"></div>
     </div>
 
-    <section class="graph-panel">
-      <div class="panel-heading">
+    <Card class="px-5">
+      <div class="section-head">
         <h2>Live NullBoiler</h2>
-        <span>{mission.progress}%</span>
+        <span class="section-meta">{mission.progress}%</span>
       </div>
       <div class="graph-row">
         {#each nodes as node, index}
@@ -603,13 +653,12 @@
           </div>
         {/each}
       </div>
-    </section>
+    </Card>
 
     <div class="mission-grid">
-      <section class="agents-panel">
-        <div class="panel-heading">
+      <Card class="px-5">
+        <div class="section-head">
           <h2>Agent Board</h2>
-          <span>{agents.length}</span>
         </div>
         <div class="agent-list">
           {#each agents as agent}
@@ -619,16 +668,16 @@
                 <span>{agent.id}</span>
               </div>
               <p>{agent.current_step}</p>
-              <span class="pill {statusClass(agent.status)}">{agent.status}</span>
+              <Badge variant={statusVariant(agent.status)}>{agent.status}</Badge>
             </div>
           {/each}
         </div>
-      </section>
+      </Card>
 
-      <section class="telemetry-panel">
-        <div class="panel-heading">
+      <Card class="px-5">
+        <div class="section-head">
           <h2>Telemetry</h2>
-          <span>{displayTelemetry.verdict || '-'}</span>
+          <Badge variant={verdictVariant(displayTelemetry.verdict)}>{displayTelemetry.verdict || '-'}</Badge>
         </div>
         <div class="metric-grid">
           <div><span>Runs</span><strong>{displayTelemetry.runs || 0}</strong></div>
@@ -715,7 +764,7 @@
             <div class="trace-detail {failedTraceAvailable ? 'live' : 'loading'}">
               <div class="trace-detail-top">
                 <span>{traceSourceLabel(failedTrace)}</span>
-                <strong>{traceVerdict(failedTrace) || runVerdict('failed')}</strong>
+                <Badge variant={verdictVariant(traceVerdict(failedTrace) || runVerdict('failed'))}>{traceVerdict(failedTrace) || runVerdict('failed')}</Badge>
               </div>
               {#if failedTraceAvailable}
                 <dl class="trace-stats">
@@ -754,7 +803,7 @@
             <div class="trace-detail {recoveredTraceAvailable ? 'live' : 'loading'}">
               <div class="trace-detail-top">
                 <span>{traceSourceLabel(recoveredTrace)}</span>
-                <strong>{traceVerdict(recoveredTrace) || runVerdict('recovered')}</strong>
+                <Badge variant={verdictVariant(traceVerdict(recoveredTrace) || runVerdict('recovered'))}>{traceVerdict(recoveredTrace) || runVerdict('recovered')}</Badge>
               </div>
               {#if recoveredTraceAvailable}
                 <dl class="trace-stats">
@@ -775,7 +824,7 @@
             {/if}
           </div>
         {/if}
-      </section>
+      </Card>
     </div>
 
     {#if replayComparison}
@@ -786,10 +835,9 @@
       />
     {/if}
 
-    <section class="timeline-panel">
-      <div class="panel-heading">
+    <Card class="px-5">
+      <div class="section-head">
         <h2>Mission Timeline</h2>
-        <span>{events.filter((event: MissionControlEvent) => event.status !== 'pending').length}/{events.length}</span>
       </div>
       <div class="timeline">
         {#each events as event}
@@ -814,13 +862,12 @@
           </div>
         {/each}
       </div>
-    </section>
+    </Card>
   {/if}
 </div>
 
 <style>
   .mission-page {
-    --fg-muted: var(--fg-dim);
     padding: 1.5rem;
     max-width: 1600px;
     margin: 0 auto;
@@ -829,8 +876,7 @@
     gap: 1rem;
   }
 
-  .mission-header,
-  .panel-heading,
+  .section-head,
   .event-top {
     display: flex;
     align-items: center;
@@ -838,154 +884,73 @@
     gap: 1rem;
   }
 
-  h1,
-  h2,
-  p {
+  .section-head h2 {
     margin: 0;
-    letter-spacing: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--shadcn-foreground);
   }
 
-  h1 {
-    font-size: 1.75rem;
-    color: var(--fg);
-  }
-
-  h2 {
-    font-size: 0.9rem;
-    color: var(--accent);
-    text-transform: uppercase;
-  }
-
-  .mission-header p,
-  .event-meta,
-  .agent-row span,
-  .panel-heading span {
-    color: var(--fg-muted);
+  .section-meta {
+    color: var(--shadcn-muted-foreground);
     font-size: 0.8125rem;
-  }
-
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    justify-content: flex-end;
-  }
-
-  button {
-    min-height: 2.25rem;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    color: var(--fg);
-    border-radius: 4px;
-    padding: 0.45rem 0.75rem;
-    cursor: pointer;
-    font-weight: 700;
-    text-transform: uppercase;
-    font-size: 0.75rem;
-  }
-
-  button:hover:not(:disabled) {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: var(--bg-hover);
-  }
-
-  button:disabled {
-    cursor: not-allowed;
-    opacity: 0.45;
-  }
-
-  button.primary {
-    color: var(--accent);
-    border-color: var(--accent-dim);
-  }
-
-  button.danger {
-    color: var(--error);
-    border-color: var(--error);
   }
 
   .error-banner,
   .loading {
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
     padding: 0.85rem 1rem;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.875rem;
   }
 
   .error-banner {
-    color: var(--error);
-    border-color: var(--error);
+    color: var(--shadcn-destructive);
+    border-color: var(--shadcn-destructive);
+    background: color-mix(in srgb, var(--shadcn-destructive) 8%, transparent);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
   }
 
-  .command-strip,
-  .mode-strip,
-  .metric-grid,
-  .story-strip {
+  .strip {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.75rem;
   }
 
-  .command-strip div,
-  .mode-strip div,
-  .metric-grid div,
-  .story-beat {
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
-    padding: 0.75rem;
+  .stat {
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    align-items: flex-start;
   }
 
-  .command-strip span,
-  .mode-strip span,
+  .stat span,
   .metric-grid span,
   .story-beat span,
   .failure-box span,
   .recovery-box span {
-    display: block;
-    color: var(--fg-muted);
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    margin-bottom: 0.35rem;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
   }
 
-  .command-strip strong,
-  .mode-strip strong,
+  .stat strong,
   .metric-grid strong,
   .story-beat strong {
     display: block;
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 1.1rem;
+    color: var(--shadcn-foreground);
+    font-size: 1.05rem;
+    font-weight: 600;
     overflow-wrap: anywhere;
   }
 
-  .done {
-    color: var(--success) !important;
-  }
-
-  .active {
-    color: var(--accent) !important;
-  }
-
   .error {
-    color: var(--error) !important;
-  }
-
-  .warning {
-    color: var(--warning) !important;
-  }
-
-  .pending {
-    color: var(--fg-muted) !important;
+    color: var(--shadcn-destructive) !important;
   }
 
   .story-strip {
@@ -993,90 +958,76 @@
   }
 
   .story-beat {
-    min-height: 7rem;
-  }
-
-  .story-beat.active,
-  .story-beat.done,
-  .story-beat.error {
-    border-color: currentColor;
+    min-height: 8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    align-items: flex-start;
   }
 
   .story-beat p {
-    color: var(--fg-muted);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.78rem;
     line-height: 1.35;
+    margin: 0;
+    flex: 1;
   }
 
   .progress-track {
     height: 0.5rem;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-muted);
     border-radius: 999px;
     overflow: hidden;
   }
 
   .progress-track div {
     height: 100%;
-    background: var(--accent);
-    box-shadow: 0 0 14px var(--accent);
+    background: var(--shadcn-foreground);
     transition: width 0.35s ease;
   }
 
-  .graph-panel,
-  .agents-panel,
-  .telemetry-panel,
-  .saved-replays-panel,
-  .timeline-panel {
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
-    padding: 1rem;
-    min-width: 0;
-  }
-
   .saved-replay-list {
-    margin-top: 0.85rem;
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.75rem;
   }
 
-  .saved-replay-row {
+  :global(.saved-replay-row) {
+    height: auto;
     min-height: 5rem;
     text-align: left;
-    text-transform: none;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     justify-content: center;
     gap: 0.25rem;
+    padding: 0.75rem;
     overflow: hidden;
   }
 
-  .saved-replay-row span,
-  .saved-replay-row small {
-    color: var(--fg-muted);
+  :global(.saved-replay-row) span,
+  :global(.saved-replay-row) small {
+    color: var(--shadcn-muted-foreground);
     font-size: 0.72rem;
     overflow-wrap: anywhere;
   }
 
-  .saved-replay-row strong {
-    color: var(--fg);
-    font-family: var(--font-mono);
+  :global(.saved-replay-row) strong {
+    color: var(--shadcn-foreground);
     font-size: 0.95rem;
+    font-weight: 600;
     overflow-wrap: anywhere;
   }
 
   .saved-replay-error {
-    margin: 0.85rem 0 0;
-    color: var(--error);
+    margin: 0;
+    color: var(--shadcn-destructive);
     font-size: 0.85rem;
     overflow-wrap: anywhere;
   }
 
   .graph-row {
-    margin-top: 1rem;
     display: grid;
     grid-template-columns: repeat(7, minmax(96px, 1fr));
     gap: 0.5rem;
@@ -1095,9 +1046,9 @@
   }
 
   .node {
-    border: 1px solid var(--border);
-    background: var(--bg);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
     min-height: 5.2rem;
     padding: 0.75rem;
     display: flex;
@@ -1107,44 +1058,40 @@
   }
 
   .node.active {
-    border-color: var(--accent);
-    box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 40%, transparent);
+    border-color: var(--shadcn-foreground);
   }
 
   .node.error {
-    border-color: var(--error);
-    box-shadow: 0 0 16px color-mix(in srgb, var(--error) 35%, transparent);
+    border-color: var(--shadcn-destructive);
   }
 
   .node.done {
-    border-color: var(--success);
+    border-color: color-mix(in srgb, var(--shadcn-foreground) 45%, transparent);
   }
 
   .node span {
-    color: var(--fg-muted);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.7rem;
-    text-transform: uppercase;
   }
 
   .node strong {
-    color: inherit;
+    color: var(--shadcn-foreground);
     font-size: 0.95rem;
+    font-weight: 600;
   }
 
   .edge {
     height: 2px;
-    background: var(--border);
+    background: var(--shadcn-border);
   }
 
   .edge.done,
   .edge.active {
-    background: var(--success);
-    box-shadow: 0 0 12px var(--success);
+    background: var(--shadcn-foreground);
   }
 
   .edge.error {
-    background: var(--error);
-    box-shadow: 0 0 12px var(--error);
+    background: var(--shadcn-destructive);
   }
 
   .mission-grid {
@@ -1155,16 +1102,15 @@
   }
 
   .agent-list {
-    margin-top: 1rem;
     display: flex;
     flex-direction: column;
     gap: 0.65rem;
   }
 
   .agent-row {
-    border: 1px solid var(--border);
-    background: var(--bg);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
     padding: 0.75rem;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
@@ -1173,51 +1119,65 @@
   }
 
   .agent-row.active {
-    border-color: var(--accent);
+    border-color: var(--shadcn-foreground);
   }
 
-  .agent-row.error,
-  .agent-row.warning {
-    border-color: currentColor;
+  .agent-row.error {
+    border-color: var(--shadcn-destructive);
+  }
+
+  .agent-row span {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.8125rem;
   }
 
   .agent-row strong,
   .agent-row p {
-    color: var(--fg);
+    color: var(--shadcn-foreground);
     overflow-wrap: anywhere;
-  }
-
-  .pill {
-    border: 1px solid currentColor;
-    border-radius: 999px;
-    padding: 0.15rem 0.45rem;
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    font-weight: 700;
-    white-space: nowrap;
+    margin: 0;
   }
 
   .metric-grid {
+    display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
-    margin-top: 1rem;
+    gap: 0.75rem;
+  }
+
+  .metric-grid div {
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-muted);
+    border-radius: var(--shadcn-radius);
+    padding: 0.75rem;
+    min-width: 0;
+  }
+
+  .metric-grid span {
+    display: block;
+    margin-bottom: 0.35rem;
   }
 
   .failure-box,
   .recovery-box,
   .trace-card {
-    margin-top: 1rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
     padding: 0.85rem;
   }
 
+  .failure-box span,
+  .recovery-box span {
+    display: block;
+    margin-bottom: 0.35rem;
+  }
+
   .failure-box {
-    border-color: var(--error);
+    border-color: var(--shadcn-destructive);
   }
 
   .recovery-box {
-    border-color: var(--success);
+    border-color: color-mix(in srgb, var(--shadcn-foreground) 45%, transparent);
   }
 
   .trace-card {
@@ -1227,27 +1187,19 @@
     gap: 0.75rem;
   }
 
-  .workflow-card {
-    border-color: var(--accent-dim);
-  }
-
   .trace-card em {
     display: block;
-    color: var(--fg-muted);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.72rem;
     font-style: normal;
   }
 
   .trace-detail {
     margin-top: 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--bg-surface) 70%, transparent);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
     padding: 0.75rem;
-  }
-
-  .trace-detail.live {
-    border-color: var(--accent-dim);
   }
 
   .trace-detail-top {
@@ -1255,14 +1207,6 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.75rem;
-  }
-
-  .trace-detail-top strong {
-    margin-bottom: 0;
-    color: var(--accent);
-    font-family: var(--font-mono);
-    font-size: 0.82rem;
-    overflow-wrap: anywhere;
   }
 
   .trace-stats {
@@ -1278,21 +1222,18 @@
   }
 
   .trace-stats dt {
-    color: var(--fg-muted);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.68rem;
-    text-transform: uppercase;
   }
 
   .trace-stats dd {
-    color: var(--fg);
-    font-family: var(--font-mono);
+    color: var(--shadcn-foreground);
     font-size: 0.82rem;
   }
 
   .trace-evidence {
     margin: 0.65rem 0 0;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
     overflow-wrap: anywhere;
   }
@@ -1302,28 +1243,24 @@
   .trace-card strong {
     display: block;
     margin-bottom: 0.35rem;
-    color: var(--fg);
+    color: var(--shadcn-foreground);
   }
 
   .failure-box p,
   .recovery-box p {
-    color: var(--fg-muted);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.8125rem;
-    margin-bottom: 0.65rem;
+    margin: 0 0 0.65rem;
   }
 
   .failure-box p.trace-evidence,
   .recovery-box p.trace-evidence {
     margin: 0.65rem 0 0;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
   }
 
   code {
     display: block;
-    color: var(--accent);
-    font-family: var(--font-mono);
+    color: var(--shadcn-foreground);
     font-size: 0.75rem;
     overflow-wrap: anywhere;
   }
@@ -1332,9 +1269,8 @@
   .failure-box a,
   .recovery-box a,
   .event-meta a {
-    color: var(--accent);
+    color: var(--shadcn-foreground);
     text-decoration: none;
-    font-family: var(--font-mono);
     font-size: 0.75rem;
     overflow-wrap: anywhere;
   }
@@ -1344,19 +1280,18 @@
   .recovery-box a {
     display: inline-flex;
     width: fit-content;
-    border: 1px solid var(--accent-dim);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
     padding: 0.35rem 0.5rem;
   }
 
   .trace-placeholder {
     display: inline-flex;
     width: fit-content;
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
     padding: 0.35rem 0.5rem;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
   }
 
@@ -1366,7 +1301,6 @@
   }
 
   .timeline {
-    margin-top: 1rem;
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 0.75rem;
@@ -1376,6 +1310,16 @@
     display: grid;
     grid-template-columns: 12px minmax(0, 1fr);
     gap: 0.65rem;
+    color: var(--shadcn-muted-foreground);
+  }
+
+  .event-row.active,
+  .event-row.done {
+    color: var(--shadcn-foreground);
+  }
+
+  .event-row.error {
+    color: var(--shadcn-destructive);
   }
 
   .event-marker {
@@ -1388,9 +1332,9 @@
   }
 
   .event-body {
-    border: 1px solid var(--border);
-    background: var(--bg);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
     padding: 0.75rem;
     min-height: 8rem;
   }
@@ -1402,13 +1346,12 @@
   }
 
   .event-top strong {
-    color: var(--fg);
+    color: var(--shadcn-foreground);
     overflow-wrap: anywhere;
   }
 
   .event-top span {
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
   }
 
@@ -1417,12 +1360,14 @@
     gap: 0.5rem;
     flex-wrap: wrap;
     margin: 0.35rem 0 0.55rem;
-    text-transform: uppercase;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
   }
 
   .event-body p {
-    color: var(--fg-muted);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.8125rem;
+    margin: 0;
   }
 
   @media (max-width: 1200px) {
@@ -1452,17 +1397,7 @@
       padding: 1rem;
     }
 
-    .mission-header {
-      align-items: flex-start;
-      flex-direction: column;
-    }
-
-    .actions {
-      justify-content: flex-start;
-    }
-
-    .command-strip,
-    .mode-strip,
+    .strip,
     .metric-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }

@@ -1,19 +1,27 @@
 <script lang="ts">
+  import ArrowDownIcon from "@lucide/svelte/icons/arrow-down";
+  import ArrowUpIcon from "@lucide/svelte/icons/arrow-up";
   import BoxIcon from "@lucide/svelte/icons/box";
   import CalendarDaysIcon from "@lucide/svelte/icons/calendar-days";
   import ChevronLeftIcon from "@lucide/svelte/icons/chevron-left";
   import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
   import CircleIcon from "@lucide/svelte/icons/circle";
   import ClockIcon from "@lucide/svelte/icons/clock";
+  import ExternalLinkIcon from "@lucide/svelte/icons/external-link";
+  import EyeIcon from "@lucide/svelte/icons/eye";
   import FolderTreeIcon from "@lucide/svelte/icons/folder-tree";
+  import PencilIcon from "@lucide/svelte/icons/pencil";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
   import KanbanIcon from "@lucide/svelte/icons/kanban";
   import LayoutGridIcon from "@lucide/svelte/icons/layout-grid";
   import LayoutListIcon from "@lucide/svelte/icons/layout-list";
   import ListIcon from "@lucide/svelte/icons/list";
   import PanelRightIcon from "@lucide/svelte/icons/panel-right";
+  import RefreshIcon from "@lucide/svelte/icons/refresh-cw";
   import SearchIcon from "@lucide/svelte/icons/search";
   import Table2Icon from "@lucide/svelte/icons/table-2";
   import TreePineIcon from "@lucide/svelte/icons/tree-pine";
+  import { PageHeader } from "$lib/components/ui/page-header";
 
   import {
     NOTION_LIKE_ENTITY_VIEWS,
@@ -55,6 +63,9 @@
     onSelect,
     onOpen,
     actions = [],
+    headerControls,
+    headerActions,
+    hideHeader = false,
   }: UniversalEntityViewProps = $props();
 
   let activeViewId = $state("");
@@ -62,6 +73,7 @@
   let sortField = $state("");
   let sortDirection = $state<"asc" | "desc">("asc");
   let selectedId = $state("");
+  let hoveredId = $state("");
   let pendingActionKeys = $state<Record<string, boolean>>({});
   let monthCursor = $state(startOfMonth(new Date()));
 
@@ -180,6 +192,15 @@
     return FolderTreeIcon;
   }
 
+  function actionIcon(label: string) {
+    const l = label.toLowerCase().trim();
+    if (l === "open") return ExternalLinkIcon;
+    if (l === "view") return EyeIcon;
+    if (l.startsWith("edit")) return PencilIcon;
+    if (l.startsWith("delete") || l === "remove") return Trash2Icon;
+    return null;
+  }
+
   function valueClass(value: EntityFieldValue, type?: EntityColumn["type"]) {
     if (type === "status") return `status-chip ${statusKind(value)}`;
     if (type === "select" || type === "tags") return "tag-chip";
@@ -258,10 +279,11 @@
       {#each recordActions as action (action.id)}
         {@const href = actionHref(action, record)}
         {@const actionPending = isActionPending(action, record)}
+        {@const Icon = placement === "row" ? actionIcon(action.label) : null}
         {#if href}
-          <a class={`entity-action ${action.variant || "secondary"}`} href={href} aria-disabled={recordPending} tabindex={recordPending ? -1 : undefined} onclick={(event) => stopActionLink(event, record)}>{action.label}</a>
+          <a class={`entity-action ${action.variant || "secondary"} ${Icon ? "icon-only" : ""}`} href={href} aria-disabled={recordPending} tabindex={recordPending ? -1 : undefined} title={Icon ? action.label : undefined} aria-label={Icon ? action.label : undefined} onclick={(event) => stopActionLink(event, record)}>{#if Icon}<Icon size={15} />{:else}{action.label}{/if}</a>
         {:else}
-          <button class={`entity-action ${action.variant || "secondary"}`} type="button" disabled={recordPending} aria-busy={actionPending} onclick={(event) => runAction(action, record, event)}>{action.label}</button>
+          <button class={`entity-action ${action.variant || "secondary"} ${Icon ? "icon-only" : ""}`} type="button" disabled={recordPending} aria-busy={actionPending} title={Icon ? action.label : undefined} aria-label={Icon ? action.label : undefined} onclick={(event) => runAction(action, record, event)}>{#if Icon}<Icon size={15} />{:else}{action.label}{/if}</button>
         {/if}
       {/each}
     </div>
@@ -318,46 +340,56 @@
   {/if}
 {/snippet}
 
-<section class="entity-view-shell" data-view-mode={activeView.mode}>
-  <header class="entity-view-header">
-    <div class="entity-title-block">
-      <p>{records.length.toLocaleString()} records</p>
-      <h1>{title}</h1>
-      {#if description}<span>{description}</span>{/if}
-    </div>
-    <div class="entity-header-actions">
-      {#if onRefresh}
-        <button class="refresh-button" type="button" onclick={() => onRefresh?.()} disabled={loading}>
-          {loading ? "Loading" : refreshLabel}
-        </button>
-      {/if}
-    </div>
-  </header>
-
-  <div class="entity-toolbar">
-    <div class="view-switcher" aria-label="View mode">
+{#snippet evControls()}
+  {#if headerControls}{@render headerControls()}{/if}
+  {#if views.length > 1}
+    <div class="view-switcher" role="tablist" aria-label="View mode">
       {#each views as view (view.id)}
         {@const Icon = viewIcon(view.mode)}
-        <button class:active={view.id === activeView.id} type="button" onclick={() => setView(view)} title={view.label}>
-          <Icon size={14} />
-          <span>{view.label}</span>
+        <button class:active={view.id === activeView.id} type="button" role="tab" aria-selected={view.id === activeView.id} onclick={() => setView(view)} title={view.label} aria-label={view.label}>
+          <Icon size={15} />
         </button>
       {/each}
     </div>
-    <label class="search-box" aria-label="Search records">
-      <SearchIcon size={15} />
-      <input bind:value={query} placeholder="Search" />
-    </label>
-    <select class="sort-select" bind:value={sortField} aria-label="Sort field">
-      <option value="">Manual</option>
+  {/if}
+  <label class="search-box" aria-label="Search records">
+    <SearchIcon size={15} />
+    <input bind:value={query} placeholder="Search" />
+  </label>
+  {#if sortableColumns.length > 0}
+    <select class="ev-select" bind:value={sortField} aria-label="Sort field">
+      <option value="">Sort</option>
       {#each sortableColumns as column (column.id)}
         <option value={column.id}>{column.label}</option>
       {/each}
     </select>
-    <button class="sort-dir" type="button" onclick={() => (sortDirection = sortDirection === "asc" ? "desc" : "asc")} aria-label="Toggle sort direction">
-      {sortDirection === "asc" ? "Asc" : "Desc"}
+    <button class="ev-btn icon" type="button" onclick={() => (sortDirection = sortDirection === "asc" ? "desc" : "asc")} aria-label={`Sort ${sortDirection === "asc" ? "ascending" : "descending"}`} title="Toggle sort direction" disabled={!sortField}>
+      {#if sortDirection === "asc"}<ArrowUpIcon size={15} />{:else}<ArrowDownIcon size={15} />{/if}
     </button>
-  </div>
+  {/if}
+{/snippet}
+
+{#snippet evActions()}
+  {#if headerActions}{@render headerActions()}{/if}
+  {#if onRefresh}
+    <button class="ev-btn icon" type="button" onclick={() => onRefresh?.()} disabled={loading} title={refreshLabel} aria-label={refreshLabel}>
+      <RefreshIcon size={15} class={loading ? "ev-spin" : ""} />
+    </button>
+  {/if}
+{/snippet}
+
+<section class="entity-view-shell" data-view-mode={activeView.mode}>
+  {#if hideHeader}
+    <div class="ev-embedded-toolbar">
+      <div class="ev-embedded-controls">{@render evControls()}</div>
+      <div class="ev-embedded-actions">{@render evActions()}</div>
+    </div>
+  {:else}
+    <PageHeader {title} subtitle={description}>
+      {#snippet controls()}{@render evControls()}{/snippet}
+      {#snippet actions()}{@render evActions()}{/snippet}
+    </PageHeader>
+  {/if}
 
   {#if error}
     <div class="entity-banner error">{error}</div>
@@ -376,24 +408,24 @@
       <span>{emptyDescription}</span>
     </div>
   {:else if activeView.mode === "table"}
-    <div class="table-view" style:grid-template-columns={`minmax(220px, 1.35fr) ${visibleColumns.map((column) => column.width || "minmax(130px, .75fr)").join(" ")} ${actions.length ? "auto" : ""}`}>
+    <div class="table-view" style:grid-template-columns={`minmax(220px, 1.35fr) ${visibleColumns.map((column) => column.width || "minmax(130px, .75fr)").join(" ")} ${actions.length ? "auto" : ""}`} onmouseleave={() => (hoveredId = "")} role="presentation">
       <div class="table-head primary">Name</div>
       {#each visibleColumns as column (column.id)}
         <div class="table-head">{column.label}</div>
       {/each}
       {#if actions.length}<div class="table-head actions-head">Actions</div>{/if}
       {#each filteredRecords as record (record.id)}
-        <button class:active={record.id === selectedRecord?.id} class="table-cell primary" type="button" onclick={() => selectRecord(record)} ondblclick={() => openRecord(record)}>
+        <button class:active={record.id === selectedRecord?.id} class:hov={record.id === hoveredId} class="table-cell primary" type="button" onmouseenter={() => (hoveredId = record.id)} onclick={() => selectRecord(record)} ondblclick={() => openRecord(record)}>
           <span>{record.title}</span>
           {#if record.subtitle}<small>{record.subtitle}</small>{/if}
         </button>
         {#each visibleColumns as column (column.id)}
-          <button class="table-cell" type="button" onclick={() => selectRecord(record)} title={cellTitle(record, column)}>
+          <button class:active={record.id === selectedRecord?.id} class:hov={record.id === hoveredId} class="table-cell" type="button" onmouseenter={() => (hoveredId = record.id)} onclick={() => selectRecord(record)} title={cellTitle(record, column)}>
             <span class={valueClass(fieldValue(record, column), column.type)}>{displayValue(record, column)}</span>
           </button>
         {/each}
         {#if actions.length}
-          <div class="table-cell action-cell">{@render RecordActions(record)}</div>
+          <div class="table-cell action-cell" class:active={record.id === selectedRecord?.id} class:hov={record.id === hoveredId} onmouseenter={() => (hoveredId = record.id)} role="presentation">{@render RecordActions(record)}</div>
         {/if}
       {/each}
     </div>
@@ -464,9 +496,12 @@
     <div class="split-view">
       <div class="split-list">
         {#each filteredRecords as record (record.id)}
-          <button class:active={record.id === selectedRecord?.id} type="button" onclick={() => selectRecord(record)}>
-            <strong>{record.title}</strong>
-            <span>{record.subtitle || record.description || record.id}</span>
+          <button class:active={record.id === selectedRecord?.id} type="button" onclick={() => selectRecord(record)} ondblclick={() => openRecord(record)}>
+            <span class="split-list-text">
+              <strong>{record.title}</strong>
+              <span>{record.subtitle || record.description || record.type || record.id}</span>
+            </span>
+            {#if record.status}{@render StatusPill(record.status)}{/if}
           </button>
         {/each}
       </div>
@@ -545,87 +580,73 @@
     color: var(--shadcn-foreground);
   }
 
-  .entity-view-header {
+  .ev-embedded-toolbar {
     display: flex;
-    align-items: flex-start;
+    align-items: center;
     justify-content: space-between;
-    gap: 1rem;
-    border-bottom: 1px solid var(--shadcn-border);
-    padding-bottom: 0.875rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
 
-  .entity-title-block {
+  .ev-embedded-controls {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
     min-width: 0;
   }
 
-  .entity-title-block p,
-  .entity-title-block span {
-    margin: 0;
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.8125rem;
-    line-height: 1.4;
-  }
-
-  .entity-title-block h1 {
-    margin: 0.15rem 0 0;
-    color: var(--shadcn-foreground);
-    font-size: 1.625rem;
-    font-weight: 650;
-    letter-spacing: 0;
-    line-height: 1.15;
-  }
-
-  .entity-header-actions {
-    display: flex;
-    flex: 0 0 auto;
+  .ev-embedded-actions {
+    display: inline-flex;
     align-items: center;
     gap: 0.5rem;
   }
 
-  .refresh-button,
-  .sort-dir,
+  .ev-btn,
   .entity-action,
   .calendar-bar button {
     display: inline-flex;
-    min-height: 2.25rem;
+    min-height: 2rem;
     align-items: center;
     justify-content: center;
+    gap: 0.4rem;
     border: 1px solid var(--shadcn-input);
-    border-radius: var(--shadcn-radius);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    padding: 0 0.7rem;
     background: var(--shadcn-background);
     color: var(--shadcn-foreground);
     font: inherit;
     font-size: 0.8125rem;
     font-weight: 500;
-    letter-spacing: 0;
     text-decoration: none;
     cursor: pointer;
-    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
+    transition: background-color 0.12s ease, border-color 0.12s ease, color 0.12s ease;
   }
 
-  .refresh-button,
-  .sort-dir {
-    padding: 0 0.75rem;
+  .ev-btn.icon {
+    width: 2rem;
+    padding: 0;
   }
 
-  .refresh-button:hover,
-  .sort-dir:hover,
+  :global(.ev-spin) {
+    animation: ev-spin 0.8s linear infinite;
+  }
+
+  @keyframes ev-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  .ev-btn:hover:not(:disabled),
   .entity-action:hover,
   .calendar-bar button:hover {
     background: var(--shadcn-accent);
-    border-color: var(--shadcn-border);
   }
 
-  .refresh-button:active,
-  .sort-dir:active,
-  .entity-action:active,
-  .calendar-bar button:active {
-    transform: translateY(1px);
-  }
-
-  .refresh-button:disabled {
+  .ev-btn:disabled {
     cursor: not-allowed;
-    opacity: 0.6;
+    opacity: 0.5;
   }
 
   .entity-action:disabled,
@@ -633,59 +654,60 @@
     cursor: not-allowed;
     opacity: 0.55;
     pointer-events: none;
-    transform: none;
-  }
-
-  .entity-toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(180px, 260px) minmax(120px, 180px) auto;
-    gap: 0.5rem;
-    align-items: center;
   }
 
   .view-switcher {
-    display: flex;
-    min-width: 0;
-    gap: 0.25rem;
-    overflow-x: auto;
-    scrollbar-width: thin;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.125rem;
+    padding: 0.1875rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
   }
 
   .view-switcher button {
     display: inline-flex;
-    min-height: 2rem;
+    height: 1.625rem;
+    width: 1.75rem;
     flex: 0 0 auto;
     align-items: center;
-    gap: 0.35rem;
-    border: 1px solid transparent;
-    border-radius: calc(var(--shadcn-radius) - 2px);
-    padding: 0 0.6rem;
+    justify-content: center;
+    border: 0;
+    border-radius: calc(var(--shadcn-radius) - 3px);
     background: transparent;
     color: var(--shadcn-muted-foreground);
-    font: inherit;
-    font-size: 0.8125rem;
-    font-weight: 500;
     cursor: pointer;
+    transition: background-color 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
   }
 
-  .view-switcher button:hover,
-  .view-switcher button.active {
-    border-color: var(--shadcn-border);
-    background: var(--shadcn-accent);
+  .view-switcher button:hover {
     color: var(--shadcn-foreground);
+  }
+
+  .view-switcher button.active {
+    background: var(--shadcn-background);
+    color: var(--shadcn-foreground);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
   }
 
   .search-box {
     display: flex;
     min-width: 0;
-    min-height: 2.25rem;
+    width: clamp(140px, 22vw, 240px);
+    min-height: 2rem;
     align-items: center;
     gap: 0.45rem;
     border: 1px solid var(--shadcn-input);
-    border-radius: var(--shadcn-radius);
+    border-radius: calc(var(--shadcn-radius) - 2px);
     padding: 0 0.625rem;
     background: var(--shadcn-background);
     color: var(--shadcn-muted-foreground);
+    transition: border-color 0.12s ease;
+  }
+
+  .search-box:focus-within {
+    border-color: var(--shadcn-ring);
   }
 
   .search-box input {
@@ -696,19 +718,20 @@
     background: transparent;
     color: var(--shadcn-foreground);
     font: inherit;
-    font-size: 0.875rem;
+    font-size: 0.8125rem;
   }
 
-  .sort-select {
+  .ev-select {
     min-width: 0;
-    min-height: 2.25rem;
+    min-height: 2rem;
     border: 1px solid var(--shadcn-input);
-    border-radius: var(--shadcn-radius);
+    border-radius: calc(var(--shadcn-radius) - 2px);
     background: var(--shadcn-background);
     color: var(--shadcn-foreground);
     font: inherit;
     font-size: 0.8125rem;
-    padding: 0 0.625rem;
+    padding: 0 0.5rem;
+    cursor: pointer;
   }
 
   .entity-banner,
@@ -773,34 +796,29 @@
   .table-cell {
     min-width: 0;
     border-bottom: 1px solid var(--shadcn-border);
-    border-left: 1px solid var(--shadcn-border);
-    padding: 0.625rem 0.75rem;
-  }
-
-  .table-head:first-child,
-  .table-cell.primary {
-    border-left: 0;
+    padding: 0.625rem 0.875rem;
   }
 
   .table-head {
     color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
-    font-weight: 650;
+    font-weight: 500;
     background: var(--shadcn-muted);
   }
 
   .table-cell {
     display: flex;
-    min-height: 2.75rem;
+    min-height: 3rem;
     align-items: center;
     background: var(--shadcn-card);
     color: var(--shadcn-foreground);
     font: inherit;
-    font-size: 0.8375rem;
+    font-size: 0.8125rem;
     text-align: left;
+    transition: background-color 0.1s ease;
   }
 
-  .table-cell:hover,
+  .table-cell.hov,
   .table-cell.active {
     background: var(--shadcn-accent);
   }
@@ -809,8 +827,8 @@
     flex-direction: column;
     align-items: flex-start;
     justify-content: center;
-    gap: 0.15rem;
-    font-weight: 600;
+    gap: 0.1rem;
+    font-weight: 550;
   }
 
   .table-cell small {
@@ -1047,8 +1065,8 @@
 
   .list-main strong,
   .list-main small,
-  .split-list strong,
-  .split-list span {
+  .split-list-text strong,
+  .split-list-text > span {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1056,7 +1074,7 @@
   }
 
   .list-main small,
-  .split-list span {
+  .split-list-text > span {
     color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
   }
@@ -1079,12 +1097,20 @@
   }
 
   .split-list button {
-    display: grid;
-    gap: 0.2rem;
-    min-height: 3.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    min-height: 3.25rem;
     border-width: 0 0 1px;
     border-radius: 0;
-    padding: 0.75rem;
+    padding: 0.625rem 0.875rem;
+  }
+
+  .split-list-text {
+    display: grid;
+    gap: 0.1rem;
+    min-width: 0;
   }
 
   .detail-panel {
@@ -1429,6 +1455,20 @@
   .entity-action {
     min-height: 1.875rem;
     padding: 0 0.55rem;
+  }
+
+  .entity-action.icon-only {
+    width: 1.875rem;
+    padding: 0;
+    color: var(--shadcn-muted-foreground);
+  }
+
+  .entity-action.icon-only:hover {
+    color: var(--shadcn-foreground);
+  }
+
+  .entity-action.destructive.icon-only {
+    color: var(--shadcn-destructive);
   }
 
   .entity-action.default {

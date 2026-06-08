@@ -73,6 +73,12 @@ export type EntityViewAction = {
 export type UniversalEntityViewProps = {
   title: string;
   description?: string;
+  /** Page-specific controls (instance selector, filters) merged into the header band before the built-in view switcher. */
+  headerControls?: import("svelte").Snippet;
+  /** Page-specific actions (e.g. "+ New") merged into the header band before Refresh. */
+  headerActions?: import("svelte").Snippet;
+  /** When embedded inside another page that already renders a PageHeader: hide the title/subtitle and show only a slim view/search/sort toolbar. */
+  hideHeader?: boolean;
   records?: EntityRecord[];
   columns?: EntityColumn[];
   views?: EntityViewDefinition[];

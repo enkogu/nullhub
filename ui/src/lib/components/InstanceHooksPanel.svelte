@@ -1,5 +1,14 @@
 <script lang="ts">
   import { api } from "$lib/api/client";
+  import { Card } from "$lib/components/ui/card";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Select } from "$lib/components/ui/select";
+  import { Label } from "$lib/components/ui/label";
+  import { Badge } from "$lib/components/ui/badge";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+  import CopyIcon from "@lucide/svelte/icons/copy";
+  import CheckIcon from "@lucide/svelte/icons/check";
 
   type HookHandler = {
     id?: string;
@@ -163,9 +172,16 @@
         <h2>Hooks</h2>
         <p>Runtime hooks, diagnostics, and standard templates for this NullClaw instance.</p>
       </div>
-      <button class="btn" onclick={() => loadConfig(true)} disabled={loading}>
-        {loading ? "Refreshing..." : "Refresh"}
-      </button>
+      <Button
+        variant="outline"
+        size="icon"
+        onclick={() => loadConfig(true)}
+        disabled={loading}
+        title="Refresh"
+        aria-label="Refresh hooks config"
+      >
+        <RefreshCwIcon />
+      </Button>
     </div>
 
     {#if error}
@@ -173,32 +189,32 @@
     {/if}
 
     <div class="summary-grid">
-      <div class="summary-card">
+      <Card class="summary-card px-5">
         <span class="label">State</span>
-        <strong class:enabled={hooksConfig?.enabled}>{hooksConfig?.enabled ? "Enabled" : "Disabled"}</strong>
-      </div>
-      <div class="summary-card">
+        <strong>{hooksConfig?.enabled ? "Enabled" : "Disabled"}</strong>
+      </Card>
+      <Card class="summary-card px-5">
         <span class="label">Handlers</span>
         <strong>{configuredHandlers.length}</strong>
-      </div>
-      <div class="summary-card">
-        <span class="label">Default Timeout</span>
+      </Card>
+      <Card class="summary-card px-5">
+        <span class="label">Default timeout</span>
         <strong>{hooksConfig?.default_timeout_ms || 5000}ms</strong>
-      </div>
-      <div class="summary-card">
-        <span class="label">On Error</span>
+      </Card>
+      <Card class="summary-card px-5">
+        <span class="label">On error</span>
         <strong>{hooksConfig?.default_on_error || "warn"}</strong>
-      </div>
-      <div class="summary-card wide">
+      </Card>
+      <Card class="summary-card wide px-5">
         <span class="label">Diagnostics</span>
         <strong>{diagnostics?.enabled === false ? "Off" : "On"}</strong>
         <span class="muted">{diagnostics?.events_file || ".nullclaw/hooks/events.ndjson"}</span>
-      </div>
+      </Card>
     </div>
 
-    <div class="section-block">
+    <Card class="section-block px-5">
       <div class="section-title">
-        <h3>Configured Handlers</h3>
+        <h3>Configured handlers</h3>
         <span>{configuredHandlers.length} installed</span>
       </div>
       {#if configuredHandlers.length === 0}
@@ -215,32 +231,40 @@
             <div class="handler-row" role="row">
               <span class="mono">{handler.id || "-"}</span>
               <span>
-                <span class="event-pill">{handler.event || "-"}</span>
+                <span class="event-pill mono">{handler.event || "-"}</span>
                 <small>{eventState(handler.event || "")}</small>
               </span>
               <span class="command mono">{handler.command || "-"}</span>
               <span>
-                <span>{handler.enabled === false ? "disabled" : "enabled"}</span>
+                <Badge variant={handler.enabled === false ? "muted" : "success"}>
+                  {handler.enabled === false ? "disabled" : "enabled"}
+                </Badge>
                 <small>{handler.on_error || hooksConfig?.default_on_error || "warn"}</small>
               </span>
             </div>
           {/each}
         </div>
       {/if}
-    </div>
+    </Card>
 
-    <div class="section-block">
+    <Card class="section-block px-5">
       <div class="section-title">
-        <h3>Hook Gallery</h3>
+        <h3>Hook gallery</h3>
         <span>{filteredTemplates.length} templates</span>
       </div>
       <div class="gallery-controls">
-        <input bind:value={query} placeholder="Search hooks" />
-        <select bind:value={category}>
-          {#each categories as item}
-            <option value={item}>{item}</option>
-          {/each}
-        </select>
+        <div class="control-field search">
+          <Label for="hooks-search">Search</Label>
+          <Input id="hooks-search" bind:value={query} placeholder="Search hooks" />
+        </div>
+        <div class="control-field">
+          <Label for="hooks-category">Category</Label>
+          <Select id="hooks-category" bind:value={category}>
+            {#each categories as item}
+              <option value={item}>{item}</option>
+            {/each}
+          </Select>
+        </div>
       </div>
       <div class="gallery-grid">
         {#each filteredTemplates as item}
@@ -250,7 +274,7 @@
                 <span class="category">{item.category}</span>
                 <h4>{item.title}</h4>
               </div>
-              <span class:wired={wiredEvents.has(item.event)} class="event-state">{eventState(item.event)}</span>
+              <Badge variant={wiredEvents.has(item.event) ? "success" : "outline"}>{eventState(item.event)}</Badge>
             </div>
             <p>{item.goal}</p>
             <div class="template-meta">
@@ -259,13 +283,24 @@
               <span><b>Error</b><code>{item.on_error}</code></span>
             </div>
             <pre><code>{prettyJson(templateHandler(item))}</code></pre>
-            <button class="btn subtle" onclick={() => copyText(item.id, prettyJson(templateHandler(item)))}>
-              {copiedId === item.id ? "Copied" : "Copy Handler JSON"}
-            </button>
+            <Button
+              variant="outline"
+              size="sm"
+              class="copy-btn"
+              onclick={() => copyText(item.id, prettyJson(templateHandler(item)))}
+            >
+              {#if copiedId === item.id}
+                <CheckIcon />
+                Copied
+              {:else}
+                <CopyIcon />
+                Copy handler JSON
+              {/if}
+            </Button>
           </article>
         {/each}
       </div>
-    </div>
+    </Card>
   {/if}
 </section>
 
@@ -288,58 +323,60 @@
   p {
     margin: 0;
   }
+  h2 {
+    color: var(--shadcn-foreground);
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+  h3 {
+    color: var(--shadcn-foreground);
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  h4 {
+    color: var(--shadcn-foreground);
+    font-size: 0.95rem;
+    font-weight: 600;
+  }
   .panel-header p,
   .template-card p,
   .muted,
   small,
   .section-title span {
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
   }
   .summary-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
     gap: 1rem;
   }
-  .summary-card,
-  .section-block,
-  .template-card,
-  .panel-state {
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
-  }
-  .summary-card {
-    display: flex;
-    flex-direction: column;
+  :global(.summary-card) {
     gap: 0.55rem;
-    padding: 1rem;
   }
-  .summary-card.wide {
+  :global(.summary-card.wide) {
     min-width: 260px;
   }
+  :global(.summary-card) strong {
+    color: var(--shadcn-foreground);
+    font-weight: 600;
+  }
   .label,
-  .category,
-  .handler-row.header {
-    color: var(--fg-dim);
+  .category {
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-  }
-  strong.enabled,
-  .event-state.wired {
-    color: var(--accent);
-  }
-  .section-block {
-    padding: 1.25rem;
+    font-weight: 500;
   }
   .panel-state {
     padding: 1rem;
-    color: var(--fg-dim);
+    border: 1px dashed var(--shadcn-border);
+    background: var(--shadcn-muted);
+    border-radius: var(--shadcn-radius);
+    color: var(--shadcn-muted-foreground);
   }
   .panel-state.warning {
-    border-color: color-mix(in srgb, var(--warning, #777777) 50%, var(--border));
-    color: var(--warning, #777777);
+    border-color: color-mix(in srgb, var(--shadcn-destructive) 35%, var(--shadcn-border));
+    color: var(--shadcn-destructive);
+    background: color-mix(in srgb, var(--shadcn-destructive) 6%, var(--shadcn-card));
   }
   .handler-table {
     margin-top: 1rem;
@@ -352,12 +389,15 @@
     gap: 1rem;
     align-items: center;
     padding: 0.75rem;
-    border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-    border-radius: 3px;
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
   }
   .handler-row.header {
     border: none;
     padding-bottom: 0.25rem;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 500;
   }
   .handler-row small,
   .handler-row span {
@@ -371,35 +411,29 @@
   .mono,
   code,
   pre {
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
   }
-  .event-pill,
-  .event-state {
+  .event-pill {
     display: inline-flex;
     width: fit-content;
     padding: 0.2rem 0.45rem;
-    border: 1px solid var(--border);
-    border-radius: 3px;
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
     font-size: 0.72rem;
-    letter-spacing: 0.4px;
-    text-transform: uppercase;
+    color: var(--shadcn-foreground);
   }
   .gallery-controls {
     display: flex;
     gap: 0.75rem;
     margin: 1rem 0;
+    align-items: end;
   }
-  .gallery-controls input,
-  .gallery-controls select {
-    min-height: 2.4rem;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--fg);
-    border-radius: 3px;
-    padding: 0.55rem 0.75rem;
-    font-family: var(--font-mono);
+  .control-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
   }
-  .gallery-controls input {
+  .control-field.search {
     flex: 1;
   }
   .gallery-grid {
@@ -412,6 +446,9 @@
     flex-direction: column;
     gap: 0.85rem;
     padding: 1rem;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
   }
   .template-head {
     display: flex;
@@ -430,40 +467,28 @@
     gap: 0.75rem;
   }
   .template-meta b {
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
-    text-transform: uppercase;
+    font-weight: 500;
+  }
+  .template-meta code {
+    color: var(--shadcn-foreground);
+    font-size: 0.78rem;
   }
   pre {
     max-height: 180px;
     overflow: auto;
     margin: 0;
     padding: 0.75rem;
-    background: var(--bg);
-    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-    border-radius: 3px;
+    background: var(--shadcn-muted);
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
     font-size: 0.75rem;
+    color: var(--shadcn-foreground);
     white-space: pre-wrap;
   }
-  .btn {
-    padding: 0.55rem 0.9rem;
-    border: 1px solid var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    color: var(--accent);
-    border-radius: 3px;
-    font-family: var(--font-mono);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    cursor: pointer;
-  }
-  .btn:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
-  }
-  .btn.subtle {
+  :global(.copy-btn) {
     width: fit-content;
-    background: transparent;
   }
   @media (max-width: 820px) {
     .panel-header,

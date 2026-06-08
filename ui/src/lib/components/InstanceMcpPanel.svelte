@@ -15,6 +15,20 @@
     describeMcpMutationResult,
     hydrateMcpEditorState,
   } from "$lib/mcpEditor.js";
+  import { Card } from "$lib/components/ui/card";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Select } from "$lib/components/ui/select";
+  import { Textarea } from "$lib/components/ui/textarea";
+  import { Label } from "$lib/components/ui/label";
+  import { Badge } from "$lib/components/ui/badge";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+  import RotateCwIcon from "@lucide/svelte/icons/rotate-cw";
+  import PlusIcon from "@lucide/svelte/icons/plus";
+  import ActivityIcon from "@lucide/svelte/icons/activity";
+  import PencilIcon from "@lucide/svelte/icons/pencil";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import XIcon from "@lucide/svelte/icons/x";
 
   let { component, name, active = false } = $props<{
     component: string;
@@ -275,9 +289,15 @@
       <p>Configured Model Context Protocol servers for this NullClaw instance.</p>
     </div>
     <div class="toolbar-actions">
-      <button class="toolbar-btn" onclick={() => void refreshAll()} disabled={loading || busyAction !== null}>Refresh</button>
-      <button class="toolbar-btn" onclick={() => void reloadMcp()} disabled={busyAction !== null}>Reload</button>
-      <button class="toolbar-btn primary" onclick={openCreate} disabled={!supportsMcp || busyAction !== null}>Add</button>
+      <Button variant="outline" size="icon" onclick={() => void refreshAll()} disabled={loading || busyAction !== null} title="Refresh" aria-label="Refresh servers">
+        <RefreshCwIcon />
+      </Button>
+      <Button variant="outline" size="icon" onclick={() => void reloadMcp()} disabled={busyAction !== null} title="Reload config" aria-label="Reload MCP config">
+        <RotateCwIcon />
+      </Button>
+      <Button variant="default" size="icon" onclick={openCreate} disabled={!supportsMcp || busyAction !== null} title="Add server" aria-label="Add MCP server">
+        <PlusIcon />
+      </Button>
     </div>
   </div>
 
@@ -285,10 +305,10 @@
     <div class="panel-state warning">MCP management is only supported for NullClaw instances.</div>
   {:else}
     <div class="summary-strip">
-      <div><span class="metric">{enabledCount}</span><span>servers</span></div>
-      <div><span class="metric">{toolTotal}</span><span>known tools</span></div>
-      <div><span class="metric">{sortedServers.filter((server) => server.transport === "http").length}</span><span>HTTP</span></div>
-      <div><span class="metric">{sortedServers.filter((server) => server.transport !== "http").length}</span><span>stdio</span></div>
+      <Card class="summary-item px-5"><span class="metric">{enabledCount}</span><span>servers</span></Card>
+      <Card class="summary-item px-5"><span class="metric">{toolTotal}</span><span>known tools</span></Card>
+      <Card class="summary-item px-5"><span class="metric">{sortedServers.filter((server) => server.transport === "http").length}</span><span>HTTP</span></Card>
+      <Card class="summary-item px-5"><span class="metric">{sortedServers.filter((server) => server.transport !== "http").length}</span><span>stdio</span></Card>
     </div>
 
     {#if actionMessage}
@@ -305,7 +325,7 @@
       <div class="panel-state">No MCP servers configured.</div>
     {:else}
       <div class="mcp-layout">
-        <div class="server-table" role="table" aria-label="MCP servers">
+        <Card class="server-table px-0" role="table" aria-label="MCP servers">
           <div class="table-row table-head" role="row">
             <span>Name</span>
             <span>Transport</span>
@@ -323,19 +343,25 @@
               onkeydown={(event) => selectServerFromKeyboard(event, server.name)}
             >
               <span class="server-name">{server.name}</span>
-              <span><span class="badge">{server.transport || "stdio"}</span></span>
-              <span class="server-endpoint">{server.transport === "http" ? server.url || "-" : server.command || "-"}</span>
+              <span><Badge variant="secondary">{server.transport || "stdio"}</Badge></span>
+              <span class="server-endpoint mono">{server.transport === "http" ? server.url || "-" : server.command || "-"}</span>
               <span>{typeof server.tool_count === "number" ? server.tool_count : "-"}</span>
               <span class="row-actions">
-                <button type="button" onclick={(event) => { event.stopPropagation(); void probeServer(server.name); }} disabled={busyAction !== null}>Probe</button>
-                <button type="button" onclick={(event) => { event.stopPropagation(); void openEdit(server.name); }} disabled={busyAction !== null}>Edit</button>
-                <button type="button" class="danger" onclick={(event) => { event.stopPropagation(); void deleteServer(server.name); }} disabled={busyAction !== null}>Delete</button>
+                <Button variant="ghost" size="icon-sm" onclick={(event) => { event.stopPropagation(); void probeServer(server.name); }} disabled={busyAction !== null} title="Probe" aria-label={`Probe ${server.name}`}>
+                  <ActivityIcon />
+                </Button>
+                <Button variant="ghost" size="icon-sm" onclick={(event) => { event.stopPropagation(); void openEdit(server.name); }} disabled={busyAction !== null} title="Edit" aria-label={`Edit ${server.name}`}>
+                  <PencilIcon />
+                </Button>
+                <Button variant="ghost" size="icon-sm" class="danger-icon" onclick={(event) => { event.stopPropagation(); void deleteServer(server.name); }} disabled={busyAction !== null} title="Delete" aria-label={`Delete ${server.name}`}>
+                  <Trash2Icon />
+                </Button>
               </span>
             </div>
           {/each}
-        </div>
+        </Card>
 
-        <aside class="detail-panel">
+        <Card class="detail-panel px-5">
           {#if !selectedServer}
             <div class="panel-state">Select a server to inspect it.</div>
           {:else if detailLoading}
@@ -348,7 +374,7 @@
                 <h3>{selectedDetail?.name || selectedServer.name}</h3>
                 <p>{selectedDetail?.transport || selectedServer.transport || "stdio"}</p>
               </div>
-              <span class="badge">{typeof selectedDetail?.tool_count === "number" ? `${selectedDetail.tool_count} tools` : "tools unknown"}</span>
+              <Badge variant="outline">{typeof selectedDetail?.tool_count === "number" ? `${selectedDetail.tool_count} tools` : "tools unknown"}</Badge>
             </header>
             <dl>
               <dt>Command</dt>
@@ -357,7 +383,7 @@
               <dd>{selectedDetail?.url || selectedServer.url || "-"}</dd>
               <dt>Args</dt>
               <dd>{Array.isArray(selectedDetail?.args) ? selectedDetail?.args?.join(" ") : selectedServer.args_count || 0}</dd>
-              <dt>Env Keys</dt>
+              <dt>Env keys</dt>
               <dd>{(selectedDetail?.env_keys || selectedServer.env_keys || []).join(", ") || "-"}</dd>
               <dt>Headers</dt>
               <dd>{(selectedDetail?.header_names || selectedServer.header_names || []).join(", ") || "-"}</dd>
@@ -365,79 +391,81 @@
               <dd>{selectedDetail?.timeout_ms || selectedServer.timeout_ms || "-"} ms</dd>
             </dl>
           {/if}
-        </aside>
+        </Card>
       </div>
     {/if}
   {/if}
 
   {#if editorOpen}
     <div class="editor-shell" role="dialog" aria-modal="true" aria-label="MCP server editor">
-      <div class="editor">
+      <Card class="editor px-5">
         <header>
-          <h3>{editorMode === "create" ? "Add MCP Server" : "Edit MCP Server"}</h3>
-          <button class="icon-btn" onclick={() => (editorOpen = false)} aria-label="Close editor">x</button>
+          <h3>{editorMode === "create" ? "Add MCP server" : "Edit MCP server"}</h3>
+          <Button variant="ghost" size="icon-sm" onclick={() => (editorOpen = false)} title="Close" aria-label="Close editor">
+            <XIcon />
+          </Button>
         </header>
 
         <div class="form-grid">
-          <label>
-            <span>Name</span>
-            <input bind:value={draft.name} disabled={editorMode === "edit"} placeholder="context7" />
-          </label>
-          <label>
-            <span>Transport</span>
-            <select bind:value={draft.transport}>
+          <div class="field">
+            <Label for="mcp-name">Name</Label>
+            <Input id="mcp-name" bind:value={draft.name} disabled={editorMode === "edit"} placeholder="context7" />
+          </div>
+          <div class="field">
+            <Label for="mcp-transport">Transport</Label>
+            <Select id="mcp-transport" bind:value={draft.transport}>
               <option value="stdio">stdio</option>
               <option value="http">http</option>
-            </select>
-          </label>
+            </Select>
+          </div>
           {#if draft.transport === "stdio"}
-            <label class="wide">
-              <span>Command</span>
-              <input bind:value={draft.command} placeholder="npx" />
-            </label>
-            <label class="wide">
-              <span>Args</span>
-              <textarea bind:value={argsText} rows="4" placeholder="-y&#10;@upstash/context7-mcp"></textarea>
-            </label>
+            <div class="field wide">
+              <Label for="mcp-command">Command</Label>
+              <Input id="mcp-command" bind:value={draft.command} placeholder="npx" />
+            </div>
+            <div class="field wide">
+              <Label for="mcp-args">Args</Label>
+              <Textarea id="mcp-args" class="mono-input" bind:value={argsText} rows={4} placeholder={"-y\n@upstash/context7-mcp"}></Textarea>
+            </div>
           {:else}
-            <label class="wide">
-              <span>URL</span>
-              <input bind:value={draft.url} placeholder="http://localhost:8931/mcp" />
-            </label>
-            <label class="wide">
-              <span>Headers</span>
-              <textarea bind:value={headerText} rows="4" placeholder={'Authorization=Bearer ${MCP_TOKEN}'}></textarea>
-            </label>
+            <div class="field wide">
+              <Label for="mcp-url">URL</Label>
+              <Input id="mcp-url" bind:value={draft.url} placeholder="http://localhost:8931/mcp" />
+            </div>
+            <div class="field wide">
+              <Label for="mcp-headers">Headers</Label>
+              <Textarea id="mcp-headers" class="mono-input" bind:value={headerText} rows={4} placeholder={'Authorization=Bearer ${MCP_TOKEN}'}></Textarea>
+            </div>
             {#if editorMode === "edit"}
               <label class="wide checkbox-row">
                 <input type="checkbox" bind:checked={replaceHeaders} />
-                <span>Replace Stored Headers</span>
+                <span>Replace stored headers</span>
               </label>
             {/if}
           {/if}
-          <label>
-            <span>Timeout ms</span>
-            <input type="number" min="0" step="1000" bind:value={draft.timeout_ms} />
-          </label>
-          <label class="wide">
-            <span>Environment</span>
-            <textarea bind:value={envText} rows="4" placeholder={'CONTEXT7_API_KEY=${CONTEXT7_API_KEY}'}></textarea>
-          </label>
+          <div class="field">
+            <Label for="mcp-timeout">Timeout ms</Label>
+            <Input id="mcp-timeout" type="number" min="0" step="1000" bind:value={draft.timeout_ms} />
+          </div>
+          <div class="field wide">
+            <Label for="mcp-env">Environment</Label>
+            <Textarea id="mcp-env" class="mono-input" bind:value={envText} rows={4} placeholder={'CONTEXT7_API_KEY=${CONTEXT7_API_KEY}'}></Textarea>
+          </div>
           {#if editorMode === "edit"}
             <label class="wide checkbox-row">
               <input type="checkbox" bind:checked={replaceEnv} />
-              <span>Replace Stored Env</span>
+              <span>Replace stored env</span>
             </label>
           {/if}
         </div>
 
         <footer>
-          <button class="toolbar-btn" onclick={() => (editorOpen = false)} disabled={busyAction !== null}>Cancel</button>
-          <button class="toolbar-btn primary" onclick={() => void submitEditor()} disabled={busyAction !== null}>
+          <Button variant="outline" onclick={() => (editorOpen = false)} disabled={busyAction !== null}>Cancel</Button>
+          <Button variant="default" onclick={() => void submitEditor()} disabled={busyAction !== null}>
             {busyAction === "save" ? "Saving..." : "Save"}
-          </button>
+          </Button>
         </footer>
-      </div>
+      </Card>
     </div>
   {/if}
 </div>
@@ -449,24 +477,32 @@
     gap: 1rem;
   }
   .panel-toolbar,
-  .detail-panel header,
-  .editor header,
-  .editor footer {
+  :global(.detail-panel) header,
+  :global(.editor) header,
+  :global(.editor) footer {
     display: flex;
     align-items: flex-start;
     justify-content: space-between;
     gap: 1rem;
   }
   .panel-toolbar h2,
-  .detail-panel h3,
-  .editor h3 {
+  :global(.detail-panel) h3,
+  :global(.editor) h3 {
     margin: 0;
-    color: var(--accent);
+    color: var(--shadcn-foreground);
+    font-weight: 600;
+  }
+  .panel-toolbar h2 {
+    font-size: 1.1rem;
+  }
+  :global(.detail-panel) h3,
+  :global(.editor) h3 {
+    font-size: 1rem;
   }
   .panel-toolbar p,
-  .detail-panel p {
+  :global(.detail-panel) p {
     margin: 0.25rem 0 0;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.85rem;
   }
   .toolbar-actions,
@@ -476,109 +512,85 @@
     gap: 0.5rem;
     flex-wrap: wrap;
   }
-  .toolbar-btn,
-  .row-actions button,
-  .icon-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 2.25rem;
-    padding: 0.5rem 0.75rem;
-    border: 1px solid var(--accent-dim);
-    background: var(--bg-surface);
-    color: var(--accent);
-    border-radius: 3px;
-    font: inherit;
-    font-size: 0.78rem;
-    font-weight: 700;
-    cursor: pointer;
+  :global(.danger-icon) {
+    color: var(--shadcn-destructive);
   }
-  .toolbar-btn.primary {
-    background: color-mix(in srgb, var(--accent) 12%, var(--bg-surface));
-  }
-  .toolbar-btn:disabled,
-  .row-actions button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .row-actions button.danger {
-    border-color: color-mix(in srgb, var(--error) 55%, transparent);
-    color: var(--error);
+  :global(.danger-icon:hover) {
+    color: var(--shadcn-destructive);
   }
   .summary-strip {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
     gap: 0.75rem;
   }
-  .summary-strip > div {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    padding: 0.85rem;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
+  :global(.summary-item) {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 0.4rem;
   }
   .metric {
-    color: var(--accent);
+    color: var(--shadcn-foreground);
     font-size: 1.35rem;
-    font-weight: 800;
+    font-weight: 700;
+  }
+  :global(.summary-item > span:not(.metric)) {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.85rem;
   }
   .panel-state {
     padding: 1rem;
-    border: 1px dashed var(--border);
-    background: var(--bg-surface);
-    color: var(--fg-dim);
-    border-radius: 4px;
+    border: 1px dashed var(--shadcn-border);
+    background: var(--shadcn-muted);
+    color: var(--shadcn-muted-foreground);
+    border-radius: var(--shadcn-radius);
     text-align: center;
   }
   .panel-state.warning {
-    border-color: color-mix(in srgb, var(--warning) 55%, transparent);
-    color: var(--warning);
+    border-color: color-mix(in srgb, var(--shadcn-destructive) 35%, var(--shadcn-border));
+    color: var(--shadcn-destructive);
+    background: color-mix(in srgb, var(--shadcn-destructive) 6%, var(--shadcn-card));
   }
   .panel-state.success {
-    border-color: color-mix(in srgb, var(--success, #22c55e) 55%, transparent);
-    color: var(--success, #22c55e);
+    border-color: color-mix(in srgb, #16a34a 35%, var(--shadcn-border));
+    color: #166534;
+    background: color-mix(in srgb, #16a34a 6%, var(--shadcn-card));
   }
   .mcp-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
     gap: 1rem;
   }
-  .server-table,
-  .detail-panel,
-  .editor {
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
+  :global(.server-table) {
+    gap: 0;
+    overflow: hidden;
   }
   .table-row {
     display: grid;
-    grid-template-columns: minmax(120px, 0.9fr) 110px minmax(160px, 1.2fr) 80px minmax(220px, auto);
+    grid-template-columns: minmax(120px, 0.9fr) 110px minmax(160px, 1.2fr) 80px minmax(150px, auto);
     width: 100%;
     gap: 0.75rem;
     align-items: center;
-    padding: 0.75rem;
+    padding: 0.75rem 1.25rem;
     border: 0;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
+    border-bottom: 1px solid var(--shadcn-border);
     background: transparent;
-    color: var(--fg);
+    color: var(--shadcn-foreground);
     text-align: left;
-    font: inherit;
+  }
+  .table-row:last-child {
+    border-bottom: 0;
   }
   .table-row:not(.table-head) {
     cursor: pointer;
   }
   .table-row.active,
   .table-row:not(.table-head):hover {
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    background: var(--shadcn-accent);
   }
   .table-head {
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.74rem;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    font-weight: 500;
   }
   .server-name,
   .server-endpoint,
@@ -587,20 +599,7 @@
     overflow-wrap: anywhere;
   }
   .server-name {
-    font-weight: 800;
-  }
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    min-height: 1.5rem;
-    padding: 0.15rem 0.45rem;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    color: var(--fg-dim);
-    font-size: 0.72rem;
-  }
-  .detail-panel {
-    padding: 1rem;
+    font-weight: 600;
   }
   dl {
     display: grid;
@@ -609,29 +608,28 @@
     margin: 1rem 0 0;
   }
   dt {
-    color: var(--fg-dim);
-    font-size: 0.75rem;
-    text-transform: uppercase;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.78rem;
   }
   dd {
     margin: 0;
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.82rem;
+    color: var(--shadcn-foreground);
   }
   .editor-shell {
     position: fixed;
     inset: 0;
-    z-index: 20;
+    z-index: 60;
     display: grid;
     place-items: center;
     padding: 1rem;
-    background: rgba(0, 0, 0, 0.55);
+    background: rgba(0, 0, 0, 0.4);
   }
-  .editor {
+  :global(.editor) {
     width: min(720px, 100%);
     max-height: calc(100vh - 2rem);
     overflow: auto;
-    padding: 1rem;
   }
   .form-grid {
     display: grid;
@@ -639,42 +637,32 @@
     gap: 0.9rem;
     margin: 1rem 0;
   }
-  label {
+  .field {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
-    color: var(--fg-dim);
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-transform: uppercase;
   }
-  label.wide {
+  .field.wide,
+  .checkbox-row.wide {
     grid-column: 1 / -1;
   }
-  label.checkbox-row {
+  .checkbox-row {
+    display: flex;
     flex-direction: row;
     align-items: center;
     gap: 0.55rem;
+    color: var(--shadcn-foreground);
+    font-size: 0.85rem;
   }
-  label.checkbox-row input {
+  .checkbox-row input {
     width: auto;
     min-width: 1rem;
   }
-  input,
-  select,
-  textarea {
-    width: 100%;
-    padding: 0.65rem;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--fg);
-    border-radius: 3px;
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: 0.86rem;
+  :global(.mono-input) {
+    font-family: var(--prin7r-font-mono-standard);
   }
-  textarea {
-    resize: vertical;
+  .mono {
+    font-family: var(--prin7r-font-mono-standard);
   }
   @media (max-width: 900px) {
     .mcp-layout,

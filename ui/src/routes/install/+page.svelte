@@ -118,13 +118,6 @@
 </script>
 
 <div class="install-page">
-  <div class="page-header">
-    <div>
-      <h1>Install Component</h1>
-      <p class="subtitle">Choose a component to install</p>
-    </div>
-  </div>
-
   <UniversalEntityView
     title="Component Catalog"
     description="Installable NullStack components and their local instance coverage."
@@ -148,29 +141,4 @@
     max-width: 1120px;
   }
 
-  .page-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  h1 {
-    color: var(--shadcn-foreground);
-    font-size: 1.5rem;
-    font-weight: 600;
-    letter-spacing: 0;
-  }
-
-  .subtitle {
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.875rem;
-    margin-top: 0.25rem;
-  }
-
-  @media (max-width: 640px) {
-    .page-header {
-      flex-direction: column;
-    }
-  }
 </style>

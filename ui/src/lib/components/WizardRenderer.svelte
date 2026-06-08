@@ -4,6 +4,14 @@
   import ChannelList from "./ChannelList.svelte";
   import { api } from "$lib/api/client";
   import { OPENAI_COMPATIBLE_VALUE } from "$lib/providers";
+  import { Card } from "$lib/components/ui/card";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Select } from "$lib/components/ui/select";
+  import { Label } from "$lib/components/ui/label";
+  import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
+  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
+  import CheckIcon from "@lucide/svelte/icons/check";
 
   let {
     component = "",
@@ -407,48 +415,74 @@
   }
 </script>
 
-<div class="wizard">
-  <div class="wizard-header">
-    <h2>Install {component}</h2>
-      <div class="step-indicator">
+<Card class="gap-0 overflow-hidden px-0 py-0">
+  <div class="border-b px-6 py-5">
+    <h2 class="mb-4 text-lg font-semibold text-foreground">Install {component}</h2>
+    <div class="flex items-center">
       {#each pageLabels as label, i}
         <button
-          class="step-dot"
-          class:active={currentPage === i}
-          class:completed={currentPage > i}
+          type="button"
+          class="flex items-center gap-2 disabled:cursor-default {i <= currentPage
+            ? 'cursor-pointer'
+            : ''}"
           disabled={i > currentPage}
           onclick={() => { if (i < currentPage) currentPage = i; }}
         >
-          <span class="step-num">{i + 1}</span>
-          <span class="step-label">{label}</span>
+          <span
+            class="flex size-7 items-center justify-center rounded-full border text-xs font-semibold transition-colors {currentPage >=
+            i
+              ? 'border-foreground bg-foreground text-background'
+              : 'border-border bg-background text-muted-foreground'}"
+          >
+            {#if currentPage > i}
+              <CheckIcon class="size-3.5" />
+            {:else}
+              {i + 1}
+            {/if}
+          </span>
+          <span
+            class="text-sm font-medium transition-colors {currentPage === i
+              ? 'text-foreground'
+              : currentPage > i
+                ? 'text-foreground'
+                : 'text-muted-foreground'}"
+          >
+            {label}
+          </span>
         </button>
         {#if i < pageLabels.length - 1}
-          <div class="step-line" class:completed={currentPage > i}></div>
+          <div
+            class="mx-3 h-px flex-1 transition-colors {currentPage > i
+              ? 'bg-foreground'
+              : 'bg-border'}"
+          ></div>
         {/if}
       {/each}
     </div>
   </div>
 
-  <div class="wizard-body">
+  <div class="px-6 py-6">
     {#if pageKinds[currentPage] === "setup"}
-      <div class="name-step">
-        <label for={instanceNameId}>Instance Name</label>
-        <p class="name-hint">Name doesn't matter, just needs to be unique</p>
-        <input
+      <div class="mb-6">
+        <Label for={instanceNameId} class="mb-1 block">Instance name</Label>
+        <p class="mb-2 text-sm text-muted-foreground">
+          Name doesn't matter, just needs to be unique
+        </p>
+        <Input
           id={instanceNameId}
           type="text"
           bind:value={instanceName}
           placeholder={`${component}-1`}
         />
         {#if instanceNameError}
-          <p class="name-error">{instanceNameError}</p>
+          <p class="mt-2 text-sm text-destructive">{instanceNameError}</p>
         {/if}
       </div>
 
       {#if versions.length > 0}
-        <div class="version-select">
-          <label for="version-picker">Version</label>
-          <select
+        <div class="mb-6">
+          <Label for="version-picker" class="mb-2 block">Version</Label>
+          <Select
             id="version-picker"
             value={selectedVersion}
             onchange={(e) => setSelectedVersion(e.currentTarget.value)}
@@ -458,7 +492,7 @@
                 {v.label}{i === 0 ? " (latest, recommended)" : ""}
               </option>
             {/each}
-          </select>
+          </Select>
         </div>
       {/if}
 
@@ -487,13 +521,22 @@
       {/each}
 
       {#if advancedSteps.length > 0}
-        <button class="advanced-toggle" onclick={() => (showAdvanced = !showAdvanced)}>
-          <span class="advanced-arrow">{showAdvanced ? "\u25BC" : "\u25B6"}</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          class="mt-2 w-full justify-start gap-2 text-muted-foreground"
+          onclick={() => (showAdvanced = !showAdvanced)}
+        >
+          {#if showAdvanced}
+            <ChevronDownIcon class="size-4" />
+          {:else}
+            <ChevronRightIcon class="size-4" />
+          {/if}
           Advanced
-        </button>
+        </Button>
 
         {#if showAdvanced}
-          <div class="advanced-section">
+          <div class="mt-3 rounded-md border bg-muted/40 p-4">
             {#each advancedSteps as step}
               <WizardStep
                 {step}
@@ -508,339 +551,38 @@
   </div>
 
   {#if validationError}
-    <div class="validation-error">{validationError}</div>
+    <div class="border-t border-destructive/30 bg-destructive/5 px-6 py-3 text-sm font-medium text-destructive">
+      {validationError}
+    </div>
   {/if}
 
   {#if validationWarning}
-    <div class="validation-warning">{validationWarning}</div>
+    <div class="border-t border-amber-300 bg-amber-50 px-6 py-3 text-sm font-medium text-amber-700">
+      {validationWarning}
+    </div>
   {/if}
 
   {#if installMessage}
-    <div class="install-message">{installMessage}</div>
+    <div class="border-t bg-muted/40 px-6 py-3 text-sm font-medium text-foreground">
+      {installMessage}
+    </div>
   {/if}
 
-  <div class="wizard-footer">
+  <div class="flex items-center border-t px-6 py-4">
     {#if currentPage > 0}
-      <button class="secondary-btn" onclick={handleBack} disabled={validating || installing}>
+      <Button variant="outline" onclick={handleBack} disabled={validating || installing}>
         Back
-      </button>
+      </Button>
     {/if}
-    <div class="footer-spacer"></div>
+    <div class="flex-1"></div>
     {#if currentPage < pageKinds.length - 1}
-      <button
-        class="primary-btn"
-        onclick={handleNext}
-        disabled={validating || !!instanceNameError}
-      >
+      <Button onclick={handleNext} disabled={validating || !!instanceNameError}>
         {validating ? "Validating..." : "Next"}
-      </button>
+      </Button>
     {:else}
-      <button
-        class="primary-btn"
-        onclick={submit}
-        disabled={installing || !!instanceNameError}
-      >
+      <Button onclick={submit} disabled={installing || !!instanceNameError}>
         {installing ? "Installing..." : "Install"}
-      </button>
+      </Button>
     {/if}
   </div>
-</div>
-
-<style>
-  .wizard {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    overflow: hidden;
-    backdrop-filter: blur(4px);
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
-  }
-
-  .wizard-header {
-    padding: 1.5rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-  }
-
-  .wizard-header h2 {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    text-shadow: var(--text-glow);
-    margin-bottom: 1rem;
-  }
-
-  .step-indicator {
-    display: flex;
-    align-items: center;
-    gap: 0;
-  }
-
-  .step-dot {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    background: none;
-    border: none;
-    color: var(--fg-dim);
-    cursor: pointer;
-    padding: 0.25rem 0;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-
-  .step-dot:disabled { cursor: default; }
-
-  .step-dot.active .step-num,
-  .step-dot.completed .step-num {
-    background: color-mix(in srgb, var(--accent) 30%, transparent);
-    border-color: var(--accent);
-    color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
-    text-shadow: var(--text-glow);
-  }
-
-  .step-dot.active .step-label { color: var(--accent); text-shadow: var(--text-glow); }
-  .step-dot.completed .step-label { color: var(--fg); }
-
-  .step-num {
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    border: 1px solid var(--border);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.75rem;
-    font-weight: 700;
-    font-family: var(--font-mono);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-
-  .step-label {
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-
-  .step-line {
-    flex: 1;
-    height: 1px;
-    background: var(--border);
-    margin: 0 0.75rem;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-  .step-line.completed { background: var(--accent); box-shadow: 0 0 4px var(--border-glow); }
-
-  .wizard-body { padding: 1.75rem 1.5rem; }
-
-  .name-step { margin-bottom: 2rem; }
-
-  .name-step label {
-    display: block;
-    font-size: 0.8125rem;
-    font-weight: 700;
-    color: var(--fg-dim);
-    margin-bottom: 0.25rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-
-  .name-hint {
-    font-size: 0.75rem;
-    color: color-mix(in srgb, var(--fg-dim) 70%, transparent);
-    margin-bottom: 0.5rem;
-    font-family: var(--font-mono);
-  }
-
-  .name-step input {
-    width: 100%;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    padding: 0.625rem 0.875rem;
-    color: var(--fg);
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-  }
-
-  .name-step input:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
-  }
-
-  .version-select {
-    margin-bottom: 2rem;
-  }
-  .version-select label {
-    display: block;
-    font-size: 0.8125rem;
-    font-weight: 700;
-    color: var(--fg-dim);
-    margin-bottom: 0.5rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .version-select select {
-    width: 100%;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    padding: 0.625rem 0.875rem;
-    color: var(--fg);
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-    cursor: pointer;
-  }
-  .version-select select:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
-  }
-
-  .name-error {
-    margin-top: 0.5rem;
-    font-size: 0.75rem;
-    color: var(--error, #e55);
-    font-family: var(--font-mono);
-  }
-
-  .advanced-toggle {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    background: none;
-    border: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
-    border-radius: 2px;
-    padding: 0.625rem 1rem;
-    color: var(--fg-dim);
-    font-size: 0.8125rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    width: 100%;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    margin-top: 1rem;
-  }
-  .advanced-toggle:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-    text-shadow: var(--text-glow);
-  }
-  .advanced-arrow { font-size: 0.65rem; }
-
-  .advanced-section {
-    margin-top: 1rem;
-    padding: 1rem;
-    border: 1px solid color-mix(in srgb, var(--border) 40%, transparent);
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
-  }
-
-  .validation-error {
-    padding: 0.75rem 1.5rem;
-    font-size: 0.8125rem;
-    color: var(--error, #e55);
-    border-top: 1px dashed color-mix(in srgb, var(--error, #e55) 30%, transparent);
-    background: color-mix(in srgb, var(--error, #e55) 5%, transparent);
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-
-  .validation-warning {
-    padding: 0.75rem 1.5rem;
-    font-size: 0.8125rem;
-    color: var(--warning, #ca0);
-    border-top: 1px dashed color-mix(in srgb, var(--warning, #ca0) 30%, transparent);
-    background: color-mix(in srgb, var(--warning, #ca0) 5%, transparent);
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-
-  .install-message {
-    padding: 1rem 1.5rem;
-    font-size: 0.875rem;
-    color: var(--accent);
-    border-top: 1px dashed color-mix(in srgb, var(--border) 50%, transparent);
-    background: color-mix(in srgb, var(--accent) 5%, transparent);
-    font-weight: bold;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    text-shadow: var(--text-glow);
-  }
-
-  .wizard-footer {
-    padding: 1.25rem 1.5rem;
-    border-top: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-    display: flex;
-    align-items: center;
-    background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
-  }
-
-  .footer-spacer { flex: 1; }
-
-  .primary-btn {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    color: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 2px;
-    padding: 0.75rem 2rem;
-    font-size: 0.875rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    text-shadow: var(--text-glow);
-    box-shadow: inset 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
-  }
-
-  .primary-btn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow:
-      0 0 15px var(--border-glow),
-      inset 0 0 15px color-mix(in srgb, var(--accent) 40%, transparent);
-    text-shadow: 0 0 10px var(--accent);
-  }
-
-  .primary-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    box-shadow: none;
-    text-shadow: none;
-  }
-
-  .secondary-btn {
-    background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
-    color: var(--fg-dim);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    padding: 0.75rem 1.5rem;
-    font-size: 0.875rem;
-    font-weight: 700;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-  }
-
-  .secondary-btn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    color: var(--fg);
-  }
-
-  .secondary-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-</style>
+</Card>

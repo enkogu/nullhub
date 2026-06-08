@@ -9,6 +9,11 @@
     type EntityRecord,
     type EntityViewAction,
   } from "$lib/entity-view";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Select } from "$lib/components/ui/select";
+  import { Label } from "$lib/components/ui/label";
 
   let providers = $state<any[]>([]);
   let loading = $state(true);
@@ -131,6 +136,14 @@
     }
   }
 
+  function openAdd() {
+    addForm = { provider: "openrouter", provider_name: "", api_key: "", model: "", base_url: "" };
+    addProbedModels = [];
+    addProbeError = "";
+    addError = "";
+    showAddForm = true;
+  }
+
   async function fetchAddModels() {
     addProbing = true;
     addProbeError = "";
@@ -214,6 +227,7 @@
     editRealApiKey = "";
     editProbedModels = [];
     editProbeError = "";
+    editError = "";
     // Fetch the real (revealed) key so Fetch Models works without the user re-entering the key
     api.getSavedProviders(true).then(data => {
       const found = (data.providers || []).find((x: any) => x.id === p.id);
@@ -320,90 +334,12 @@
 </script>
 
 <div class="providers-page">
-  <div class="page-header">
-    <h1>Providers</h1>
-    <button class="primary-btn" onclick={() => (showAddForm = !showAddForm)}>
-      {showAddForm ? "Cancel" : "+ Add Provider"}
-    </button>
-  </div>
-
   {#if message}
     <div class="message" class:success={messageTone === "success"} class:error={messageTone === "error"}>{message}</div>
   {/if}
 
   {#if error}
     <div class="error-message">{error}</div>
-  {/if}
-
-  {#if showAddForm}
-    <div class="add-form">
-      <h2>Add Provider</h2>
-      <div class="field">
-        <label for="add-provider">Provider</label>
-        <select id="add-provider" bind:value={addForm.provider}>
-          {#each PROVIDER_OPTIONS as opt}
-            <option value={opt.value}>{opt.label}</option>
-          {/each}
-        </select>
-      </div>
-      {#if addForm.provider === OPENAI_COMPATIBLE_VALUE}
-        <div class="field">
-          <label for="add-provider-name">Provider Name</label>
-          <input id="add-provider-name" type="text" bind:value={addForm.provider_name} placeholder="e.g. infini-ai, xiaomi-mimo" />
-        </div>
-        <div class="field">
-          <label for="add-base-url">Base URL</label>
-          <input id="add-base-url" type="text" bind:value={addForm.base_url} placeholder="https://api.example.com/v1" />
-        </div>
-      {/if}
-      {#if !isLocal(addForm.provider)}
-        <div class="field">
-          <label for="add-api-key">API Key</label>
-          <input id="add-api-key" type="password" bind:value={addForm.api_key} placeholder="Enter API key..." />
-        </div>
-      {/if}
-      {#if addForm.provider === OPENAI_COMPATIBLE_VALUE}
-        <div class="field">
-          <label for="add-model">Model</label>
-          <div class="model-input-row">
-            <input id="add-model" type="text" bind:value={addForm.model} placeholder="e.g. gpt-4" />
-            <button
-              class="btn fetch-models-btn"
-              onclick={fetchAddModels}
-              disabled={addProbing || !addForm.base_url.trim()}
-              title="Fetch available models from this endpoint"
-            >
-              {addProbing ? "Fetching..." : "Fetch Models"}
-            </button>
-          </div>
-          {#if addProbeError}
-            <div class="probe-error">{addProbeError}</div>
-          {/if}
-          {#if addProbedModels.length > 0}
-            <div class="model-list">
-              {#each addProbedModels as m}
-                <button
-                  class="model-chip"
-                  class:selected={addForm.model === m}
-                  onclick={() => { addForm.model = m; }}
-                >{m}</button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {:else}
-        <div class="field">
-          <label for="add-model">Model (optional)</label>
-          <input id="add-model" type="text" bind:value={addForm.model} placeholder="e.g. anthropic/claude-sonnet-4" />
-        </div>
-      {/if}
-      {#if addError}
-        <div class="error-message">{addError}</div>
-      {/if}
-      <button class="primary-btn" onclick={handleAdd} disabled={addValidating}>
-        {addValidating ? "Validating..." : "Save"}
-      </button>
-    </div>
   {/if}
 
   <UniversalEntityView
@@ -418,79 +354,150 @@
     emptyTitle="No saved providers"
     emptyDescription="Add a provider above or install a component to save provider credentials automatically."
     onRefresh={loadProviders}
-  />
-
-  {#if editingProvider}
-    <section class="edit-panel">
-      <div class="edit-panel-header">
-        <div>
-          <p>Edit Provider</p>
-          <h2>{editingProvider.name}</h2>
-        </div>
-        <button class="btn" onclick={cancelEdit}>Cancel</button>
-      </div>
-      <div class="edit-form">
-        <div class="field">
-          <label for="edit-name-{editingProvider.id}">Name</label>
-          <input id="edit-name-{editingProvider.id}" type="text" bind:value={editForm.name} />
-        </div>
-        {#if isCustomProvider(editingProvider)}
-          <div class="field">
-            <label for="edit-base-url-{editingProvider.id}">Base URL</label>
-            <input id="edit-base-url-{editingProvider.id}" type="text" bind:value={editForm.base_url} placeholder="https://api.example.com/v1" />
-          </div>
-        {/if}
-        {#if !isLocal(editingProvider.provider)}
-          <div class="field">
-            <label for="edit-key-{editingProvider.id}">API Key (leave empty to keep current)</label>
-            <input id="edit-key-{editingProvider.id}" type="password" bind:value={editForm.api_key} placeholder="Leave empty to keep current" />
-          </div>
-        {/if}
-        <div class="field">
-          <label for="edit-model-{editingProvider.id}">Model</label>
-          {#if isCustomProvider(editingProvider)}
-            <div class="model-input-row">
-              <input id="edit-model-{editingProvider.id}" type="text" bind:value={editForm.model} placeholder="e.g. gpt-4" />
-              <button
-                class="btn fetch-models-btn"
-                onclick={fetchEditModels}
-                disabled={editProbing || !editForm.base_url.trim()}
-                title="Fetch available models from this endpoint"
-              >
-                {editProbing ? "Fetching..." : "Fetch Models"}
-              </button>
-            </div>
-            {#if editProbeError}
-              <div class="probe-error">{editProbeError}</div>
-            {/if}
-            {#if editProbedModels.length > 0}
-              <div class="model-list">
-                {#each editProbedModels as m}
-                  <button
-                    class="model-chip"
-                    class:selected={editForm.model === m}
-                    onclick={() => { editForm.model = m; }}
-                  >{m}</button>
-                {/each}
-              </div>
-            {/if}
-          {:else}
-            <input id="edit-model-{editingProvider.id}" type="text" bind:value={editForm.model} placeholder="e.g. anthropic/claude-sonnet-4" />
-          {/if}
-        </div>
-        {#if editError}
-          <div class="error-message">{editError}</div>
-        {/if}
-        <div class="edit-actions">
-          <button class="primary-btn" onclick={() => saveEdit(editingProvider.id)} disabled={editValidating}>
-            {editValidating ? "Saving..." : "Save"}
-          </button>
-          <button class="btn" onclick={cancelEdit}>Cancel</button>
-        </div>
-      </div>
-    </section>
-  {/if}
+  >
+    {#snippet headerActions()}
+      <Button size="sm" onclick={openAdd}>+ Add provider</Button>
+    {/snippet}
+  </UniversalEntityView>
 </div>
+
+<Dialog bind:open={showAddForm} title="Add provider" size="md">
+  <div class="field">
+    <Label for="add-provider">Provider</Label>
+    <Select id="add-provider" bind:value={addForm.provider}>
+      {#each PROVIDER_OPTIONS as opt}
+        <option value={opt.value}>{opt.label}</option>
+      {/each}
+    </Select>
+  </div>
+  {#if addForm.provider === OPENAI_COMPATIBLE_VALUE}
+    <div class="field">
+      <Label for="add-provider-name">Provider Name</Label>
+      <Input id="add-provider-name" type="text" bind:value={addForm.provider_name} placeholder="e.g. infini-ai, xiaomi-mimo" />
+    </div>
+    <div class="field">
+      <Label for="add-base-url">Base URL</Label>
+      <Input id="add-base-url" type="text" bind:value={addForm.base_url} placeholder="https://api.example.com/v1" />
+    </div>
+  {/if}
+  {#if !isLocal(addForm.provider)}
+    <div class="field">
+      <Label for="add-api-key">API Key</Label>
+      <Input id="add-api-key" type="password" bind:value={addForm.api_key} placeholder="Enter API key..." />
+    </div>
+  {/if}
+  {#if addForm.provider === OPENAI_COMPATIBLE_VALUE}
+    <div class="field">
+      <Label for="add-model">Model</Label>
+      <div class="model-input-row">
+        <Input id="add-model" type="text" bind:value={addForm.model} placeholder="e.g. gpt-4" />
+        <Button
+          variant="outline"
+          onclick={fetchAddModels}
+          disabled={addProbing || !addForm.base_url.trim()}
+          title="Fetch available models from this endpoint"
+        >
+          {addProbing ? "Fetching..." : "Fetch Models"}
+        </Button>
+      </div>
+      {#if addProbeError}
+        <div class="probe-error">{addProbeError}</div>
+      {/if}
+      {#if addProbedModels.length > 0}
+        <div class="model-list">
+          {#each addProbedModels as m}
+            <Button
+              size="sm"
+              variant={addForm.model === m ? "default" : "secondary"}
+              onclick={() => { addForm.model = m; }}
+            >{m}</Button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {:else}
+    <div class="field">
+      <Label for="add-model">Model (optional)</Label>
+      <Input id="add-model" type="text" bind:value={addForm.model} placeholder="e.g. anthropic/claude-sonnet-4" />
+    </div>
+  {/if}
+  {#if addError}
+    <div class="error-message">{addError}</div>
+  {/if}
+  {#snippet footer()}
+    <Button variant="outline" onclick={() => (showAddForm = false)}>Cancel</Button>
+    <Button onclick={handleAdd} disabled={addValidating}>
+      {addValidating ? "Validating..." : "Save"}
+    </Button>
+  {/snippet}
+</Dialog>
+
+<Dialog
+  bind:open={() => !!editingProvider, (v) => { if (!v) cancelEdit(); }}
+  title="Edit provider"
+  description={editingProvider?.name}
+  size="md"
+>
+  {#if editingProvider}
+    <div class="field">
+      <Label for="edit-name-{editingProvider.id}">Name</Label>
+      <Input id="edit-name-{editingProvider.id}" type="text" bind:value={editForm.name} />
+    </div>
+    {#if isCustomProvider(editingProvider)}
+      <div class="field">
+        <Label for="edit-base-url-{editingProvider.id}">Base URL</Label>
+        <Input id="edit-base-url-{editingProvider.id}" type="text" bind:value={editForm.base_url} placeholder="https://api.example.com/v1" />
+      </div>
+    {/if}
+    {#if !isLocal(editingProvider.provider)}
+      <div class="field">
+        <Label for="edit-key-{editingProvider.id}">API Key (leave empty to keep current)</Label>
+        <Input id="edit-key-{editingProvider.id}" type="password" bind:value={editForm.api_key} placeholder="Leave empty to keep current" />
+      </div>
+    {/if}
+    <div class="field">
+      <Label for="edit-model-{editingProvider.id}">Model</Label>
+      {#if isCustomProvider(editingProvider)}
+        <div class="model-input-row">
+          <Input id="edit-model-{editingProvider.id}" type="text" bind:value={editForm.model} placeholder="e.g. gpt-4" />
+          <Button
+            variant="outline"
+            onclick={fetchEditModels}
+            disabled={editProbing || !editForm.base_url.trim()}
+            title="Fetch available models from this endpoint"
+          >
+            {editProbing ? "Fetching..." : "Fetch Models"}
+          </Button>
+        </div>
+        {#if editProbeError}
+          <div class="probe-error">{editProbeError}</div>
+        {/if}
+        {#if editProbedModels.length > 0}
+          <div class="model-list">
+            {#each editProbedModels as m}
+              <Button
+                size="sm"
+                variant={editForm.model === m ? "default" : "secondary"}
+                onclick={() => { editForm.model = m; }}
+              >{m}</Button>
+            {/each}
+          </div>
+        {/if}
+      {:else}
+        <Input id="edit-model-{editingProvider.id}" type="text" bind:value={editForm.model} placeholder="e.g. anthropic/claude-sonnet-4" />
+      {/if}
+    </div>
+    {#if editError}
+      <div class="error-message">{editError}</div>
+    {/if}
+  {/if}
+  {#snippet footer()}
+    <Button variant="outline" onclick={cancelEdit}>Cancel</Button>
+    <Button onclick={() => editingProvider && saveEdit(editingProvider.id)} disabled={editValidating}>
+      {editValidating ? "Saving..." : "Save"}
+    </Button>
+  {/snippet}
+</Dialog>
 
 <style>
   .providers-page {
@@ -502,134 +509,10 @@
     padding: 1.5rem;
   }
 
-  .page-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-  }
-
-  h1 {
-    color: var(--shadcn-foreground);
-    font-size: 1.5rem;
-    font-weight: 600;
-    letter-spacing: 0;
-  }
-
-  h2 {
-    color: var(--shadcn-foreground);
-    font-size: 1rem;
-    font-weight: 700;
-    letter-spacing: 0;
-  }
-
-  .add-form,
-  .edit-panel {
-    background: var(--shadcn-card);
-    border: 1px solid var(--shadcn-border);
-    border-radius: var(--shadcn-radius);
-    color: var(--shadcn-card-foreground);
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    padding: 1.25rem;
-  }
-
   .field {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
-  }
-
-  .field label {
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0;
-  }
-
-  .field input,
-  .field select {
-    background: var(--shadcn-background);
-    border: 1px solid var(--shadcn-input);
-    border-radius: calc(var(--shadcn-radius) - 2px);
-    color: var(--shadcn-foreground);
-    font: inherit;
-    min-height: 2.25rem;
-    outline: none;
-    padding: 0.5rem 0.75rem;
-    width: 100%;
-  }
-
-  .field input:focus,
-  .field select:focus {
-    border-color: var(--shadcn-ring);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--shadcn-ring) 18%, transparent);
-  }
-
-  .edit-panel-header,
-  .edit-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    justify-content: space-between;
-  }
-
-  .edit-panel-header p {
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.75rem;
-    font-weight: 700;
-  }
-
-  .btn {
-    align-items: center;
-    background: var(--shadcn-secondary);
-    border: 1px solid var(--shadcn-border);
-    border-radius: calc(var(--shadcn-radius) - 2px);
-    color: var(--shadcn-secondary-foreground);
-    cursor: pointer;
-    display: inline-flex;
-    font-size: 0.75rem;
-    font-weight: 600;
-    justify-content: center;
-    min-height: 2rem;
-    padding: 0.375rem 0.75rem;
-    transition: background-color 0.15s ease, border-color 0.15s ease;
-    white-space: nowrap;
-  }
-
-  .btn:hover:not(:disabled) {
-    background: var(--shadcn-accent);
-  }
-
-  .btn:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-
-  .primary-btn {
-    align-items: center;
-    background: var(--shadcn-primary) !important;
-    border: 1px solid var(--shadcn-primary);
-    border-radius: calc(var(--shadcn-radius) - 2px);
-    color: var(--shadcn-primary-foreground, #fff) !important;
-    cursor: pointer;
-    display: inline-flex;
-    font-size: 0.875rem;
-    font-weight: 600;
-    justify-content: center;
-    min-height: 2.25rem;
-    padding: 0.5rem 1rem;
-    white-space: nowrap;
-  }
-
-  .primary-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--shadcn-primary) 88%, var(--shadcn-background));
-  }
-
-  .primary-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
 
   .message {
@@ -660,25 +543,14 @@
     padding: 0.875rem 1.25rem;
   }
 
-  .edit-form {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-  }
-
   .model-input-row {
     display: flex;
     gap: 0.5rem;
     align-items: stretch;
   }
 
-  .model-input-row input {
+  .model-input-row :global([data-slot="input"]) {
     flex: 1;
-  }
-
-  .fetch-models-btn {
-    flex-shrink: 0;
-    white-space: nowrap;
   }
 
   .model-list {
@@ -686,27 +558,6 @@
     flex-wrap: wrap;
     gap: 0.375rem;
     margin-top: 0.5rem;
-  }
-
-  .model-chip {
-    background: var(--shadcn-secondary);
-    border: 1px solid var(--shadcn-border);
-    border-radius: calc(var(--shadcn-radius) - 2px);
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.75rem;
-    cursor: pointer;
-    padding: 0.25rem 0.625rem;
-    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-  }
-
-  .model-chip:hover {
-    color: var(--shadcn-foreground);
-  }
-
-  .model-chip.selected {
-    background: var(--shadcn-primary);
-    border-color: var(--shadcn-primary);
-    color: var(--shadcn-primary-foreground);
   }
 
   .probe-error {
@@ -720,9 +571,6 @@
       padding: 1rem;
     }
 
-    .page-header,
-    .edit-panel-header,
-    .edit-actions,
     .model-input-row {
       align-items: stretch;
       flex-direction: column;

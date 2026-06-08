@@ -1,6 +1,15 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "$lib/api/client";
+  import { PageHeader } from "$lib/components/ui/page-header";
+  import { Card } from "$lib/components/ui/card";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Label } from "$lib/components/ui/label";
+  import { Switch } from "$lib/components/ui/switch";
+  import { Badge } from "$lib/components/ui/badge";
+  import SaveIcon from "@lucide/svelte/icons/save";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
 
   type ServiceInfo = {
     status: string;
@@ -127,383 +136,231 @@
 </script>
 
 <div class="settings-page">
-  <h1>Settings</h1>
-
-  <div class="settings-section">
-    <h2>Server</h2>
-    <div class="field">
-      <label for="settings-port">Port</label>
-      <input id="settings-port" type="number" bind:value={settings.port} />
-    </div>
-    <div class="field">
-      <label for="settings-host">Host</label>
-      <input id="settings-host" type="text" bind:value={settings.host} />
-    </div>
-  </div>
-
-  <div class="settings-section">
-    <h2>Security</h2>
-    <div class="field">
-      <label for="settings-auth-token">Auth Token</label>
-      <input
-        id="settings-auth-token"
-        type="password"
-        bind:value={settings.auth_token}
-        placeholder="Leave empty to disable"
-      />
-      <p class="hint">Set a token to enable remote access authentication</p>
-    </div>
-  </div>
-
-  <div class="settings-section">
-    <h2>Updates</h2>
-    <div class="field">
-      <label class="toggle-field">
-        <input type="checkbox" bind:checked={settings.auto_update_check} />
-        <span>Auto-check for updates</span>
-      </label>
-    </div>
-  </div>
-
-  <div class="settings-section">
-    <h2>Service</h2>
-    <p class="hint">
-      Register NullHub as a system service for automatic startup
-    </p>
-    <div class="service-panel">
-      <div class="service-status-grid">
-        <div class="service-status-row">
-          <span class="service-status-label">Autostart</span>
-          <span class="service-pill" class:active={service.registered} class:inactive={!service.registered}>
-            {service.registered ? "Enabled" : "Disabled"}
-          </span>
-        </div>
-        <div class="service-status-row">
-          <span class="service-status-label">Runtime</span>
-          <span class="service-pill" class:active={service.running} class:inactive={!service.running}>
-            {service.running ? "Running" : "Stopped"}
-          </span>
-        </div>
-        {#if service.service_type}
-          <div class="service-detail">
-            <span class="service-status-label">Service Type</span>
-            <code>{service.service_type}</code>
-          </div>
-        {/if}
-        {#if service.unit_path}
-          <div class="service-detail">
-            <span class="service-status-label">Unit Path</span>
-            <code>{service.unit_path}</code>
-          </div>
-        {/if}
-      </div>
-      <div class="service-actions">
-        <button class="btn" disabled={serviceLoading} onclick={toggleService}>
-          {serviceButtonLabel}
-        </button>
-        <button class="btn secondary-btn" disabled={serviceLoading} onclick={() => refreshServiceStatus()}>
-          Refresh Status
-        </button>
-      </div>
-    </div>
-  </div>
+  <PageHeader title="Settings" subtitle="Configure how NullHub runs on this machine.">
+    {#snippet actions()}
+      <Button onclick={save} disabled={saving}>
+        <SaveIcon size={15} />
+        {saving ? "Saving..." : "Save"}
+      </Button>
+    {/snippet}
+  </PageHeader>
 
   {#if message}
-    <div class="message" class:message-error={messageTone === "error"}>{message}</div>
+    <div class="banner" class:banner-error={messageTone === "error"}>{message}</div>
   {/if}
 
-  <div class="actions">
-    <button class="primary-btn" onclick={save} disabled={saving}>
-      {saving ? "Saving..." : "Save Settings"}
-    </button>
-  </div>
+  <Card class="px-5">
+    <div class="section-head">
+      <h2>Server</h2>
+      <p>The address NullHub binds to for serving the dashboard and API.</p>
+    </div>
+    <div class="fields">
+      <div class="field">
+        <Label for="settings-port">Port</Label>
+        <Input id="settings-port" type="number" bind:value={settings.port} />
+      </div>
+      <div class="field">
+        <Label for="settings-host">Host</Label>
+        <Input id="settings-host" type="text" bind:value={settings.host} />
+      </div>
+    </div>
+  </Card>
+
+  <Card class="px-5">
+    <div class="section-head">
+      <h2>Security</h2>
+      <p>Set a token to require authentication for remote access.</p>
+    </div>
+    <div class="fields">
+      <div class="field">
+        <Label for="settings-auth-token">Auth token</Label>
+        <Input
+          id="settings-auth-token"
+          type="password"
+          bind:value={settings.auth_token}
+          placeholder="Leave empty to disable"
+        />
+        <p class="hint">Set a token to enable remote access authentication.</p>
+      </div>
+    </div>
+  </Card>
+
+  <Card class="px-5">
+    <div class="section-head">
+      <h2>Updates</h2>
+      <p>Control automatic update notifications.</p>
+    </div>
+    <div class="switch-row">
+      <div class="switch-text">
+        <Label for="settings-auto-update">Auto-check for updates</Label>
+        <p class="hint">Periodically check whether a newer version is available.</p>
+      </div>
+      <Switch id="settings-auto-update" bind:checked={settings.auto_update_check} />
+    </div>
+  </Card>
+
+  <Card class="px-5">
+    <div class="section-head">
+      <h2>Service</h2>
+      <p>Register NullHub as a system service for automatic startup.</p>
+    </div>
+    <div class="status-grid">
+      <div class="status-row">
+        <span class="status-label">Autostart</span>
+        <Badge variant={service.registered ? "success" : "muted"}>
+          {service.registered ? "Enabled" : "Disabled"}
+        </Badge>
+      </div>
+      <div class="status-row">
+        <span class="status-label">Runtime</span>
+        <Badge variant={service.running ? "success" : "muted"}>
+          {service.running ? "Running" : "Stopped"}
+        </Badge>
+      </div>
+      {#if service.service_type}
+        <div class="status-row">
+          <span class="status-label">Service type</span>
+          <code>{service.service_type}</code>
+        </div>
+      {/if}
+      {#if service.unit_path}
+        <div class="status-row">
+          <span class="status-label">Unit path</span>
+          <code>{service.unit_path}</code>
+        </div>
+      {/if}
+    </div>
+    <div class="service-actions">
+      <Button variant="default" disabled={serviceLoading} onclick={toggleService}>
+        {serviceButtonLabel}
+      </Button>
+      <Button variant="outline" disabled={serviceLoading} onclick={() => refreshServiceStatus()}>
+        <RefreshCwIcon size={15} />
+        Refresh status
+      </Button>
+    </div>
+  </Card>
 </div>
 
 <style>
   .settings-page {
-    max-width: 640px;
+    max-width: 720px;
     margin: 0 auto;
     padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
   }
 
-  h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    margin-bottom: 2rem;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    color: var(--accent);
-    text-shadow: var(--text-glow);
+  .section-head h2 {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--shadcn-foreground);
   }
 
-  .settings-section {
-    padding-bottom: 1.5rem;
-    margin-bottom: 1.5rem;
-    border-bottom: 1px dashed color-mix(in srgb, var(--border) 50%, transparent);
+  .section-head p {
+    margin: 0.25rem 0 0;
+    font-size: 0.875rem;
+    color: var(--shadcn-muted-foreground);
+    line-height: 1.4;
   }
 
-  .settings-section:last-of-type {
-    border-bottom: none;
-  }
-
-  h2 {
-    font-size: 1.125rem;
-    font-weight: 700;
-    margin-bottom: 1rem;
-    color: var(--accent-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    text-shadow: 0 0 2px var(--accent-dim);
+  .fields {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
   }
 
   .field {
-    margin-bottom: 1.25rem;
-  }
-
-  .field label {
-    display: block;
-    font-size: 0.8125rem;
-    font-weight: 700;
-    color: var(--fg-dim);
-    margin-bottom: 0.5rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-
-  .field input[type="text"],
-  .field input[type="number"],
-  .field input[type="password"] {
-    width: 100%;
-    padding: 0.625rem 0.875rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    color: var(--fg);
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-  }
-
-  .field input[type="text"]:focus,
-  .field input[type="number"]:focus,
-  .field input[type="password"]:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
-  }
-
-  .field input::placeholder {
-    color: color-mix(in srgb, var(--fg-dim) 50%, transparent);
-  }
-
-  .toggle-field {
-    display: flex !important;
-    align-items: center;
-    gap: 0.75rem;
-    cursor: pointer;
-    font-size: 0.875rem;
-    color: var(--fg) !important;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-
-  .toggle-field input[type="checkbox"] {
-    width: 1.25rem;
-    height: 1.25rem;
-    accent-color: var(--accent);
-    cursor: pointer;
-    filter: drop-shadow(0 0 4px var(--accent-dim));
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
 
   .hint {
+    margin: 0;
     font-size: 0.8125rem;
-    color: var(--fg-dim);
-    margin-top: 0.5rem;
+    color: var(--shadcn-muted-foreground);
     line-height: 1.5;
-    font-family: var(--font-mono);
   }
 
-  .service-panel {
-    display: grid;
-    gap: 1rem;
-    margin-top: 0.75rem;
-  }
-
-  .service-status-grid {
-    display: grid;
-    gap: 0.75rem;
-    padding: 1rem;
-    border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
-  }
-
-  .service-status-row,
-  .service-detail {
+  .switch-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
   }
 
-  .service-status-label {
-    font-size: 0.75rem;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
+  .switch-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
   }
 
-  .service-pill {
-    display: inline-flex;
+  .status-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 1rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
+  }
+
+  .status-row {
+    display: flex;
     align-items: center;
-    justify-content: center;
-    min-width: 5.5rem;
-    padding: 0.25rem 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
-    background: color-mix(in srgb, var(--bg-surface) 75%, transparent);
+    justify-content: space-between;
+    gap: 1rem;
   }
 
-  .service-pill.active {
-    color: var(--success);
-    border-color: color-mix(in srgb, var(--success) 65%, transparent);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--success) 25%, transparent);
-  }
-
-  .service-pill.inactive {
-    color: var(--fg-dim);
-    border-color: color-mix(in srgb, var(--border) 80%, transparent);
-  }
-
-  .service-detail {
-    align-items: flex-start;
-  }
-
-  .service-detail code {
-    max-width: 28rem;
-    white-space: normal;
-    word-break: break-all;
-    text-align: right;
-    font-family: var(--font-mono);
+  .status-label {
     font-size: 0.8125rem;
-    color: var(--fg);
+    font-weight: 500;
+    color: var(--shadcn-muted-foreground);
+  }
+
+  .status-row code {
+    max-width: 28rem;
+    text-align: right;
+    word-break: break-all;
+    font-size: 0.8125rem;
+    color: var(--shadcn-foreground);
   }
 
   .service-actions {
     display: flex;
-    gap: 0.75rem;
+    gap: 0.5rem;
     flex-wrap: wrap;
   }
 
-  .btn {
-    padding: 0.5rem 1.25rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
+  .banner {
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
     font-size: 0.875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    margin-top: 0.75rem;
-    text-shadow: var(--text-glow);
+    color: var(--shadcn-foreground);
   }
 
-  .secondary-btn {
-    color: var(--fg-dim);
-    border-color: color-mix(in srgb, var(--border) 80%, transparent);
-  }
-
-  .btn:hover {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    text-shadow: 0 0 8px var(--accent);
-  }
-
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    box-shadow: none;
-    text-shadow: none;
-  }
-
-  .message {
-    padding: 0.875rem 1.25rem;
-    background: color-mix(in srgb, var(--success) 10%, transparent);
-    border: 1px solid var(--success);
-    border-radius: 2px;
-    font-size: 0.875rem;
-    font-weight: bold;
-    color: var(--success);
-    margin-bottom: 1.5rem;
-    box-shadow: 0 0 10px color-mix(in srgb, var(--success) 30%, transparent);
-    text-shadow: 0 0 5px var(--success);
-  }
-
-  .message.message-error {
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-    border-color: var(--error);
-    color: var(--error);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error) 30%, transparent);
-    text-shadow: 0 0 5px var(--error);
-  }
-
-  .actions {
-    padding-top: 1rem;
-    border-top: 1px solid var(--border);
-    display: flex;
-    justify-content: flex-end;
-  }
-
-  .primary-btn {
-    padding: 0.75rem 2rem;
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    color: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 2px;
-    font-size: 0.875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
-    box-shadow: inset 0 0 10px
-      color-mix(in srgb, var(--accent) 30%, transparent);
-  }
-
-  .primary-btn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow:
-      0 0 15px var(--border-glow),
-      inset 0 0 15px color-mix(in srgb, var(--accent) 40%, transparent);
-    text-shadow: 0 0 10px var(--accent);
-  }
-
-  .primary-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    box-shadow: none;
-    text-shadow: none;
+  .banner-error {
+    border-color: var(--shadcn-destructive);
+    color: var(--shadcn-destructive);
+    background: color-mix(in srgb, var(--shadcn-destructive) 8%, transparent);
   }
 
   @media (max-width: 640px) {
-    .service-status-row,
-    .service-detail {
+    .settings-page {
+      padding: 1.25rem;
+    }
+
+    .status-row {
       flex-direction: column;
       align-items: flex-start;
     }
 
-    .service-detail code {
+    .status-row code {
       text-align: left;
     }
   }

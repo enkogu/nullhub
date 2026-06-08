@@ -8,6 +8,10 @@
     type EntityColumn,
     type EntityRecord,
   } from '$lib/entity-view';
+  import { Button } from '$lib/components/ui/button';
+  import { Select } from '$lib/components/ui/select';
+  import { Badge, type BadgeVariant } from '$lib/components/ui/badge';
+  import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 
   let summary = $state<any>(null);
   let runs = $state<any[]>([]);
@@ -221,10 +225,16 @@
     return total > 0 ? total.toLocaleString() : '-';
   }
 
-  function verdictClass(verdict: string | undefined): string {
-    if (verdict === 'pass') return 'pass';
-    if (verdict === 'fail') return 'fail';
-    return 'neutral';
+  function verdictVariant(verdict: string | undefined): BadgeVariant {
+    if (verdict === 'pass') return 'success';
+    if (verdict === 'fail') return 'destructive';
+    return 'muted';
+  }
+
+  function statusVariant(status: string | undefined): BadgeVariant {
+    if (status === 'ok') return 'success';
+    if (status === 'error') return 'destructive';
+    return 'muted';
   }
 
   function statusClass(status: string | undefined): string {
@@ -235,36 +245,8 @@
 </script>
 
 <div class="flight-recorder">
-  <div class="header">
-    <div>
-      <h1>NullWatch</h1>
-      <p class="subtitle">Flight Recorder traces, evals, cost, and failure context</p>
-    </div>
-    <div class="header-actions">
-      {#if watchOptions.length > 1}
-        <label class="watch-picker">
-          <span>NullWatch</span>
-          <select value={selectedWatchName} onchange={handleWatchChange}>
-            {#each watchOptions as watch}
-              <option value={watch.name}>
-                {watch.name} · {watch.status}{watch.port ? ` :${watch.port}` : ''}
-              </option>
-            {/each}
-          </select>
-        </label>
-      {:else if watchOptions.length === 1}
-        <div class="watch-chip">
-          <span>NullWatch</span>
-          <strong>{watchOptions[0].name}</strong>
-          <em>{watchOptions[0].status}</em>
-        </div>
-      {/if}
-      <button class="action-btn" onclick={loadOverview}>Refresh</button>
-    </div>
-  </div>
-
   {#if error}
-    <div class="error-banner">ERR: {error}</div>
+    <div class="banner banner-error">{error}</div>
   {/if}
 
   <div class="metric-grid">
@@ -309,10 +291,40 @@
           loading={loading && runs.length === 0}
           emptyTitle="No NullWatch runs"
           emptyDescription="No flight recorder runs found for the selected instance."
-          onRefresh={loadOverview}
           onSelect={(record) => selectRun(String(record.fields?.run_id || record.title))}
           onOpen={(record) => selectRun(String(record.fields?.run_id || record.title))}
-        />
+        >
+          {#snippet headerControls()}
+            {#if watchOptions.length > 1}
+              <Select
+                value={selectedWatchName}
+                onchange={handleWatchChange}
+                class="watch-select"
+                aria-label="NullWatch instance"
+              >
+                {#each watchOptions as watch}
+                  <option value={watch.name}>
+                    {watch.name} · {watch.status}{watch.port ? ` :${watch.port}` : ''}
+                  </option>
+                {/each}
+              </Select>
+            {:else if watchOptions.length === 1}
+              <Badge variant="muted">{watchOptions[0].name} · {watchOptions[0].status}</Badge>
+            {/if}
+          {/snippet}
+          {#snippet headerActions()}
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              onclick={loadOverview}
+              disabled={loading}
+              title="Refresh"
+              aria-label="Refresh"
+            >
+              <RefreshCwIcon size={15} />
+            </Button>
+          {/snippet}
+        </UniversalEntityView>
       </section>
 
       <section class="detail-panel">
@@ -328,7 +340,7 @@
                 <span>{formatCost(selectedSummary?.total_cost_usd)}</span>
               </div>
             </div>
-            <span class="pill {verdictClass(selectedSummary?.overall_verdict)}">{selectedSummary?.overall_verdict}</span>
+            <Badge variant={verdictVariant(selectedSummary?.overall_verdict)}>{selectedSummary?.overall_verdict}</Badge>
           </div>
 
           <div class="detail-stats">
@@ -346,7 +358,7 @@
                 <div class="span-body">
                   <div class="span-top">
                     <span class="mono">{span.operation}</span>
-                    <span class="pill {statusClass(span.status)}">{span.status}</span>
+                    <Badge variant={statusVariant(span.status)}>{span.status}</Badge>
                   </div>
                   <div class="span-meta">
                     <span>{span.source}</span>
@@ -379,7 +391,7 @@
                   </div>
                   <div class="eval-score">
                     <span>{evaluation.score.toFixed(2)}</span>
-                    <span class="pill {verdictClass(evaluation.verdict)}">{evaluation.verdict}</span>
+                    <Badge variant={verdictVariant(evaluation.verdict)}>{evaluation.verdict}</Badge>
                   </div>
                   {#if evaluation.notes}
                     <p>{evaluation.notes}</p>
@@ -405,7 +417,6 @@
     margin: 0 auto;
   }
 
-  .header,
   .detail-header {
     display: flex;
     align-items: center;
@@ -413,110 +424,39 @@
     gap: 1rem;
   }
 
-  h1,
   h2 {
     margin: 0;
-    letter-spacing: 0;
-  }
-
-  h1 {
-    font-size: 1.75rem;
-    color: var(--fg);
-  }
-
-  h2 {
     font-size: 1rem;
-    color: var(--accent);
+    font-weight: 600;
+    color: var(--shadcn-foreground);
   }
 
-  .subtitle,
   .muted,
   .detail-meta,
   .span-meta {
-    color: var(--fg-muted);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.8125rem;
   }
 
-  .subtitle {
-    margin: 0.25rem 0 0;
-  }
-
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-  }
-
-  .watch-picker,
-  .watch-chip {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-height: 2.1rem;
-    padding: 0.25rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg-surface);
-  }
-
-  .watch-picker span,
-  .watch-chip span {
-    color: var(--fg-muted);
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-  }
-
-  .watch-picker select {
+  .watch-select {
+    width: auto;
     min-width: 12rem;
     max-width: 22rem;
-    border: 0;
-    background: transparent;
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
   }
 
-  .watch-chip strong {
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    font-weight: 700;
-  }
-
-  .watch-chip em {
-    color: var(--fg-muted);
-    font-size: 0.75rem;
-    font-style: normal;
-  }
-
-  .action-btn {
-    padding: 0.5rem 0.85rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--accent-dim);
-    color: var(--accent);
-    border-radius: 4px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    cursor: pointer;
-  }
-
-  .action-btn:hover {
-    border-color: var(--accent);
-    background: var(--bg-hover);
-  }
-
-  .error-banner {
+  .banner {
     padding: 0.75rem 1rem;
-    border: 1px solid var(--error);
-    color: var(--error);
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-    border-radius: 4px;
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
+    font-size: 0.875rem;
+    color: var(--shadcn-foreground);
+  }
+
+  .banner-error {
+    border-color: var(--shadcn-destructive);
+    color: var(--shadcn-destructive);
+    background: color-mix(in srgb, var(--shadcn-destructive) 8%, transparent);
   }
 
   .metric-grid {
@@ -526,9 +466,9 @@
   }
 
   .metric {
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
     padding: 0.85rem;
     display: flex;
     flex-direction: column;
@@ -536,19 +476,19 @@
   }
 
   .label {
-    color: var(--fg-muted);
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    font-weight: 700;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 500;
   }
 
   .metric strong {
-    color: var(--fg);
+    color: var(--shadcn-foreground);
     font-size: 1.35rem;
+    font-weight: 600;
   }
 
   .metric strong.bad {
-    color: var(--error);
+    color: var(--shadcn-destructive);
   }
 
   .workspace {
@@ -560,9 +500,9 @@
 
   .runs-panel,
   .detail-panel {
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
     min-width: 0;
   }
 
@@ -575,32 +515,8 @@
   }
 
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
     overflow-wrap: anywhere;
-  }
-
-  .pill {
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 0.15rem 0.45rem;
-    font-size: 0.7rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    white-space: nowrap;
-  }
-
-  .pill.pass {
-    color: var(--success);
-    border-color: var(--success);
-  }
-
-  .pill.fail {
-    color: var(--error);
-    border-color: var(--error);
-  }
-
-  .pill.neutral {
-    color: var(--fg-muted);
   }
 
   .detail-meta,
@@ -619,8 +535,8 @@
   }
 
   .detail-stats div {
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
     padding: 0.65rem;
     display: flex;
     justify-content: space-between;
@@ -628,16 +544,20 @@
   }
 
   .detail-stats span {
-    color: var(--fg-muted);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
+  }
+
+  .detail-stats strong {
+    color: var(--shadcn-foreground);
+    font-weight: 600;
   }
 
   .section-title {
     margin: 1rem 0 0.6rem;
-    color: var(--fg);
-    font-size: 0.8rem;
-    text-transform: uppercase;
-    font-weight: 700;
+    color: var(--shadcn-foreground);
+    font-size: 0.875rem;
+    font-weight: 600;
   }
 
   .timeline {
@@ -657,25 +577,25 @@
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    border: 1px solid var(--fg-muted);
+    border: 1px solid var(--shadcn-muted-foreground);
   }
 
   .span-marker.pass {
-    border-color: var(--success);
-    background: var(--success);
+    border-color: #16a34a;
+    background: #16a34a;
   }
 
   .span-marker.fail {
-    border-color: var(--error);
-    background: var(--error);
+    border-color: var(--shadcn-destructive);
+    background: var(--shadcn-destructive);
   }
 
   .span-body,
   .eval-row {
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
     padding: 0.75rem;
-    background: var(--bg);
+    background: var(--shadcn-background);
     min-width: 0;
   }
 
@@ -688,8 +608,8 @@
 
   .span-error {
     margin-top: 0.55rem;
-    color: var(--error);
-    font-family: var(--font-mono);
+    color: var(--shadcn-destructive);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.8125rem;
   }
 
@@ -697,9 +617,9 @@
     margin: 0.55rem 0 0;
     padding: 0.6rem;
     overflow-x: auto;
-    border-radius: 4px;
-    background: var(--bg-surface);
-    color: var(--fg-muted);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
   }
 
@@ -722,15 +642,15 @@
 
   .eval-row p {
     margin: 0;
-    color: var(--fg-muted);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.8125rem;
   }
 
   .loading,
   .empty-state {
     padding: 1rem;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.875rem;
   }
 
   @media (max-width: 1100px) {
@@ -749,24 +669,14 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .header,
     .detail-header {
       align-items: flex-start;
       flex-direction: column;
     }
 
-    .header-actions {
-      justify-content: flex-start;
+    .watch-select {
       width: 100%;
-    }
-
-    .watch-picker {
-      width: 100%;
-    }
-
-    .watch-picker select {
       min-width: 0;
-      width: 100%;
     }
   }
 </style>

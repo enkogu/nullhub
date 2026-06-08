@@ -92,7 +92,7 @@
             <span class="avatar large" aria-hidden="true">{userInitial}</span>
             <span>{userEmail}</span>
           </div>
-          <a class="sign-out" href="/logout" role="menuitem">Sign out</a>
+          <a class="sign-out" href="/logout" role="menuitem" data-sveltekit-reload>Sign out</a>
         </div>
       {/if}
     </div>

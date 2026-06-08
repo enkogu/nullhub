@@ -1,5 +1,20 @@
 <script lang="ts">
   import { api, type CronJobCreateRequest, type CronJobUpdateRequest } from "$lib/api/client";
+  import { Card } from "$lib/components/ui/card";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Select } from "$lib/components/ui/select";
+  import { Textarea } from "$lib/components/ui/textarea";
+  import { Label } from "$lib/components/ui/label";
+  import { Badge, type BadgeVariant } from "$lib/components/ui/badge";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+  import PlusIcon from "@lucide/svelte/icons/plus";
+  import XIcon from "@lucide/svelte/icons/x";
+  import PlayIcon from "@lucide/svelte/icons/play";
+  import PauseIcon from "@lucide/svelte/icons/pause";
+  import PowerIcon from "@lucide/svelte/icons/power";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import SaveIcon from "@lucide/svelte/icons/save";
 
   type CronJob = {
     id?: string;
@@ -158,6 +173,13 @@
     if (isPaused(job)) return "paused";
     if (isOneShot(job)) return "one-shot";
     return "active";
+  }
+
+  function statusVariant(job: CronJob): BadgeVariant {
+    const status = jobStatus(job);
+    if (status === "paused" || status === "disabled") return "warning";
+    if (status === "active" || status === "one-shot") return "success";
+    return "muted";
   }
 
   function scheduleText(job: CronJob | null | undefined): string {
@@ -501,130 +523,146 @@
       <p>Manage scheduled shell commands and agent prompts for this NullClaw instance.</p>
     </div>
     <div class="header-actions">
-      <button class="btn subtle" onclick={() => loadJobs(true)} disabled={loadingJobs}>Refresh</button>
-      <button class="btn" onclick={() => { createScheduleMode = "recurring"; showCreate = true; }}>New Job</button>
-      <button class="btn" onclick={() => { createScheduleMode = "once"; showCreate = true; }}>One-Shot</button>
+      <Button variant="outline" size="icon" onclick={() => loadJobs(true)} disabled={loadingJobs} title="Refresh" aria-label="Refresh jobs">
+        <RefreshCwIcon />
+      </Button>
+      <Button variant="default" size="sm" onclick={() => { createScheduleMode = "recurring"; showCreate = true; }}>
+        <PlusIcon />
+        New job
+      </Button>
+      <Button variant="outline" size="sm" onclick={() => { createScheduleMode = "once"; showCreate = true; }}>
+        <PlusIcon />
+        One-shot
+      </Button>
     </div>
   </div>
 
   <div class="summary-strip">
-    <div><span>Total</span><strong>{totalJobs}</strong></div>
-    <div><span>Active</span><strong>{activeJobs}</strong></div>
-    <div><span>Paused</span><strong>{pausedJobs}</strong></div>
-    <div><span>One-Shot</span><strong>{oneShotJobs}</strong></div>
+    <Card class="summary-item px-5"><span>Total</span><strong>{totalJobs}</strong></Card>
+    <Card class="summary-item px-5"><span>Active</span><strong>{activeJobs}</strong></Card>
+    <Card class="summary-item px-5"><span>Paused</span><strong>{pausedJobs}</strong></Card>
+    <Card class="summary-item px-5"><span>One-shot</span><strong>{oneShotJobs}</strong></Card>
   </div>
 
   {#if error}
-    <div class="error-banner">{error}</div>
+    <div class="banner error-banner">{error}</div>
   {/if}
   {#if actionError}
-    <div class="error-banner">{actionError}</div>
+    <div class="banner error-banner">{actionError}</div>
   {/if}
   {#if message}
-    <div class="success-banner">{message}</div>
+    <div class="banner success-banner">{message}</div>
   {/if}
 
   {#if showCreate}
-    <div class="create-panel">
+    <Card class="create-panel px-5">
       <div class="section-title">
-        <h3>{createScheduleMode === "once" ? "Create One-Shot Job" : "Create Recurring Job"}</h3>
-        <button class="link-btn" onclick={() => (showCreate = false)}>Close</button>
+        <h3>{createScheduleMode === "once" ? "Create one-shot job" : "Create recurring job"}</h3>
+        <Button variant="ghost" size="icon-sm" onclick={() => (showCreate = false)} title="Close" aria-label="Close create panel">
+          <XIcon />
+        </Button>
       </div>
 
       <div class="form-grid">
-        <label>
-          <span>Schedule</span>
-          <select name="cron-create-schedule-mode" bind:value={createScheduleMode}>
+        <div class="field">
+          <Label for="cron-create-schedule-mode">Schedule</Label>
+          <Select id="cron-create-schedule-mode" name="cron-create-schedule-mode" bind:value={createScheduleMode}>
             <option value="recurring">Recurring</option>
             <option value="once">One-shot</option>
-          </select>
-        </label>
-        <label>
-          <span>Payload</span>
-          <select name="cron-create-payload-mode" bind:value={createPayloadMode}>
+          </Select>
+        </div>
+        <div class="field">
+          <Label for="cron-create-payload-mode">Payload</Label>
+          <Select id="cron-create-payload-mode" name="cron-create-payload-mode" bind:value={createPayloadMode}>
             <option value="shell">Shell command</option>
             <option value="agent">Agent prompt</option>
-          </select>
-        </label>
+          </Select>
+        </div>
       </div>
 
       {#if createScheduleMode === "recurring"}
-        <label class="field">
-          <span>Cron Expression</span>
-          <input name="cron-create-expression" bind:value={createExpression} placeholder="*/10 * * * *" />
-        </label>
+        <div class="field">
+          <Label for="cron-create-expression">Cron expression</Label>
+          <Input id="cron-create-expression" name="cron-create-expression" bind:value={createExpression} placeholder="*/10 * * * *" />
+        </div>
         <div class="preset-row">
-          <button class="chip" onclick={() => applyPreset("*/5 * * * *")}>Every 5m</button>
-          <button class="chip" onclick={() => applyPreset("0 * * * *")}>Hourly</button>
-          <button class="chip" onclick={() => applyPreset("0 9 * * *")}>Daily</button>
-          <button class="chip" onclick={() => applyPreset("0 9 * * 1")}>Weekly</button>
+          <Button variant="secondary" size="sm" onclick={() => applyPreset("*/5 * * * *")}>Every 5m</Button>
+          <Button variant="secondary" size="sm" onclick={() => applyPreset("0 * * * *")}>Hourly</Button>
+          <Button variant="secondary" size="sm" onclick={() => applyPreset("0 9 * * *")}>Daily</Button>
+          <Button variant="secondary" size="sm" onclick={() => applyPreset("0 9 * * 1")}>Weekly</Button>
         </div>
       {:else}
-        <label class="field">
-          <span>Delay</span>
-          <input name="cron-create-delay" bind:value={createDelay} placeholder="5m, 1h, 24h" />
-        </label>
+        <div class="field">
+          <Label for="cron-create-delay">Delay</Label>
+          <Input id="cron-create-delay" name="cron-create-delay" bind:value={createDelay} placeholder="5m, 1h, 24h" />
+        </div>
       {/if}
 
       {#if createPayloadMode === "shell"}
-        <label class="field">
-          <span>Command</span>
-          <textarea name="cron-create-command" bind:value={createCommand} rows="4" placeholder="echo heartbeat"></textarea>
-        </label>
+        <div class="field">
+          <Label for="cron-create-command">Command</Label>
+          <Textarea id="cron-create-command" class="mono-input" name="cron-create-command" bind:value={createCommand} rows={4} placeholder="echo heartbeat"></Textarea>
+        </div>
       {:else}
-        <label class="field">
-          <span>Prompt</span>
-          <textarea name="cron-create-prompt" bind:value={createPrompt} rows="5" placeholder="Summarize recent activity"></textarea>
-        </label>
+        <div class="field">
+          <Label for="cron-create-prompt">Prompt</Label>
+          <Textarea id="cron-create-prompt" class="mono-input" name="cron-create-prompt" bind:value={createPrompt} rows={5} placeholder="Summarize recent activity"></Textarea>
+        </div>
         <div class="form-grid">
-          <label>
-            <span>Model</span>
-            <input name="cron-create-model" bind:value={createModel} placeholder="optional" />
-          </label>
-          <label>
-            <span>Session Target</span>
-            <input name="cron-create-session-target" bind:value={createSessionTarget} placeholder="optional" />
-          </label>
+          <div class="field">
+            <Label for="cron-create-model">Model</Label>
+            <Input id="cron-create-model" name="cron-create-model" bind:value={createModel} placeholder="optional" />
+          </div>
+          <div class="field">
+            <Label for="cron-create-session-target">Session target</Label>
+            <Input id="cron-create-session-target" name="cron-create-session-target" bind:value={createSessionTarget} placeholder="optional" />
+          </div>
           <label class="checkbox-field">
             <input name="cron-create-announce" type="checkbox" bind:checked={createAnnounce} />
             <span>Announce result</span>
           </label>
-          <label>
-            <span>Delivery Channel</span>
-            <input name="cron-create-delivery-channel" bind:value={createDeliveryChannel} placeholder="telegram" />
-          </label>
-          <label>
-            <span>Delivery Account</span>
-            <input name="cron-create-delivery-account" bind:value={createDeliveryAccountId} placeholder="optional" />
-          </label>
-          <label>
-            <span>Recipient</span>
-            <input name="cron-create-delivery-to" bind:value={createDeliveryTo} placeholder="optional" />
-          </label>
+          <div class="field">
+            <Label for="cron-create-delivery-channel">Delivery channel</Label>
+            <Input id="cron-create-delivery-channel" name="cron-create-delivery-channel" bind:value={createDeliveryChannel} placeholder="telegram" />
+          </div>
+          <div class="field">
+            <Label for="cron-create-delivery-account">Delivery account</Label>
+            <Input id="cron-create-delivery-account" name="cron-create-delivery-account" bind:value={createDeliveryAccountId} placeholder="optional" />
+          </div>
+          <div class="field">
+            <Label for="cron-create-delivery-to">Recipient</Label>
+            <Input id="cron-create-delivery-to" name="cron-create-delivery-to" bind:value={createDeliveryTo} placeholder="optional" />
+          </div>
         </div>
       {/if}
 
       <div class="form-actions">
-        <button class="btn" onclick={createJob} disabled={actionLoading === "create"}>
+        <Button variant="default" onclick={createJob} disabled={actionLoading === "create"}>
           {actionLoading === "create" ? "Creating..." : "Create"}
-        </button>
+        </Button>
       </div>
-    </div>
+    </Card>
   {/if}
 
   <div class="cron-workspace">
-    <div class="jobs-pane">
+    <Card class="jobs-pane px-5">
       <div class="toolbar">
-        <input name="cron-search" bind:value={search} placeholder="Search jobs" />
-        <select name="cron-filter" bind:value={filter}>
-          <option value="all">All</option>
-          <option value="active">Active</option>
-          <option value="paused">Paused</option>
-          <option value="recurring">Recurring</option>
-          <option value="one-shot">One-shot</option>
-          <option value="shell">Shell</option>
-          <option value="agent">Agent</option>
-        </select>
+        <div class="field">
+          <Label for="cron-search">Search</Label>
+          <Input id="cron-search" name="cron-search" bind:value={search} placeholder="Search jobs" />
+        </div>
+        <div class="field">
+          <Label for="cron-filter">Filter</Label>
+          <Select id="cron-filter" name="cron-filter" bind:value={filter}>
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="paused">Paused</option>
+            <option value="recurring">Recurring</option>
+            <option value="one-shot">One-shot</option>
+            <option value="shell">Shell</option>
+            <option value="agent">Agent</option>
+          </Select>
+        </div>
       </div>
 
       <div class="job-list">
@@ -639,57 +677,72 @@
               class:active={jobId(job) === selectedJobId}
               onclick={() => selectJob(jobId(job))}
             >
-              <span class={`status-pill ${jobStatus(job)}`}>{jobStatus(job)}</span>
+              <Badge variant={statusVariant(job)}>{jobStatus(job)}</Badge>
               <span class="job-main">
                 <strong>{jobId(job)}</strong>
                 <span>{scheduleText(job)} / {jobType(job)}</span>
               </span>
-              <span class="job-preview">{payloadPreview(job)}</span>
+              <span class="job-preview mono">{payloadPreview(job)}</span>
             </button>
           {/each}
         {/if}
       </div>
-    </div>
+    </Card>
 
-    <div class="detail-pane">
+    <Card class="detail-pane px-5">
       {#if selectedJob}
         <div class="detail-header">
           <div>
             <h3>{jobId(selectedJob)}</h3>
-            <span class={`status-pill ${jobStatus(selectedJob)}`}>{jobStatus(selectedJob)}</span>
+            <Badge variant={statusVariant(selectedJob)}>{jobStatus(selectedJob)}</Badge>
           </div>
           {#if loadingDetail}<span class="muted">Loading detail...</span>{/if}
         </div>
 
         <div class="action-row">
-          <button class="btn" onclick={() => runAction("run")} disabled={actionLoading !== null}>Run Now</button>
+          <Button variant="default" size="sm" onclick={() => runAction("run")} disabled={actionLoading !== null} title="Run now">
+            <PlayIcon />
+            Run now
+          </Button>
           {#if isDisabled(selectedJob)}
-            <button class="btn" onclick={() => runAction("enable")} disabled={actionLoading !== null}>Enable</button>
+            <Button variant="outline" size="sm" onclick={() => runAction("enable")} disabled={actionLoading !== null} title="Enable">
+              <PowerIcon />
+              Enable
+            </Button>
           {:else if isPaused(selectedJob)}
-            <button class="btn" onclick={() => runAction("resume")} disabled={actionLoading !== null}>Resume</button>
+            <Button variant="outline" size="sm" onclick={() => runAction("resume")} disabled={actionLoading !== null} title="Resume">
+              <PlayIcon />
+              Resume
+            </Button>
           {:else}
-            <button class="btn" onclick={() => runAction("pause")} disabled={actionLoading !== null}>Pause</button>
+            <Button variant="outline" size="sm" onclick={() => runAction("pause")} disabled={actionLoading !== null} title="Pause">
+              <PauseIcon />
+              Pause
+            </Button>
           {/if}
-          <button class="btn danger" onclick={deleteJob} disabled={actionLoading !== null}>Delete</button>
+          <Button variant="destructive" size="sm" onclick={deleteJob} disabled={actionLoading !== null} title="Delete">
+            <Trash2Icon />
+            Delete
+          </Button>
         </div>
 
         <div class="edit-panel">
           <div class="section-title">
-            <h3>Edit Job</h3>
-            <button class="link-btn" onclick={() => syncEditDraft(selectedJob)}>Reset</button>
+            <h3>Edit job</h3>
+            <Button variant="ghost" size="sm" onclick={() => syncEditDraft(selectedJob)}>Reset</Button>
           </div>
           <div class="form-grid">
-            <label>
-              <span>Expression</span>
-              <input name="cron-edit-expression" bind:value={editExpression} disabled={isOneShot(selectedJob)} />
-            </label>
-            <label>
-              <span>Payload</span>
-              <select name="cron-edit-payload-mode" bind:value={editPayloadMode} disabled>
+            <div class="field">
+              <Label for="cron-edit-expression">Expression</Label>
+              <Input id="cron-edit-expression" name="cron-edit-expression" bind:value={editExpression} disabled={isOneShot(selectedJob)} />
+            </div>
+            <div class="field">
+              <Label for="cron-edit-payload-mode">Payload</Label>
+              <Select id="cron-edit-payload-mode" name="cron-edit-payload-mode" bind:value={editPayloadMode} disabled>
                 <option value="shell">Shell command</option>
                 <option value="agent">Agent prompt</option>
-              </select>
-            </label>
+              </Select>
+            </div>
             <label class="checkbox-field">
               <input name="cron-edit-enabled" type="checkbox" bind:checked={editEnabled} />
               <span>Enabled</span>
@@ -699,43 +752,46 @@
             <p class="muted">One-shot schedule is read-only in the current backend API.</p>
           {/if}
           {#if editPayloadMode === "shell"}
-            <label class="field">
-              <span>Command</span>
-              <textarea name="cron-edit-command" bind:value={editCommand} rows="4"></textarea>
-            </label>
+            <div class="field">
+              <Label for="cron-edit-command">Command</Label>
+              <Textarea id="cron-edit-command" class="mono-input" name="cron-edit-command" bind:value={editCommand} rows={4}></Textarea>
+            </div>
           {:else}
-            <label class="field">
-              <span>Prompt</span>
-              <textarea name="cron-edit-prompt" bind:value={editPrompt} rows="5"></textarea>
-            </label>
+            <div class="field">
+              <Label for="cron-edit-prompt">Prompt</Label>
+              <Textarea id="cron-edit-prompt" class="mono-input" name="cron-edit-prompt" bind:value={editPrompt} rows={5}></Textarea>
+            </div>
             <div class="form-grid">
-              <label>
-                <span>Model</span>
-                <input name="cron-edit-model" bind:value={editModel} />
-              </label>
-              <label>
-                <span>Session Target</span>
-                <input name="cron-edit-session-target" bind:value={editSessionTarget} />
-              </label>
+              <div class="field">
+                <Label for="cron-edit-model">Model</Label>
+                <Input id="cron-edit-model" name="cron-edit-model" bind:value={editModel} />
+              </div>
+              <div class="field">
+                <Label for="cron-edit-session-target">Session target</Label>
+                <Input id="cron-edit-session-target" name="cron-edit-session-target" bind:value={editSessionTarget} />
+              </div>
             </div>
           {/if}
           <div class="form-actions">
-            <button class="btn" onclick={updateJob} disabled={actionLoading === "update"}>
-              {actionLoading === "update" ? "Saving..." : "Save Changes"}
-            </button>
+            <Button variant="default" onclick={updateJob} disabled={actionLoading === "update"}>
+              <SaveIcon />
+              {actionLoading === "update" ? "Saving..." : "Save changes"}
+            </Button>
           </div>
         </div>
 
         <div class="runs-panel">
           <div class="section-title">
-            <h3>Run History</h3>
+            <h3>Run history</h3>
             <div class="inline-actions">
-              <select name="cron-run-limit" bind:value={runLimit} onchange={() => loadRuns(true)}>
+              <Select name="cron-run-limit" bind:value={runLimit} onchange={() => loadRuns(true)}>
                 <option value="10">10</option>
                 <option value="25">25</option>
                 <option value="50">50</option>
-              </select>
-              <button class="btn subtle" onclick={() => loadRuns(true)} disabled={loadingRuns}>Refresh</button>
+              </Select>
+              <Button variant="outline" size="icon" onclick={() => loadRuns(true)} disabled={loadingRuns} title="Refresh runs" aria-label="Refresh runs">
+                <RefreshCwIcon />
+              </Button>
             </div>
           </div>
           {#if loadingRuns && runs.length === 0}
@@ -766,7 +822,7 @@
       {:else}
         <div class="empty-detail">Select a cron job or create a new one.</div>
       {/if}
-    </div>
+    </Card>
   </div>
 </section>
 
@@ -790,15 +846,23 @@
   .section-title h3,
   .detail-header h3 {
     margin: 0;
-    color: var(--fg);
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    color: var(--shadcn-foreground);
+    font-weight: 600;
+  }
+
+  .panel-header h2 {
+    font-size: 1.1rem;
+  }
+
+  .section-title h3,
+  .detail-header h3 {
+    font-size: 1rem;
   }
 
   .panel-header p,
   .muted {
     margin: 0.35rem 0 0;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.85rem;
   }
 
@@ -813,66 +877,47 @@
     flex-wrap: wrap;
   }
 
+  .inline-actions :global(> div) {
+    width: 5rem;
+  }
+
   .summary-strip {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.75rem;
   }
 
-  .summary-strip div,
-  .create-panel,
-  .jobs-pane,
-  .detail-pane,
-  .edit-panel,
-  .runs-panel,
-  .raw-json {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-  }
-
-  .summary-strip div {
-    padding: 0.85rem;
-    display: flex;
-    flex-direction: column;
+  :global(.summary-item) {
     gap: 0.25rem;
   }
 
-  .summary-strip span {
-    color: var(--fg-dim);
+  :global(.summary-item) span {
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
   }
 
-  .summary-strip strong {
+  :global(.summary-item) strong {
     font-size: 1.3rem;
-    color: var(--accent);
+    color: var(--shadcn-foreground);
   }
 
-  .error-banner,
-  .success-banner {
+  .banner {
     padding: 0.75rem 1rem;
-    border-radius: var(--radius);
+    border-radius: var(--shadcn-radius);
     font-size: 0.9rem;
+    border: 1px solid var(--shadcn-border);
   }
 
   .error-banner {
-    color: var(--error);
-    border: 1px solid var(--error);
-    background: rgba(255, 0, 0, 0.08);
+    color: var(--shadcn-destructive);
+    border-color: color-mix(in srgb, var(--shadcn-destructive) 35%, var(--shadcn-border));
+    background: color-mix(in srgb, var(--shadcn-destructive) 6%, var(--shadcn-card));
   }
 
   .success-banner {
-    color: var(--success);
-    border: 1px solid var(--success);
-    background: rgba(0, 255, 150, 0.08);
-  }
-
-  .create-panel,
-  .edit-panel,
-  .runs-panel {
-    padding: 1rem;
+    color: #166534;
+    border-color: color-mix(in srgb, #16a34a 35%, var(--shadcn-border));
+    background: color-mix(in srgb, #16a34a 6%, var(--shadcn-card));
   }
 
   .cron-workspace {
@@ -882,15 +927,12 @@
     align-items: start;
   }
 
-  .jobs-pane,
-  .detail-pane {
+  :global(.jobs-pane),
+  :global(.detail-pane) {
     min-width: 0;
-    padding: 1rem;
   }
 
-  .detail-pane {
-    display: flex;
-    flex-direction: column;
+  :global(.detail-pane) {
     gap: 1rem;
   }
 
@@ -901,47 +943,30 @@
     gap: 0.75rem;
   }
 
-  label,
   .field {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
-    color: var(--fg-dim);
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    min-width: 0;
   }
 
   .checkbox-field {
+    display: flex;
     flex-direction: row;
     align-items: center;
+    gap: 0.5rem;
     min-height: 2.35rem;
-    text-transform: none;
-    letter-spacing: 0;
+    color: var(--shadcn-foreground);
+    font-size: 0.85rem;
   }
 
-  input,
-  select,
-  textarea {
-    width: 100%;
-    min-width: 0;
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 0.65rem 0.75rem;
-    font: inherit;
+  .checkbox-field input {
+    width: auto;
   }
 
-  textarea {
-    resize: vertical;
-    font-family: var(--font-mono);
+  :global(.mono-input) {
+    font-family: var(--prin7r-font-mono-standard);
     line-height: 1.4;
-  }
-
-  input:disabled {
-    color: var(--fg-dim);
-    opacity: 0.7;
   }
 
   .job-list {
@@ -958,17 +983,18 @@
     width: 100%;
     text-align: left;
     padding: 0.75rem;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--fg);
+    background: var(--shadcn-card);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    color: var(--shadcn-foreground);
+    font: inherit;
     cursor: pointer;
   }
 
   .job-row:hover,
   .job-row.active {
-    border-color: var(--accent);
-    background: var(--bg-hover);
+    border-color: var(--shadcn-foreground);
+    background: var(--shadcn-accent);
   }
 
   .job-main {
@@ -987,84 +1013,21 @@
 
   .job-main span,
   .job-preview {
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.8rem;
   }
 
   .job-preview {
     grid-column: 1 / -1;
-    font-family: var(--font-mono);
-  }
-
-  .status-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: fit-content;
-    min-width: 4.5rem;
-    padding: 0.2rem 0.45rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    color: var(--fg-dim);
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-
-  .status-pill.active,
-  .status-pill.one-shot {
-    color: var(--success);
-    border-color: var(--success);
-  }
-
-  .status-pill.paused,
-  .status-pill.disabled {
-    color: var(--warning);
-    border-color: var(--warning);
   }
 
   .empty-row,
   .empty-detail {
     padding: 1rem;
-    color: var(--fg-dim);
-    border: 1px dashed var(--border);
-    border-radius: var(--radius);
+    color: var(--shadcn-muted-foreground);
+    border: 1px dashed var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
     text-align: center;
-  }
-
-  .btn,
-  .chip,
-  .link-btn {
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg-surface);
-    color: var(--fg);
-    padding: 0.55rem 0.8rem;
-    font: inherit;
-    cursor: pointer;
-  }
-
-  .btn:hover,
-  .chip:hover,
-  .link-btn:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-
-  .btn:disabled {
-    cursor: not-allowed;
-    opacity: 0.6;
-  }
-
-  .btn.danger {
-    color: var(--error);
-    border-color: var(--error);
-  }
-
-  .btn.subtle,
-  .link-btn,
-  .chip {
-    color: var(--fg-dim);
   }
 
   .runs-list {
@@ -1073,11 +1036,18 @@
     gap: 0.65rem;
   }
 
+  .edit-panel,
+  .runs-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
   .run-row {
     padding: 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--bg);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
   }
 
   .run-meta {
@@ -1085,35 +1055,35 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.82rem;
   }
 
   .run-meta strong {
-    color: var(--fg);
-    text-transform: uppercase;
+    color: var(--shadcn-foreground);
+  }
+
+  .mono {
+    font-family: var(--prin7r-font-mono-standard);
   }
 
   pre {
     margin: 0.75rem 0 0;
     padding: 0.75rem;
     overflow: auto;
-    color: var(--fg);
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
+    color: var(--shadcn-foreground);
+    background: var(--shadcn-muted);
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.78rem;
     white-space: pre-wrap;
     word-break: break-word;
   }
 
-  .raw-json {
-    padding: 0.75rem 1rem;
-  }
-
   .raw-json summary {
     cursor: pointer;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
   }
 
   @media (max-width: 980px) {

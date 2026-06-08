@@ -7,6 +7,11 @@
   import BoilerInstanceSelector from '$lib/components/nullboiler/BoilerInstanceSelector.svelte';
   import GraphViewer from '$lib/components/nullboiler/GraphViewer.svelte';
   import WorkflowJsonEditor from '$lib/components/nullboiler/WorkflowJsonEditor.svelte';
+  import { PageHeader } from '$lib/components/ui/page-header';
+  import { Button } from '$lib/components/ui/button';
+  import CheckIcon from '@lucide/svelte/icons/check';
+  import SaveIcon from '@lucide/svelte/icons/save';
+  import PlayIcon from '@lucide/svelte/icons/play';
 
   let id = $derived($page.params.id);
   let isNew = $derived(id === 'new');
@@ -118,30 +123,49 @@
 </script>
 
 <div class="editor-page">
-  <div class="toolbar">
-    <div class="toolbar-left">
-      <a href={nullboilerUiRoutes.workflows()} class="back-link">Workflows</a>
-      <span class="sep">/</span>
-      <span class="page-title">{isNew ? 'New Workflow' : (parsedWorkflow?.name || id)}</span>
-    </div>
-    <div class="toolbar-actions">
+  <PageHeader title={isNew ? 'New workflow' : (parsedWorkflow?.name || id)} subtitle="Workflow">
+    {#snippet controls()}
       <BoilerInstanceSelector onChange={handleBoilerChange} />
+    {/snippet}
+    {#snippet actions()}
       {#if !isNew}
-        <button class="tool-btn" onclick={validate} disabled={validating || !!parseError}>
-          {validating ? 'Validating...' : 'Validate'}
-        </button>
+        <Button
+          variant="outline"
+          size="icon-sm"
+          onclick={validate}
+          disabled={validating || !!parseError}
+          title={validating ? 'Validating…' : 'Validate'}
+          aria-label="Validate workflow"
+        >
+          <CheckIcon />
+        </Button>
       {/if}
-      <button class="tool-btn" onclick={save} disabled={saving || !!parseError}>
-        {saving ? 'Saving...' : 'Save'}
-      </button>
+      <Button
+        variant="outline"
+        size="icon-sm"
+        onclick={save}
+        disabled={saving || !!parseError}
+        title={saving ? 'Saving…' : 'Save'}
+        aria-label="Save workflow"
+      >
+        <SaveIcon />
+      </Button>
       {#if !isNew}
-        <button class="tool-btn run" onclick={run} disabled={!!parseError}>Run</button>
+        <Button
+          size="icon-sm"
+          onclick={run}
+          disabled={!!parseError}
+          title="Run"
+          aria-label="Run workflow"
+        >
+          <PlayIcon />
+        </Button>
       {/if}
-    </div>
-  </div>
+    {/snippet}
+  </PageHeader>
 
   {#if error}
-    <div class="error-banner">ERR: {error}</div>
+    <div class="error-banner">{error}</div>
   {/if}
 
   {#if validationResult}
@@ -173,88 +197,10 @@
 
 <style>
   .editor-page {
-    padding: 1.5rem;
-    max-width: 1600px;
-    margin: 0 auto;
     display: flex;
     flex-direction: column;
     gap: 1rem;
     height: calc(100vh - 3rem);
-  }
-  .toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.75rem 1rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-  }
-  .toolbar-left {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    min-width: 0;
-  }
-  .back-link {
-    font-size: 0.8125rem;
-    color: var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .back-link:hover {
-    text-shadow: var(--text-glow);
-  }
-  .sep {
-    color: var(--fg-dim);
-    font-size: 0.8125rem;
-  }
-  .page-title {
-    font-size: 0.875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .toolbar-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-  }
-  .tool-btn {
-    padding: 0.375rem 0.75rem;
-    background: var(--bg-surface);
-    color: var(--accent);
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
-  }
-  .tool-btn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
-  }
-  .tool-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
-  }
-  .tool-btn.run {
-    color: var(--success);
-    border-color: color-mix(in srgb, var(--success) 40%, transparent);
-    text-shadow: 0 0 4px var(--success);
-  }
-  .tool-btn.run:hover:not(:disabled) {
-    border-color: var(--success);
-    box-shadow: 0 0 8px color-mix(in srgb, var(--success) 30%, transparent);
   }
   .editor-panels {
     display: grid;
@@ -274,30 +220,27 @@
   }
   .error-banner {
     padding: 0.75rem 1rem;
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-    color: var(--error);
-    border: 1px solid var(--error);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
+    color: var(--shadcn-foreground);
     font-size: 0.875rem;
-    font-weight: bold;
-    text-shadow: 0 0 5px var(--error);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error) 20%, transparent);
   }
   .validation-result {
     padding: 0.625rem 1rem;
-    border-radius: 4px;
+    border-radius: var(--shadcn-radius);
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    color: var(--shadcn-foreground);
     font-size: 0.8125rem;
-    font-family: var(--font-mono);
   }
   .validation-result.valid {
-    background: color-mix(in srgb, var(--success) 10%, transparent);
-    color: var(--success);
-    border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
+    border-color: var(--shadcn-border);
+    color: var(--shadcn-foreground);
   }
   .validation-result.invalid {
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-    color: var(--error);
-    border: 1px solid color-mix(in srgb, var(--error) 40%, transparent);
+    border-color: color-mix(in srgb, var(--shadcn-destructive, #dc2626) 45%, var(--shadcn-border));
+    color: var(--shadcn-destructive, #dc2626);
   }
   .val-err {
     margin-top: 0.25rem;
@@ -306,7 +249,7 @@
   .loading {
     text-align: center;
     padding: 4rem 2rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
   }
   @media (max-width: 900px) {
     .editor-panels {

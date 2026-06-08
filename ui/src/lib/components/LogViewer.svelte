@@ -2,6 +2,9 @@
   import { onMount } from "svelte";
   import { api } from "$lib/api/client";
   import type { LogSource } from "$lib/api/client";
+  import { Button } from "$lib/components/ui/button";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
 
   let { component = "", name = "" } = $props();
   let lines = $state<string[]>([]);
@@ -57,7 +60,7 @@
 <div class="log-viewer">
   <div class="log-header">
     <div class="log-title-group">
-      <span>Logs</span>
+      <span class="log-title">Logs</span>
       <div class="source-switch" role="tablist" aria-label="Log source">
         {#each logSources as option}
           <button
@@ -72,7 +75,12 @@
       </div>
     </div>
     <div class="log-actions">
-      <button class="clear-btn" onclick={clearLogs}>Clear</button>
+      <Button variant="ghost" size="icon-sm" onclick={fetchLogs} title="Refresh logs" aria-label="Refresh logs">
+        <RefreshCwIcon />
+      </Button>
+      <Button variant="ghost" size="icon-sm" onclick={clearLogs} title="Clear logs" aria-label="Clear logs">
+        <Trash2Icon />
+      </Button>
       <label class="auto-scroll">
         <input type="checkbox" bind:checked={autoScroll} />
         Auto-scroll
@@ -94,10 +102,9 @@
     display: flex;
     flex-direction: column;
     height: 400px;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+    background: var(--shadcn-card);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
   }
   .log-header {
     display: flex;
@@ -105,12 +112,7 @@
     align-items: center;
     gap: 1rem;
     padding: 0.75rem 1rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-    font-size: 0.8125rem;
-    color: var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
+    border-bottom: 1px solid var(--shadcn-border);
   }
   .log-title-group {
     display: flex;
@@ -118,48 +120,48 @@
     gap: 1rem;
     min-width: 0;
   }
+  .log-title {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--shadcn-foreground);
+  }
   .source-switch {
     display: inline-flex;
     align-items: center;
-    gap: 0.375rem;
+    gap: 0.25rem;
     padding: 0.1875rem;
-    border: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--bg) 55%, transparent);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
   }
   .source-btn {
     padding: 0.3rem 0.65rem;
     border: 1px solid transparent;
-    border-radius: 2px;
+    border-radius: calc(var(--shadcn-radius) - 2px);
     background: transparent;
-    color: var(--fg-dim);
-    font-size: 0.6875rem;
-    font-family: var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, transform 0.15s ease, text-shadow 0.15s ease;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
   .source-btn:hover {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    box-shadow: none;
-    text-shadow: none;
+    background: var(--shadcn-accent);
+    color: var(--shadcn-foreground);
   }
   .source-btn.active {
-    color: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 55%, transparent);
-    background: color-mix(in srgb, var(--accent) 14%, transparent);
-    text-shadow: var(--text-glow);
-    box-shadow: inset 0 0 8px color-mix(in srgb, var(--accent) 18%, transparent);
+    color: var(--shadcn-foreground);
+    border-color: var(--shadcn-border);
+    background: var(--shadcn-background);
+    font-weight: 500;
   }
   .log-content {
     flex: 1;
     overflow-y: auto;
     padding: 1rem;
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.8125rem;
     line-height: 1.6;
-    color: var(--fg);
-    text-shadow: 0 0 2px color-mix(in srgb, var(--fg) 50%, transparent);
+    color: var(--shadcn-foreground);
   }
   .log-line {
     white-space: pre-wrap;
@@ -167,73 +169,50 @@
     margin-bottom: 0.125rem;
   }
   .log-line:hover {
-    background: color-mix(in srgb, var(--fg) 5%, transparent);
+    background: var(--shadcn-muted);
   }
   .log-empty {
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     text-align: center;
     padding: 3rem;
-    font-style: italic;
-    opacity: 0.7;
   }
   .log-actions {
     display: flex;
     align-items: center;
-    gap: 1rem;
-  }
-  .clear-btn {
-    padding: 0.25rem 0.75rem;
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    color: var(--accent);
-    font-size: 0.75rem;
-    font-family: var(--font-mono);
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-  .clear-btn:hover {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
-    text-shadow: var(--text-glow);
+    gap: 0.5rem;
   }
   .auto-scroll {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    font-size: 0.75rem;
-    color: var(--fg-dim);
+    font-size: 0.8125rem;
+    color: var(--shadcn-muted-foreground);
     cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
   }
   .auto-scroll input[type="checkbox"] {
     appearance: none;
     width: 14px;
     height: 14px;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 2px;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-background);
+    border-radius: 4px;
     position: relative;
     cursor: pointer;
   }
   .auto-scroll input[type="checkbox"]:checked {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    border-color: var(--accent);
-    box-shadow: inset 0 0 5px var(--accent);
+    background: var(--shadcn-foreground);
+    border-color: var(--shadcn-foreground);
   }
   .auto-scroll input[type="checkbox"]:checked::after {
     content: "";
     position: absolute;
     top: 2px;
-    left: 2px;
-    width: 8px;
-    height: 8px;
-    background: var(--accent);
-    border-radius: 1px;
-    box-shadow: 0 0 3px var(--border-glow);
+    left: 4px;
+    width: 4px;
+    height: 7px;
+    border: solid var(--shadcn-background);
+    border-width: 0 1.5px 1.5px 0;
+    transform: rotate(45deg);
   }
   @media (max-width: 760px) {
     .log-header {

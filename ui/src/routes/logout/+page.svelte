@@ -20,7 +20,10 @@
 </script>
 
 <main class="logout-page">
-  <p>Signing out...</p>
+  <div class="logout-card">
+    <span class="spinner" aria-hidden="true"></span>
+    <p>Signing out…</p>
+  </div>
 </main>
 
 <style>
@@ -28,10 +31,36 @@
     display: grid;
     min-height: 100vh;
     place-items: center;
-    background: var(--bg);
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    background: var(--shadcn-background);
+    color: var(--shadcn-muted-foreground);
+    font-family: var(--shadcn-font-sans);
+  }
+
+  .logout-card {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    font-size: 0.875rem;
+  }
+
+  .spinner {
+    width: 1rem;
+    height: 1rem;
+    border: 2px solid var(--shadcn-border);
+    border-top-color: var(--shadcn-foreground);
+    border-radius: 9999px;
+    animation: logout-spin 0.7s linear infinite;
+  }
+
+  @keyframes logout-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation: none;
+    }
   }
 </style>

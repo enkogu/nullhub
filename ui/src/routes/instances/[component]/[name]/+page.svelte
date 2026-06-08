@@ -2,7 +2,6 @@
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
-  import StatusBadge from "$lib/components/StatusBadge.svelte";
   import LogViewer from "$lib/components/LogViewer.svelte";
   import ConfigEditor from "$lib/components/ConfigEditor.svelte";
   import ChatPanel from "$lib/components/ChatPanel.svelte";
@@ -25,6 +24,22 @@
     setSelectedTicketsInstance,
   } from "$lib/nullstack/backendSelection";
   import { instanceRoute } from "$lib/nullstack/path";
+  import { PageHeader } from "$lib/components/ui/page-header";
+  import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
+  import { Button } from "$lib/components/ui/button";
+  import { Card } from "$lib/components/ui/card";
+  import { Input } from "$lib/components/ui/input";
+  import { Select } from "$lib/components/ui/select";
+  import { Textarea } from "$lib/components/ui/textarea";
+  import { Label } from "$lib/components/ui/label";
+  import { Switch } from "$lib/components/ui/switch";
+  import { Badge, type BadgeVariant } from "$lib/components/ui/badge";
+  import PlayIcon from "@lucide/svelte/icons/play";
+  import SquareIcon from "@lucide/svelte/icons/square";
+  import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import BotIcon from "@lucide/svelte/icons/bot";
+  import RadioIcon from "@lucide/svelte/icons/radio";
 
   let component = $derived($page.params.component);
   let name = $derived($page.params.name);
@@ -142,6 +157,21 @@
   let supportsVerboseStartup = $derived(component === "nullclaw");
   let instanceKind = $derived(component === "nullclaw" ? "Agent" : component);
   let instanceRouteKey = $derived(`${component}/${name}`);
+  const statusVariants: Record<string, BadgeVariant> = {
+    running: "success",
+    starting: "warning",
+    restarting: "warning",
+    stopping: "warning",
+    stopped: "muted",
+    failed: "destructive",
+  };
+  let statusValue = $derived(instance?.status || "stopped");
+  let statusVariant = $derived(statusVariants[statusValue] || "muted");
+  let headerSubtitle = $derived(
+    [instanceKind, instance?.version, instance?.port ? `port ${instance.port}` : ""]
+      .filter(Boolean)
+      .join(" · "),
+  );
   const routeTabs = new Set([
     "overview",
     "chat",
@@ -210,8 +240,8 @@
     return routeTabs.has(value) ? value : "";
   }
 
-  function selectTab(tab: string) {
-    activeTab = tab;
+  function syncTabHash(tab: string) {
+    if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
     url.hash = tab;
     window.history.replaceState(null, "", url);
@@ -926,6 +956,10 @@
   });
 
   $effect(() => {
+    if (routeTabs.has(activeTab)) syncTabHash(activeTab);
+  });
+
+  $effect(() => {
     const marker = onboardingPending
       ? `${instanceRouteKey}:${onboardingMarker || "bootstrap"}`
       : "";
@@ -1112,162 +1146,161 @@
 </script>
 
 <div class="instance-detail" class:docs-focus={activeTab === "docs"}>
-  <div class="detail-header">
-    <div>
-      <h1>{name}</h1>
-      <span class="component-tag">{instanceKind}</span>
-    </div>
-    <div class="actions">
-      <button class="btn" onclick={start} disabled={loading}>Start</button>
+  <PageHeader title={name} subtitle={headerSubtitle}>
+    {#snippet controls()}
+      <Badge variant={statusVariant}>{statusValue}</Badge>
+    {/snippet}
+    {#snippet actions()}
+      <Button
+        variant="outline"
+        size="icon-sm"
+        onclick={start}
+        disabled={loading}
+        title="Start"
+        aria-label="Start instance"
+      >
+        <PlayIcon />
+      </Button>
       {#if supportsAgentData}
-        <button class="btn" onclick={startAgent} disabled={loading}>Agent</button>
+        <Button
+          variant="outline"
+          size="sm"
+          onclick={startAgent}
+          disabled={loading}
+          title="Start in agent mode"
+        >
+          <BotIcon />
+          Agent
+        </Button>
       {/if}
-      <button class="btn danger" onclick={stop} disabled={loading}>Stop</button>
-      <button class="btn" onclick={restart} disabled={loading}>Restart</button>
+      <Button
+        variant="outline"
+        size="icon-sm"
+        onclick={stop}
+        disabled={loading}
+        title="Stop"
+        aria-label="Stop instance"
+      >
+        <SquareIcon />
+      </Button>
+      <Button
+        variant="outline"
+        size="icon-sm"
+        onclick={restart}
+        disabled={loading}
+        title="Restart"
+        aria-label="Restart instance"
+      >
+        <RotateCcwIcon />
+      </Button>
       {#if component === "nullwatch"}
-        <a class="btn" href={`/nullwatch?watch=${encodeURIComponent(name)}`}>NullWatch</a>
+        <Button
+          variant="outline"
+          size="sm"
+          href={`/nullwatch?watch=${encodeURIComponent(name)}`}
+          title="Open NullWatch"
+        >
+          <RadioIcon />
+          NullWatch
+        </Button>
       {/if}
-      <button class="btn danger" onclick={remove} disabled={loading}
-        >Delete</button
+      <Button
+        variant="destructive"
+        size="icon-sm"
+        onclick={remove}
+        disabled={loading}
+        title="Delete"
+        aria-label="Delete instance"
       >
-    </div>
-  </div>
+        <Trash2Icon />
+      </Button>
+    {/snippet}
+  </PageHeader>
 
-  <div class="tabs">
-    <button
-      class:active={activeTab === "overview"}
-      onclick={() => selectTab("overview")}>Overview</button
-    >
-    {#if supportsChat}
-      <button
-        class:active={activeTab === "chat"}
-        class:disabled-tab={!chatReady}
-        onclick={() => selectTab("chat")}
-        >Chat{#if !providerStatus.configured}<span class="tab-warn">!</span
-          >{/if}</button
-      >
-    {/if}
-    {#if supportsAgentData}
-      <button
-        class:active={activeTab === "history"}
-        onclick={() => selectTab("history")}>History</button
-      >
-      <button
-        class:active={activeTab === "memory"}
-        onclick={() => selectTab("memory")}>Memory</button
-      >
-      <button
-        class:active={activeTab === "skills"}
-        onclick={() => selectTab("skills")}>Skills</button
-      >
-      <button
-        class:active={activeTab === "mcp"}
-        onclick={() => selectTab("mcp")}>MCP</button
-      >
-      <button
-        class:active={activeTab === "hooks"}
-        onclick={() => selectTab("hooks")}>Hooks</button
-      >
-      <button
-        class:active={activeTab === "cron"}
-        onclick={() => selectTab("cron")}>Cron</button
-      >
-    {/if}
-    {#if supportsTicketsUi}
-      <button
-        class:active={activeTab === "tickets"}
-        onclick={() => selectTab("tickets")}>Tickets</button
-      >
-    {/if}
-    <button
-      class:active={activeTab === "docs"}
-      onclick={() => selectTab("docs")}>Docs</button
-    >
-    {#if supportsBoilerUi}
-      <button
-        class:active={activeTab === "boiler"}
-        onclick={() => selectTab("boiler")}>Boiler</button
-      >
-    {/if}
-    <button
-      class:active={activeTab === "config"}
-      onclick={() => selectTab("config")}>Config</button
-    >
-    <button
-      class:active={activeTab === "logs"}
-      onclick={() => selectTab("logs")}>Logs</button
-    >
-    <button
-      class:active={activeTab === "advanced"}
-      onclick={() => selectTab("advanced")}>Advanced</button
-    >
-  </div>
+  <Tabs bind:value={activeTab} class="instance-tabs">
+    <TabsList>
+      <TabsTrigger value="overview">Overview</TabsTrigger>
+      {#if supportsChat}
+        <TabsTrigger value="chat">
+          Chat{#if !providerStatus.configured}<span class="tab-warn">!</span>{/if}
+        </TabsTrigger>
+      {/if}
+      {#if supportsAgentData}
+        <TabsTrigger value="history">History</TabsTrigger>
+        <TabsTrigger value="memory">Memory</TabsTrigger>
+        <TabsTrigger value="skills">Skills</TabsTrigger>
+        <TabsTrigger value="mcp">MCP</TabsTrigger>
+        <TabsTrigger value="hooks">Hooks</TabsTrigger>
+        <TabsTrigger value="cron">Cron</TabsTrigger>
+      {/if}
+      {#if supportsTicketsUi}
+        <TabsTrigger value="tickets">Tickets</TabsTrigger>
+      {/if}
+      <TabsTrigger value="docs">Docs</TabsTrigger>
+      {#if supportsBoilerUi}
+        <TabsTrigger value="boiler">Boiler</TabsTrigger>
+      {/if}
+      <TabsTrigger value="config">Config</TabsTrigger>
+      <TabsTrigger value="logs">Logs</TabsTrigger>
+      <TabsTrigger value="advanced">Advanced</TabsTrigger>
+    </TabsList>
+  </Tabs>
 
   <div class="tab-content">
     {#if activeTab === "overview"}
       <div class="overview-grid">
-        <div class="info-card">
+        <Card class="info-card">
           <span class="label">Status</span>
-          <StatusBadge status={instance?.status || "stopped"} />
-        </div>
-        <div class="info-card">
+          <Badge variant={statusVariant}>{statusValue}</Badge>
+        </Card>
+        <Card class="info-card">
           <span class="label">Version</span>
           <span>{instance?.version || "-"}</span>
-        </div>
-        <div class="info-card">
+        </Card>
+        <Card class="info-card">
           <span class="label">Launch Mode</span>
-          <span class="mode-value">{displayLaunchMode(instance?.launch_mode)}</span>
-        </div>
-        <div class="info-card">
-          <span class="label">Auto Start</span>
-          <button
-            class="toggle-btn"
-            class:on={instance?.auto_start}
-            onclick={toggleAutoStart}
-          >
-            <span class="toggle-track"><span class="toggle-thumb"></span></span>
-            {instance?.auto_start ? "On" : "Off"}
-          </button>
-        </div>
+          <span>{displayLaunchMode(instance?.launch_mode)}</span>
+        </Card>
+        <Card class="info-card">
+          <Label class="toggle-row">
+            <span class="label">Auto Start</span>
+            <Switch checked={Boolean(instance?.auto_start)} onclick={toggleAutoStart} />
+          </Label>
+        </Card>
         {#if supportsVerboseStartup}
-          <div class="info-card">
-            <span class="label">Verbose</span>
-            <button
-              class="toggle-btn"
-              class:on={instance?.verbose}
-              onclick={toggleVerbose}
-            >
-              <span class="toggle-track"><span class="toggle-thumb"></span></span>
-              {instance?.verbose ? "On" : "Off"}
-            </button>
-          </div>
+          <Card class="info-card">
+            <Label class="toggle-row">
+              <span class="label">Verbose</span>
+              <Switch checked={Boolean(instance?.verbose)} onclick={toggleVerbose} />
+            </Label>
+          </Card>
         {/if}
         {#if instance?.pid}
-          <div class="info-card">
+          <Card class="info-card">
             <span class="label">PID</span>
             <span class="mono">{instance.pid}</span>
-          </div>
+          </Card>
         {/if}
         {#if instance?.status === "running" && instance?.uptime_seconds != null}
-          <div class="info-card">
+          <Card class="info-card">
             <span class="label">Uptime</span>
             <span>{formatUptime(instance.uptime_seconds)}</span>
-          </div>
+          </Card>
         {/if}
         {#if instance?.port}
-          <div class="info-card">
+          <Card class="info-card">
             <span class="label">{componentPortLabel(component)} Port</span>
             <span class="mono">{instance.port}</span>
-          </div>
+          </Card>
         {/if}
         {#if instance?.restart_count}
-          <div class="info-card">
+          <Card class="info-card">
             <span class="label">Restart Count</span>
             <span>{instance.restart_count}</span>
-          </div>
+          </Card>
         {/if}
         {#if providerStatus.provider}
-          <div class="info-card" class:card-warn={providerCardWarn}>
+          <Card class={providerCardWarn ? "info-card card-warn" : "info-card"}>
             <span class="label">Provider</span>
             <div class="provider-status">
               <span
@@ -1280,22 +1313,22 @@
             {#if providerHintText}
               <span class="provider-hint">{providerHintText}</span>
             {/if}
-          </div>
+          </Card>
         {/if}
         {#if providerStatus.model}
-          <div class="info-card">
+          <Card class="info-card">
             <span class="label">Model</span>
             <span>{providerStatus.model}</span>
-          </div>
+          </Card>
         {/if}
         {#if webPort}
-          <div class="info-card">
+          <Card class="info-card">
             <span class="label">Web Channel Port</span>
             <span class="mono">{webPort}</span>
-          </div>
+          </Card>
         {/if}
         {#if supportsIntegration}
-          <div class="info-card integration-card">
+          <Card class="info-card integration-card">
             <div class="integration-header">
               <span class="label"
                 >{component === "nullclaw"
@@ -1353,19 +1386,21 @@
 
               {#if watchOptions.length > 0}
                 <div class="integration-form">
-                  <label class="integration-field">
+                  <Label class="integration-field">
                     <span>Local observer</span>
-                    <select bind:value={selectedWatch} disabled={linkingIntegration}>
+                    <Select bind:value={selectedWatch} disabled={linkingIntegration}>
                       <option value="">Select NullWatch</option>
                       {#each watchOptions as watch}
                         <option value={watch.name}>
                           {watch.name} ({watch.port}){watch.running ? "" : " - stopped"}
                         </option>
                       {/each}
-                    </select>
-                  </label>
-                  <button
-                    class="btn integration-btn"
+                    </Select>
+                  </Label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="integration-btn"
                     onclick={linkNullWatch}
                     disabled={linkingIntegration || !selectedWatch}
                   >
@@ -1374,13 +1409,16 @@
                       : linkedWatch
                         ? "Relink NullWatch"
                         : "Link NullWatch"}
-                  </button>
+                  </Button>
                   {#if linkedWatch}
-                    <a
-                      class="btn integration-btn"
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      class="integration-btn"
                       href={`/nullwatch?watch=${encodeURIComponent(linkedWatch.name)}`}
-                      >Open NullWatch</a
                     >
+                      Open NullWatch
+                    </Button>
                   {/if}
                 </div>
               {:else}
@@ -1399,9 +1437,9 @@
                             >{claw.running ? "running" : "stopped"}</span
                           >
                         </div>
-                        <a class="btn integration-btn" href={instanceRoute("nullclaw", claw.name)}
-                          >Open</a
-                        >
+                        <Button variant="outline" size="sm" class="integration-btn" href={instanceRoute("nullclaw", claw.name)}>
+                          Open
+                        </Button>
                       </div>
                     {/each}
                   </div>
@@ -1412,29 +1450,34 @@
 
               {#if clawOptions.length > 0}
                 <div class="integration-form">
-                  <label class="integration-field">
+                  <Label class="integration-field">
                     <span>Local Agent</span>
-                    <select bind:value={selectedClaw} disabled={linkingIntegration}>
+                    <Select bind:value={selectedClaw} disabled={linkingIntegration}>
                       <option value="">Select Agent</option>
                       {#each clawOptions as claw}
                         <option value={claw.name}>
                           {claw.name}{claw.linked ? " - linked" : ""}{claw.running ? "" : " - stopped"}
                         </option>
                       {/each}
-                    </select>
-                  </label>
-                  <button
-                    class="btn integration-btn"
+                    </Select>
+                  </Label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="integration-btn"
                     onclick={linkNullClawToWatch}
                     disabled={linkingIntegration || !selectedClaw}
                   >
                     {linkingIntegration ? "Linking..." : "Link Agent"}
-                  </button>
-                  <a
-                    class="btn integration-btn"
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="integration-btn"
                     href={`/nullwatch?watch=${encodeURIComponent(name)}`}
-                    >Open NullWatch</a
                   >
+                    Open NullWatch
+                  </Button>
                 </div>
               {:else}
                 <span class="integration-muted">Install an agent to send telemetry here.</span>
@@ -1538,82 +1581,88 @@
               {/if}
 
               <div class="integration-actions">
-                <button
-                  class="btn integration-btn"
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="integration-btn"
                   onclick={() => openBoilerRoute(nullboilerUiRoutes.workflows())}
                 >
                   Workflows
-                </button>
-                <button
-                  class="btn integration-btn"
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="integration-btn"
                   onclick={() => openBoilerRoute(nullboilerUiRoutes.runs())}
                 >
                   Runs
-                </button>
+                </Button>
               </div>
 
               <div class="integration-form">
-                <label class="integration-field">
+                <Label class="integration-field">
                   <span>Local tracker</span>
-                  <select bind:value={selectedTracker} disabled={linkingIntegration}>
+                  <Select bind:value={selectedTracker} disabled={linkingIntegration}>
                     <option value="">Select tracker</option>
                     {#each trackerOptions as tracker}
                       <option value={tracker.name}>
                         {tracker.name} ({tracker.port}){tracker.running ? "" : " - stopped"}
                       </option>
                     {/each}
-                  </select>
-                </label>
-                <label class="integration-field">
+                  </Select>
+                </Label>
+                <Label class="integration-field">
                   <span>Pipeline</span>
                   {#if selectedTrackerPipelines.length > 0}
-                    <select bind:value={selectedPipeline} disabled={linkingIntegration}>
+                    <Select bind:value={selectedPipeline} disabled={linkingIntegration}>
                       <option value="">Select pipeline</option>
                       {#each selectedTrackerPipelines as pipeline}
                         <option value={pipeline.id}>
                           {pipeline.name || pipeline.id} ({pipeline.id})
                         </option>
                       {/each}
-                    </select>
+                    </Select>
                   {:else}
-                    <input bind:value={selectedPipeline} placeholder="pipeline-id" />
+                    <Input bind:value={selectedPipeline} placeholder="pipeline-id" />
                   {/if}
-                </label>
-                <label class="integration-field">
+                </Label>
+                <Label class="integration-field">
                   <span>Claim role</span>
                   {#if selectedPipelineRoles.length > 0}
-                    <select bind:value={trackerClaimRole} disabled={linkingIntegration}>
+                    <Select bind:value={trackerClaimRole} disabled={linkingIntegration}>
                       {#each selectedPipelineRoles as role}
                         <option value={role}>{role}</option>
                       {/each}
-                    </select>
+                    </Select>
                   {:else}
-                    <input bind:value={trackerClaimRole} placeholder="coder" />
+                    <Input bind:value={trackerClaimRole} placeholder="coder" />
                   {/if}
-                </label>
-                <label class="integration-field">
+                </Label>
+                <Label class="integration-field">
                   <span>Success trigger</span>
                   {#if selectedPipelineTriggers.length > 0}
-                    <select bind:value={trackerSuccessTrigger} disabled={linkingIntegration}>
+                    <Select bind:value={trackerSuccessTrigger} disabled={linkingIntegration}>
                       {#each selectedPipelineTriggers as trigger}
                         <option value={trigger}>{trigger}</option>
                       {/each}
-                    </select>
+                    </Select>
                   {:else}
-                    <input bind:value={trackerSuccessTrigger} placeholder="complete" />
+                    <Input bind:value={trackerSuccessTrigger} placeholder="complete" />
                   {/if}
-                </label>
-                <label class="integration-field">
+                </Label>
+                <Label class="integration-field">
                   <span>Concurrency</span>
-                  <input bind:value={trackerConcurrency} inputmode="numeric" />
-                </label>
-                <button
-                  class="btn integration-btn"
+                  <Input bind:value={trackerConcurrency} inputmode="numeric" />
+                </Label>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="integration-btn"
                   onclick={linkTracker}
                   disabled={linkingIntegration || !selectedTracker || !selectedPipeline.trim()}
                 >
                   {linkingIntegration ? "Linking..." : "Link Tracker"}
-                </button>
+                </Button>
               </div>
             {:else}
               <div class="integration-block">
@@ -1655,16 +1704,18 @@
               </div>
 
               <div class="integration-actions">
-                <button class="btn integration-btn" onclick={openTicketsStore}>
+                <Button variant="outline" size="sm" class="integration-btn" onclick={openTicketsStore}>
                   Store
-                </button>
-                <button
-                  class="btn integration-btn"
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  class="integration-btn"
                   onclick={() => refreshTicketsData(true)}
                   disabled={ticketsDataLoading || integration?.instance?.running !== true}
                 >
                   {ticketsDataLoading ? "Refreshing..." : "Refresh"}
-                </button>
+                </Button>
               </div>
 
               {#if ticketsDataError}
@@ -1679,74 +1730,78 @@
               <div class="integration-block">
                 <span class="integration-title">Task Actions</span>
                 <div class="integration-form">
-                  <label class="integration-field">
+                  <Label class="integration-field">
                     <span>Pipeline</span>
                     {#if ticketsPipelines.length > 0}
-                      <select bind:value={ticketTaskPipeline} disabled={ticketsDataLoading}>
+                      <Select bind:value={ticketTaskPipeline} disabled={ticketsDataLoading}>
                         {#each ticketsPipelines as pipeline}
                           <option value={pipelineId(pipeline)}>
                             {pipelineName(pipeline)} ({pipelineId(pipeline)})
                           </option>
                         {/each}
-                      </select>
+                      </Select>
                     {:else}
-                      <input bind:value={ticketTaskPipeline} placeholder="pipeline-id" />
+                      <Input bind:value={ticketTaskPipeline} placeholder="pipeline-id" />
                     {/if}
-                  </label>
-                  <label class="integration-field">
+                  </Label>
+                  <Label class="integration-field">
                     <span>Title</span>
-                    <input bind:value={ticketTaskTitle} placeholder="Task title" />
-                  </label>
-                  <label class="integration-field">
+                    <Input bind:value={ticketTaskTitle} placeholder="Task title" />
+                  </Label>
+                  <Label class="integration-field">
                     <span>Priority</span>
-                    <input bind:value={ticketTaskPriority} inputmode="numeric" />
-                  </label>
-                  <label class="integration-field wide">
+                    <Input bind:value={ticketTaskPriority} inputmode="numeric" />
+                  </Label>
+                  <Label class="integration-field wide">
                     <span>Description</span>
-                    <textarea bind:value={ticketTaskDescription} rows="3"></textarea>
-                  </label>
-                  <button
-                    class="btn integration-btn"
+                    <Textarea bind:value={ticketTaskDescription} rows="3" />
+                  </Label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="integration-btn"
                     onclick={createTicketTask}
                     disabled={ticketsDataLoading || integration?.instance?.running !== true || !ticketTaskPipeline.trim() || !ticketTaskTitle.trim()}
                   >
                     Create Task
-                  </button>
+                  </Button>
                 </div>
               </div>
 
               <div class="integration-block">
                 <span class="integration-title">Claim Next</span>
                 <div class="integration-form">
-                  <label class="integration-field">
+                  <Label class="integration-field">
                     <span>Agent</span>
-                    <input bind:value={ticketClaimAgent} placeholder="nullhub" />
-                  </label>
-                  <label class="integration-field">
+                    <Input bind:value={ticketClaimAgent} placeholder="nullhub" />
+                  </Label>
+                  <Label class="integration-field">
                     <span>Role</span>
                     {#if queueSummary.roles.length > 0}
-                      <select bind:value={ticketClaimRole} disabled={ticketsDataLoading}>
+                      <Select bind:value={ticketClaimRole} disabled={ticketsDataLoading}>
                         {#each queueSummary.roles as role}
                           <option value={role.role}>
                             {role.role} ({role.claimable_count || 0})
                           </option>
                         {/each}
-                      </select>
+                      </Select>
                     {:else}
-                      <input bind:value={ticketClaimRole} placeholder="coder" />
+                      <Input bind:value={ticketClaimRole} placeholder="coder" />
                     {/if}
-                  </label>
-                  <label class="integration-field">
+                  </Label>
+                  <Label class="integration-field">
                     <span>Lease TTL ms</span>
-                    <input bind:value={ticketClaimTtl} inputmode="numeric" />
-                  </label>
-                  <button
-                    class="btn integration-btn"
+                    <Input bind:value={ticketClaimTtl} inputmode="numeric" />
+                  </Label>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    class="integration-btn"
                     onclick={claimTicketTask}
                     disabled={ticketsDataLoading || integration?.instance?.running !== true || !ticketClaimRole.trim()}
                   >
                     Claim Task
-                  </button>
+                  </Button>
                 </div>
                 {#if claimedTicket?.task}
                   <span class="integration-muted">
@@ -1794,18 +1849,18 @@
                 <span class="integration-muted">No linked NullBoiler instances detected.</span>
               {/if}
             {/if}
-          </div>
+          </Card>
         {/if}
         {#if supportsUsage}
-          <div class="info-card usage-card">
+          <Card class="info-card usage-card">
             <div class="usage-header">
               <span class="label">LLM Usage</span>
-              <select class="usage-window" bind:value={usageWindow}>
+              <Select class="usage-window" bind:value={usageWindow}>
                 <option value="24h">24h</option>
                 <option value="7d">7d</option>
                 <option value="30d">30d</option>
                 <option value="all">All</option>
-              </select>
+              </Select>
             </div>
             {#if usageLoading}
               <span class="usage-empty">Loading usage...</span>
@@ -1846,7 +1901,7 @@
                 Total: {formatTokens(usageData.totals.total_tokens)} tokens in {usageData.totals.requests || 0} request(s)
               </div>
             {/if}
-          </div>
+          </Card>
         {/if}
       </div>
     {:else if activeTab === "history"}
@@ -1968,9 +2023,9 @@
             No API key found for provider <code
               >{providerStatus.provider || "unknown"}</code
             >. Set up a provider API key in the
-            <button class="link-btn" onclick={() => (activeTab = "config")}
-              >Config</button
-            > tab to use chat.
+            <Button variant="link" class="h-auto p-0 align-baseline" onclick={() => (activeTab = "config")}>
+              Config
+            </Button> tab to use chat.
           </div>
           {#if providerStatus.model}
             <div class="chat-blocked-model">
@@ -1993,9 +2048,10 @@
                 <span class="chat-onboarding-note">
                   Auto-starts with <code>{onboardingStarterMessage}</code>
                 </span>
-                <button
+                <Button
+                  variant="ghost"
+                  size="sm"
                   class="chat-onboarding-hide"
-                  type="button"
                   aria-label="Hide bootstrap setup notice"
                   onclick={(event) => {
                     event.preventDefault();
@@ -2003,7 +2059,7 @@
                   }}
                 >
                   Hide
-                </button>
+                </Button>
               </summary>
               <div class="chat-onboarding-body">
                 This first chat helps define the agent's name, nature, vibe, emoji, and how it
@@ -2034,121 +2090,27 @@
     padding: 2rem;
     max-width: 1200px;
     margin: 0 auto;
-  }
-  .detail-header {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    margin-bottom: 2rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-    padding-bottom: 1rem;
+    flex-direction: column;
+    gap: 1.5rem;
   }
-  .detail-header h1 {
-    font-size: 2rem;
-    font-weight: 700;
-    margin-bottom: 0.5rem;
-    color: var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    text-shadow: var(--text-glow);
-  }
-  .component-tag {
-    padding: 0.25rem 0.5rem;
-    background: color-mix(in srgb, var(--border) 20%, transparent);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .actions {
-    display: flex;
-    gap: 0.75rem;
-  }
-  .btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.5rem 1rem;
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    background: var(--bg-surface);
-    color: var(--accent);
-    font-size: 0.8125rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
-    text-decoration: none;
-  }
-  .btn:hover {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    text-shadow: 0 0 8px var(--accent);
-  }
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    box-shadow: none;
-    text-shadow: none;
-  }
-  .btn.danger {
-    color: var(--error);
-    border-color: color-mix(in srgb, var(--error) 50%, transparent);
-    text-shadow: 0 0 5px var(--error);
-  }
-  .btn.danger:hover {
-    background: color-mix(in srgb, var(--error) 15%, transparent);
-    border-color: var(--error);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error) 50%, transparent);
-  }
-  .tabs {
-    display: flex;
-    gap: 0;
-    border-bottom: 1px solid var(--border);
-    margin-bottom: 1.5rem;
-  }
-  .tabs button {
-    padding: 0.75rem 1.5rem;
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--fg-dim);
-    font-size: 0.875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-  .tabs button:hover {
-    color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 5%, transparent);
-  }
-  .tabs button.active {
-    color: var(--accent);
-    border-bottom-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    text-shadow: var(--text-glow);
-  }
+
   .tab-content {
     min-height: 400px;
   }
+
+  /* Docs tab takes over the full surface; hide chrome. */
   .instance-detail.docs-focus {
     max-width: none;
     height: calc(100% + 3rem);
     margin: -1.5rem;
     padding: 0;
+    gap: 0;
   }
-  .docs-focus .detail-header {
+  .docs-focus :global(header.page-header) {
     display: none;
   }
-  .docs-focus .tabs {
+  .docs-focus :global(.instance-tabs) {
     display: none;
   }
   .docs-focus .tab-content {
@@ -2156,33 +2118,83 @@
     height: 100%;
     overflow: hidden;
   }
+
+  .tab-warn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1rem;
+    height: 1rem;
+    margin-left: 0.25rem;
+    border-radius: 9999px;
+    background: var(--shadcn-destructive);
+    color: #fff;
+    font-size: 0.625rem;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  /* Overview grid of Cards */
   .overview-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 1.5rem;
-  }
-  .info-card {
-    display: flex;
-    flex-direction: column;
-    gap: 0.75rem;
-    padding: 1.5rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    backdrop-filter: blur(4px);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-  .info-card:hover {
-    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-  }
-  .usage-card {
-    grid-column: 1 / -1;
-  }
-  .integration-card {
-    grid-column: 1 / -1;
     gap: 1rem;
   }
+  :global(.info-card) {
+    gap: 0.5rem;
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+  :global(.usage-card),
+  :global(.integration-card) {
+    grid-column: 1 / -1;
+  }
+
+  .label {
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--shadcn-muted-foreground);
+  }
+
+  :global(.toggle-row) {
+    justify-content: space-between;
+  }
+
+  .mono {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8125rem;
+    color: var(--shadcn-foreground);
+  }
+
+  /* Provider status */
+  .provider-status {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--shadcn-foreground);
+  }
+  .status-dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 9999px;
+    background: var(--shadcn-muted-foreground);
+  }
+  .status-dot.ok {
+    background: #10b981;
+  }
+  .status-dot.err {
+    background: var(--shadcn-destructive);
+  }
+  .provider-hint {
+    font-size: 0.75rem;
+    color: var(--shadcn-destructive);
+  }
+  :global(.info-card.card-warn) {
+    border-color: color-mix(in srgb, var(--shadcn-destructive) 35%, var(--shadcn-border));
+  }
+
+  /* Integration card internals */
   .integration-header {
     display: flex;
     align-items: center;
@@ -2190,15 +2202,13 @@
     gap: 1rem;
   }
   .integration-badge {
-    padding: 0.2rem 0.5rem;
-    border: 1px solid color-mix(in srgb, var(--success, #166534) 50%, transparent);
-    color: var(--success, #166534);
-    background: color-mix(in srgb, var(--success, #166534) 12%, transparent);
-    border-radius: 2px;
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
+    padding: 0.125rem 0.5rem;
+    border: 1px solid #a7f3d0;
+    color: #047857;
+    background: #ecfdf5;
+    border-radius: var(--radius-md, calc(var(--shadcn-radius) - 2px));
+    font-size: 0.6875rem;
+    font-weight: 500;
   }
   .integration-block {
     display: flex;
@@ -2207,25 +2217,21 @@
   }
   .integration-title {
     font-size: 0.8125rem;
-    color: var(--fg);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    color: var(--shadcn-foreground);
+    font-weight: 600;
   }
   .integration-muted {
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.8125rem;
   }
   .integration-error {
-    color: var(--error);
+    color: var(--shadcn-destructive);
     font-size: 0.8125rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
   }
   .integration-stats {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
-    gap: 0.75rem;
+    gap: 0.5rem;
   }
   .integration-stats.compact {
     grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
@@ -2234,16 +2240,14 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
-    padding: 0.75rem;
-    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-    background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
-    border-radius: 2px;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-background);
+    border-radius: var(--radius-md, calc(var(--shadcn-radius) - 2px));
   }
   .stat-label {
-    color: var(--accent-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.6875rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
   }
   .integration-form {
     display: grid;
@@ -2254,78 +2258,50 @@
   .integration-actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.75rem;
+    gap: 0.5rem;
   }
-  .integration-field {
-    display: flex;
+  :global(.integration-field) {
     flex-direction: column;
-    gap: 0.4rem;
+    align-items: stretch;
+    gap: 0.375rem;
   }
-  .integration-field.wide {
+  :global(.integration-field.wide) {
     grid-column: 1 / -1;
   }
-  .integration-field span {
-    color: var(--accent-dim);
-    font-size: 0.6875rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+  :global(.integration-field > span) {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 500;
   }
-  .integration-field select,
-  .integration-field input,
-  .integration-field textarea {
-    padding: 0.6rem 0.7rem;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    background: var(--bg-surface);
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-  }
-  .integration-field select:focus,
-  .integration-field input:focus,
-  .integration-field textarea:focus {
-    border-color: var(--accent);
-  }
-  .integration-field textarea {
-    min-height: 84px;
-    resize: vertical;
-  }
-  .integration-btn {
-    min-height: 42px;
+  :global(.integration-btn) {
+    align-self: end;
   }
   .integration-list {
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
+    gap: 0.5rem;
   }
   .integration-list-item {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    padding: 0.85rem 1rem;
-    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-    background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
-    border-radius: 2px;
+    padding: 0.75rem 0.875rem;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-background);
+    border-radius: var(--radius-md, calc(var(--shadcn-radius) - 2px));
   }
+
+  /* Usage */
   .usage-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
   }
-  .usage-window {
-    min-width: 90px;
-    padding: 0.25rem 0.5rem;
-    background: var(--bg-surface);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-  }
-  .usage-window:focus {
-    border-color: var(--accent);
+  :global(.usage-window) {
+    width: auto;
+    min-width: 6rem;
   }
   .usage-table-wrap {
     overflow-x: auto;
@@ -2339,131 +2315,28 @@
   .usage-table td {
     text-align: left;
     padding: 0.5rem 0.625rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border-bottom: 1px solid var(--shadcn-border);
     white-space: nowrap;
   }
   .usage-table th {
-    color: var(--accent-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    color: var(--shadcn-muted-foreground);
     font-size: 0.6875rem;
+    font-weight: 500;
   }
   .usage-table td {
-    color: var(--fg);
+    color: var(--shadcn-foreground);
   }
   .usage-empty {
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.8125rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
   }
   .usage-total {
     margin-top: 0.5rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
   }
-  .label {
-    font-size: 0.75rem;
-    color: var(--accent-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
-  }
-  .mode-value {
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
-    font-size: 0.85rem;
-    color: var(--accent);
-    text-shadow: var(--text-glow);
-  }
-  .toggle-btn {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    background: none;
-    border: none;
-    color: var(--fg);
-    font-size: 0.875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    padding: 0;
-  }
-  .toggle-btn:hover:not(:disabled) {
-    background: none;
-    border-color: transparent;
-    box-shadow: none;
-    text-shadow: none;
-  }
-  .toggle-track {
-    position: relative;
-    width: 36px;
-    height: 20px;
-    background: var(--bg-surface);
-    border: none;
-    border-radius: 2px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
-  }
-  .toggle-thumb {
-    position: absolute;
-    top: 2px;
-    left: 2px;
-    width: 14px;
-    height: 14px;
-    background: var(--fg-dim);
-    border-radius: 2px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-  .toggle-btn.on .toggle-track {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    box-shadow: inset 0 0 8px color-mix(in srgb, var(--accent) 30%, transparent);
-  }
-  .toggle-btn.on .toggle-thumb {
-    transform: translateX(16px);
-    background: var(--accent);
-    box-shadow: 0 0 5px var(--border-glow);
-  }
-  .mono {
-    font-family: var(--font-mono);
-    color: var(--accent);
-    text-shadow: var(--text-glow);
-    font-size: 0.875rem;
-  }
-  .chat-unavailable {
-    color: var(--fg-dim);
-    text-align: center;
-    padding: 4rem;
-    font-size: 1rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    border: 1px dashed var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
-  }
-  .tab-warn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--warning, #777777) 20%, transparent);
-    color: var(--warning, #777777);
-    border: 1px solid var(--warning, #777777);
-    font-size: 0.7rem;
-    font-weight: 700;
-    margin-left: 0.5rem;
-    vertical-align: middle;
-    box-shadow: 0 0 5px var(--warning, #777777);
-  }
-  .disabled-tab {
-    opacity: 0.5;
-  }
+
+  /* Advanced tab */
   .advanced-panel {
     display: flex;
     flex-direction: column;
@@ -2471,28 +2344,27 @@
   }
   .advanced-card {
     padding: 1.25rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
   }
   .advanced-card h3 {
     margin: 0 0 0.75rem;
-    color: var(--accent);
+    color: var(--shadcn-foreground);
     font-size: 1rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    font-weight: 600;
   }
   .advanced-card p {
     margin: 0;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     line-height: 1.6;
   }
   .advanced-code {
     margin: 1rem 0;
     padding: 1rem;
-    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--bg) 55%, var(--bg-surface) 45%);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
     overflow-x: auto;
   }
   .advanced-copy-row {
@@ -2502,29 +2374,26 @@
     margin-bottom: -0.5rem;
   }
   .advanced-copy-hint {
-    color: var(--accent-dim);
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 500;
   }
   .advanced-code-copy {
     display: block;
     width: 100%;
     text-align: left;
     cursor: copy;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    transition: border-color 0.15s ease, background 0.15s ease;
   }
   .advanced-code-copy:hover,
-  .advanced-code-copy:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-    background: color-mix(in srgb, var(--bg) 48%, var(--bg-surface) 52%);
+  .advanced-code-copy:focus-visible {
+    border-color: var(--shadcn-ring);
+    outline: none;
   }
   .advanced-code code {
-    font-family: var(--font-mono);
-    font-size: 0.9rem;
-    color: var(--fg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.85rem;
+    color: var(--shadcn-foreground);
     white-space: pre;
   }
   .advanced-meta {
@@ -2536,21 +2405,36 @@
     display: flex;
     flex-direction: column;
     gap: 0.25rem;
-    padding: 0.85rem 0.9rem;
-    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-    border-radius: var(--radius);
-    background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
+    padding: 0.75rem 0.875rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--radius-md, calc(var(--shadcn-radius) - 2px));
+    background: var(--shadcn-background);
   }
   .advanced-label {
-    color: var(--accent-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
+    font-weight: 500;
+  }
+  .advanced-meta code,
+  .advanced-card code {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8125rem;
+    color: var(--shadcn-foreground);
   }
   .advanced-note {
     margin-top: 0.9rem !important;
     font-size: 0.82rem;
+  }
+
+  /* Chat blocked / unavailable */
+  .chat-unavailable {
+    color: var(--shadcn-muted-foreground);
+    text-align: center;
+    padding: 4rem;
+    font-size: 0.95rem;
+    border: 1px dashed var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
   }
   .chat-blocked {
     display: flex;
@@ -2560,63 +2444,48 @@
     padding: 4rem 2rem;
     gap: 1rem;
     text-align: center;
-    border: 1px dashed var(--warning, #777777);
-    background: color-mix(in srgb, var(--warning, #777777) 5%, transparent);
-    border-radius: 4px;
+    border: 1px dashed var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
   }
   .chat-blocked-icon {
-    width: 64px;
-    height: 64px;
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--warning, #777777) 15%, transparent);
-    border: 1px solid var(--warning, #777777);
-    color: var(--warning, #777777);
+    width: 3.5rem;
+    height: 3.5rem;
+    border-radius: 9999px;
+    background: var(--shadcn-muted);
+    border: 1px solid var(--shadcn-border);
+    color: var(--shadcn-muted-foreground);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 2rem;
-    font-weight: 700;
-    text-shadow: 0 0 8px var(--warning, #777777);
-    box-shadow: 0 0 15px
-      color-mix(in srgb, var(--warning, #777777) 30%, transparent);
+    font-size: 1.75rem;
+    font-weight: 600;
   }
   .chat-blocked-title {
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--warning, #777777);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    text-shadow: 0 0 5px var(--warning, #777777);
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--shadcn-foreground);
   }
   .chat-blocked-desc {
-    color: var(--fg);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.9rem;
     max-width: 450px;
     line-height: 1.6;
   }
-  .chat-blocked-desc code {
-    padding: 0.125rem 0.375rem;
-    background: color-mix(in srgb, var(--warning, #777777) 10%, transparent);
-    border: 1px solid
-      color-mix(in srgb, var(--warning, #777777) 30%, transparent);
-    border-radius: 2px;
-    font-family: var(--font-mono);
-    font-size: 0.8125rem;
-    color: var(--warning, #777777);
-  }
-  .chat-blocked-model {
-    color: var(--fg-dim);
-    font-size: 0.8125rem;
-    margin-top: 0.5rem;
-  }
+  .chat-blocked-desc code,
   .chat-blocked-model code {
     padding: 0.125rem 0.375rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    color: var(--accent);
+    background: var(--shadcn-muted);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--radius-sm, calc(var(--shadcn-radius) - 4px));
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8125rem;
+    color: var(--shadcn-foreground);
+  }
+  .chat-blocked-model {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.8125rem;
+    margin-top: 0.5rem;
   }
   .chat-stack {
     display: flex;
@@ -2624,10 +2493,10 @@
     gap: 0.75rem;
   }
   .chat-onboarding {
-    border: 1px solid var(--border);
-    background: color-mix(in srgb, var(--bg-surface) 70%, transparent);
-    border-radius: 6px;
-    color: var(--fg-dim);
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
+    color: var(--shadcn-muted-foreground);
   }
   .chat-onboarding-summary {
     display: flex;
@@ -2642,13 +2511,13 @@
     display: none;
   }
   .chat-onboarding-title {
-    color: var(--fg);
+    color: var(--shadcn-foreground);
     font-size: 0.75rem;
-    font-weight: 700;
+    font-weight: 600;
   }
   .chat-onboarding-note,
   .chat-onboarding-body {
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
     line-height: 1.4;
   }
@@ -2657,76 +2526,21 @@
     flex: 1;
   }
   .chat-onboarding code {
-    color: var(--fg);
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    color: var(--shadcn-foreground);
+    background: var(--shadcn-muted);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--radius-sm, calc(var(--shadcn-radius) - 4px));
     padding: 0.0625rem 0.25rem;
     font-size: 0.75rem;
   }
   .chat-onboarding-body {
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--shadcn-border);
     padding: 0.5rem 0.625rem 0.625rem;
   }
-  .chat-onboarding-hide {
-    border: 0;
-    background: transparent;
-    color: var(--fg-dim);
-    cursor: pointer;
-    font-size: 0.75rem;
-    font-weight: 600;
-    padding: 0.25rem 0.375rem;
-    border-radius: 4px;
+  :global(.chat-onboarding-hide) {
+    margin-left: auto;
   }
-  .chat-onboarding-hide:hover {
-    background: var(--bg-muted);
-    color: var(--fg);
-  }
-  .link-btn {
-    background: none;
-    border: none;
-    color: var(--warning, #777777);
-    cursor: pointer;
-    font-size: inherit;
-    text-decoration: underline;
-    font-weight: 700;
-    padding: 0;
-  }
-  .link-btn:hover {
-    text-shadow: 0 0 5px var(--warning, #777777);
-  }
-  .card-warn {
-    border-color: color-mix(in srgb, var(--warning, #777777) 40%, transparent);
-    background: color-mix(in srgb, var(--warning, #777777) 5%, transparent);
-  }
-  .provider-status {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-  }
-  .status-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-  }
-  .status-dot.ok {
-    background: var(--success, #166534);
-    box-shadow: 0 0 8px var(--success, #166534);
-  }
-  .status-dot.err {
-    background: var(--warning, #777777);
-    box-shadow: 0 0 8px var(--warning, #777777);
-  }
-  .provider-hint {
-    font-size: 0.75rem;
-    color: var(--warning, #777777);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
-    margin-top: 0.25rem;
-  }
+
   @media (max-width: 700px) {
     .integration-list-item {
       flex-direction: column;

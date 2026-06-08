@@ -2,6 +2,14 @@
   import { onMount } from "svelte";
   import { api } from "$lib/api/client";
   import { channelSchemas } from './configSchemas';
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Select } from "$lib/components/ui/select";
+  import { Label } from "$lib/components/ui/label";
+  import { Card } from "$lib/components/ui/card";
+  import { Badge } from "$lib/components/ui/badge";
+  import PlusIcon from "@lucide/svelte/icons/plus";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
 
   let {
     value = {} as Record<string, Record<string, Record<string, any>>>,
@@ -138,15 +146,15 @@
 
 {#snippet channelField(entry: { type: string; account: string }, field: any)}
   <div class="channel-field">
-    <label for={`ch-${entry.type}-${entry.account}-${field.key}`}>
+    <Label for={`ch-${entry.type}-${entry.account}-${field.key}`}>
       {field.label}
       {#if field.hint}
         <span class="field-hint">{field.hint}</span>
       {/if}
-    </label>
+    </Label>
 
     {#if field.type === 'password'}
-      <input
+      <Input
         id={`ch-${entry.type}-${entry.account}-${field.key}`}
         type="password"
         value={getFieldValue(entry.type, entry.account, field.key, field.default)}
@@ -154,7 +162,7 @@
         placeholder="Enter value..."
       />
     {:else if field.type === 'number'}
-      <input
+      <Input
         id={`ch-${entry.type}-${entry.account}-${field.key}`}
         type="number"
         value={getFieldValue(entry.type, entry.account, field.key, field.default)}
@@ -170,7 +178,7 @@
         <span class="toggle-slider"></span>
       </label>
     {:else if field.type === 'select'}
-      <select
+      <Select
         id={`ch-${entry.type}-${entry.account}-${field.key}`}
         value={getFieldValue(entry.type, entry.account, field.key, field.default)}
         onchange={(e) => updateField(entry.type, entry.account, field.key, e.currentTarget.value)}
@@ -178,9 +186,9 @@
         {#each field.options || [] as opt}
           <option value={opt}>{opt}</option>
         {/each}
-      </select>
+      </Select>
     {:else if field.type === 'list'}
-      <input
+      <Input
         id={`ch-${entry.type}-${entry.account}-${field.key}`}
         type="text"
         value={(getFieldValue(entry.type, entry.account, field.key, field.default) || []).join(', ')}
@@ -188,7 +196,7 @@
         placeholder={field.hint || "Comma-separated values..."}
       />
     {:else}
-      <input
+      <Input
         id={`ch-${entry.type}-${entry.account}-${field.key}`}
         type="text"
         value={getFieldValue(entry.type, entry.account, field.key, field.default)}
@@ -210,7 +218,7 @@
       <label class="toggle-row">
         <input type="checkbox" checked disabled />
         <span class="channel-label">{channelSchemas[ch]?.label || ch.toUpperCase()}</span>
-        <span class="default-badge">default</span>
+        <Badge variant="muted">Default</Badge>
       </label>
     </div>
   {/each}
@@ -218,17 +226,27 @@
   {#each addedChannels as entry, i}
     {@const schema = channelSchemas[entry.type]}
     {@const result = getValidationResult(entry.type, entry.account)}
-    <div class="channel-row">
+    <Card class="channel-row px-5">
       <div class="channel-row-header">
-        {#if result}
-          <span class="status-dot" class:ok={result.live_ok} class:error={!result.live_ok}
-            title={result.reason}></span>
-        {/if}
         <span class="channel-name">{schema?.label || entry.type}</span>
         {#if schema?.hasAccounts && isNamedAccount(entry.account)}
           <span class="account-name">{entry.account}</span>
         {/if}
-        <button class="icon-btn remove-btn" onclick={() => removeChannel(i)} aria-label="Remove channel" title="Remove"><span aria-hidden="true">&#215;</span></button>
+        {#if result}
+          <Badge variant={result.live_ok ? "success" : "destructive"} title={result.reason}>
+            {result.live_ok ? "Connected" : "Failed"}
+          </Badge>
+        {/if}
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          class="danger-icon remove-btn"
+          onclick={() => removeChannel(i)}
+          aria-label="Remove channel"
+          title="Remove"
+        >
+          <Trash2Icon />
+        </Button>
       </div>
 
       <div class="channel-fields">
@@ -246,26 +264,29 @@
           </details>
         {/if}
       </div>
-    </div>
+    </Card>
   {/each}
 
   {#if showAddPicker}
-    <div class="add-picker">
+    <Card class="add-picker px-5">
       {#each availableChannelTypes as ct}
-        <button class="picker-option" onclick={() => addChannel(ct.key)}>
+        <Button variant="outline" size="sm" onclick={() => addChannel(ct.key)}>
           {ct.label}
-        </button>
+        </Button>
       {/each}
-      <button class="picker-cancel" onclick={() => (showAddPicker = false)}>Cancel</button>
-    </div>
+      <Button variant="ghost" size="sm" onclick={() => (showAddPicker = false)}>Cancel</Button>
+    </Card>
   {:else}
     <div class="add-row">
-      <button class="add-btn" onclick={() => (showAddPicker = true)}>+ Add Channel</button>
+      <Button variant="outline" class="add-btn" onclick={() => (showAddPicker = true)}>
+        <PlusIcon />
+        Add channel
+      </Button>
       {#if savedChannels.length > 0}
         <div class="saved-dropdown-container">
-          <button class="add-btn saved-btn" onclick={toggleSavedDropdown} disabled={loadingSavedChannels}>
-            {loadingSavedChannels ? "Loading..." : showSavedDropdown ? "Close" : "Use Saved"}
-          </button>
+          <Button variant="secondary" onclick={toggleSavedDropdown} disabled={loadingSavedChannels}>
+            {loadingSavedChannels ? "Loading..." : showSavedDropdown ? "Close" : "Use saved"}
+          </Button>
           {#if showSavedDropdown}
             <div class="saved-dropdown">
               {#each savedChannels as sc}
@@ -292,31 +313,26 @@
 
   .step-title {
     display: block;
-    font-size: 0.9rem;
-    font-weight: 700;
-    color: var(--accent);
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--shadcn-foreground);
     margin-bottom: 0.25rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    text-shadow: var(--text-glow);
   }
 
   .step-description {
     font-size: 0.8rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     margin-bottom: 1rem;
-    font-family: var(--font-mono);
   }
 
   .channel-default {
     padding: 0.75rem 1rem;
     margin-bottom: 0.5rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
+    background: var(--shadcn-card);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
     display: flex;
     align-items: center;
-    opacity: 0.7;
   }
 
   .toggle-row {
@@ -326,72 +342,44 @@
     cursor: default;
   }
 
-  .toggle-row input[type="checkbox"] { accent-color: var(--accent); }
+  .toggle-row input[type="checkbox"] { accent-color: var(--shadcn-primary); }
 
   .channel-label {
     font-size: 0.875rem;
-    font-weight: 700;
-    color: var(--fg);
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    font-weight: 500;
+    color: var(--shadcn-foreground);
   }
 
-  .default-badge {
-    font-size: 0.65rem;
-    font-weight: 700;
-    background: color-mix(in srgb, var(--fg-dim) 20%, transparent);
-    color: var(--fg-dim);
-    border: 1px solid var(--border);
-    padding: 0.1rem 0.35rem;
-    border-radius: 2px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-
-  .channel-row {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    padding: 1rem;
+  :global(.channel-row.channel-row) {
+    gap: 0.75rem;
     margin-bottom: 0.75rem;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-
-  .channel-row:hover {
-    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.2);
   }
 
   .channel-row-header {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    margin-bottom: 0.75rem;
   }
 
   .channel-name {
-    font-weight: 700;
+    font-weight: 600;
     font-size: 0.875rem;
-    color: var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    text-shadow: var(--text-glow);
+    color: var(--shadcn-foreground);
     flex: 1;
   }
 
   .account-name {
     font-size: 0.75rem;
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
+    color: var(--shadcn-muted-foreground);
+    font-family: var(--prin7r-font-mono-standard);
   }
 
   .channel-fields { display: flex; flex-direction: column; gap: 0.75rem; }
 
   .advanced-section {
     margin-top: 0.25rem;
-    border: 1px solid var(--border);
-    border-radius: 2px;
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
     padding: 0 0.75rem;
   }
 
@@ -403,14 +391,12 @@
     cursor: pointer;
     padding: 0.6rem 0;
     font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
+    font-weight: 600;
+    color: var(--shadcn-muted-foreground);
   }
 
   .advanced-section summary:hover {
-    color: var(--accent);
+    color: var(--shadcn-foreground);
   }
 
   .advanced-fields {
@@ -419,147 +405,30 @@
     gap: 0.75rem;
   }
 
-  .channel-field label {
-    display: block;
-    font-size: 0.75rem;
-    color: var(--fg-dim);
-    margin-bottom: 0.35rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 700;
+  .channel-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
   }
 
   .field-hint {
     font-weight: 400;
     font-size: 0.65rem;
-    color: color-mix(in srgb, var(--fg-dim) 70%, transparent);
-    letter-spacing: 0;
-    text-transform: none;
+    color: var(--shadcn-muted-foreground);
     margin-left: 0.5rem;
   }
 
-  .channel-field input,
-  .channel-field select {
-    width: 100%;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    padding: 0.5rem 0.75rem;
-    color: var(--fg);
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+  :global(.danger-icon) {
+    color: var(--shadcn-destructive);
+  }
+  :global(.danger-icon:hover) {
+    color: var(--shadcn-destructive);
   }
 
-  .channel-field input:focus,
-  .channel-field select:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
-  }
-
-  .status-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: var(--radius);
-    flex-shrink: 0;
-  }
-  .status-dot.ok {
-    background: var(--success, #4a4);
-    box-shadow: 0 0 6px var(--success, #4a4);
-  }
-  .status-dot.error {
-    background: var(--error, #e55);
-    box-shadow: 0 0 6px var(--error, #e55);
-  }
-
-  .icon-btn {
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    color: var(--fg-dim);
-    font-size: 1rem;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-  .remove-btn:hover {
-    background: color-mix(in srgb, var(--error, #e55) 15%, transparent);
-    border-color: var(--error, #e55);
-    color: var(--error, #e55);
-    box-shadow: 0 0 5px color-mix(in srgb, var(--error, #e55) 50%, transparent);
-  }
-
-  .add-picker {
-    display: flex;
+  :global(.add-picker) {
+    flex-direction: row;
     flex-wrap: wrap;
     gap: 0.5rem;
-    padding: 1rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-  }
-
-  .picker-option {
-    padding: 0.5rem 0.75rem;
-    background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    color: var(--fg);
-    font-size: 0.8rem;
-    font-family: var(--font-mono);
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-
-  .picker-option:hover {
-    border-color: var(--accent);
-    color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    box-shadow: 0 0 8px var(--border-glow);
-    text-shadow: var(--text-glow);
-  }
-
-  .picker-cancel {
-    padding: 0.5rem 0.75rem;
-    background: none;
-    border: 1px dashed var(--border);
-    border-radius: 2px;
-    color: var(--fg-dim);
-    font-size: 0.8rem;
-    cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .picker-cancel:hover { border-color: var(--fg-dim); color: var(--fg); }
-
-  .add-btn {
-    width: 100%;
-    padding: 0.75rem;
-    background: color-mix(in srgb, var(--bg-surface) 50%, transparent);
-    border: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
-    border-radius: 2px;
-    color: var(--fg-dim);
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-  .add-btn:hover {
-    border-color: var(--accent);
-    border-style: solid;
-    color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    box-shadow: 0 0 8px var(--border-glow);
-    text-shadow: var(--text-glow);
   }
 
   .add-row {
@@ -567,7 +436,7 @@
     gap: 0.5rem;
   }
 
-  .add-row .add-btn {
+  :global(.add-btn) {
     flex: 1;
   }
 
@@ -587,11 +456,10 @@
   .toggle-slider {
     position: absolute;
     inset: 0;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+    background: var(--shadcn-secondary);
+    border: 1px solid var(--shadcn-border);
+    border-radius: 999px;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
   }
   .toggle-slider::before {
     content: "";
@@ -600,47 +468,31 @@
     height: 16px;
     left: 4px;
     top: 3px;
-    background: var(--fg-dim);
-    border-radius: 2px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
+    background: var(--shadcn-muted-foreground);
+    border-radius: 999px;
+    transition: background-color 0.15s ease, transform 0.15s ease;
   }
   .toggle input:checked + .toggle-slider {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    border-color: var(--accent);
-    box-shadow: inset 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
+    background: var(--shadcn-primary);
+    border-color: var(--shadcn-primary);
   }
   .toggle input:checked + .toggle-slider::before {
     transform: translateX(18px);
-    background: var(--accent);
-    box-shadow: 0 0 5px var(--border-glow);
+    background: var(--shadcn-primary-foreground);
   }
 
-  .saved-btn {
-    border-style: solid !important;
-    border-color: var(--accent-dim) !important;
-    color: var(--accent) !important;
-    width: auto !important;
-    padding: 0.75rem 1.25rem !important;
-  }
-  .saved-btn:hover:not(:disabled) {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    box-shadow: 0 0 8px var(--border-glow);
-    text-shadow: var(--text-glow);
-  }
-  .saved-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   .saved-dropdown {
     position: absolute;
     bottom: 100%;
     right: 0;
     min-width: 220px;
-    background: var(--bg-surface);
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
+    background: var(--shadcn-card);
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
     max-height: 200px;
     overflow-y: auto;
     z-index: 10;
-    box-shadow: 0 0 15px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
     margin-bottom: 0.25rem;
   }
   .saved-item {
@@ -650,27 +502,23 @@
     padding: 0.625rem 1rem;
     background: none;
     border: none;
-    border-bottom: 1px solid var(--border);
-    color: var(--fg);
+    border-bottom: 1px solid var(--shadcn-border);
+    color: var(--shadcn-foreground);
     cursor: pointer;
-    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease, transform 0.15s ease, text-shadow 0.15s ease;
+    transition: background-color 0.15s ease, color 0.15s ease;
     text-align: left;
-    font-family: var(--font-mono);
   }
   .saved-item:last-child { border-bottom: none; }
   .saved-item:hover {
-    background: var(--bg-hover);
-    color: var(--accent);
+    background: var(--shadcn-accent);
   }
   .saved-name {
     font-size: 0.875rem;
-    font-weight: 700;
+    font-weight: 600;
   }
   .saved-type {
     font-size: 0.75rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     margin-top: 0.125rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
   }
 </style>

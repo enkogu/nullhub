@@ -5,6 +5,8 @@
   import WizardRenderer from '$lib/components/WizardRenderer.svelte';
   import { api, type StandaloneInfo } from '$lib/api/client';
   import { instanceRoute } from '$lib/nullstack/path';
+  import { Card } from '$lib/components/ui/card';
+  import { Button } from '$lib/components/ui/button';
 
   let componentName = $derived($page.params.component);
   let wizardData = $state<any>(null);
@@ -123,36 +125,38 @@
 </script>
 
 <div class="wizard-page">
-  <div class="existing-install">
-    <div>
-      <div class="existing-title">Already Have {displayName}</div>
-      <div class="existing-detail">
+  <Card class="mb-4 flex-row items-center justify-between gap-4 px-5">
+    <div class="min-w-0">
+      <div class="text-sm font-medium text-foreground">Already have {displayName}</div>
+      <div class="existing-detail mt-1 text-sm text-muted-foreground">
         {#if standalone?.standalone && standalone.standalone_path}
           {#if standalone.already_imported}
             Default install is already added.
           {:else}
-            Default install detected at {standalone.standalone_path}
+            Default install detected at <code>{standalone.standalone_path}</code>
           {/if}
         {:else}
           Add a local {displayName} home.
         {/if}
       </div>
     </div>
-    <button
-      type="button"
-      class="existing-btn"
+    <Button
+      variant="outline"
+      class="shrink-0"
       onclick={openExistingDialog}
       disabled={dialogImporting}
     >
       {existingButtonLabel}
-    </button>
-  </div>
+    </Button>
+  </Card>
 
   {#if wizardError}
-    <div class="wizard-error">
-      <p>{wizardError}</p>
-      <button onclick={() => goto('/install')}>Back</button>
-    </div>
+    <Card class="items-center px-5 text-center">
+      <p class="text-sm text-foreground">{wizardError}</p>
+      <div>
+        <Button variant="outline" onclick={() => goto('/install')}>Back</Button>
+      </div>
+    </Card>
   {:else if wizardData}
     <WizardRenderer
       component={componentName}
@@ -161,7 +165,7 @@
       onComplete={() => goto('/')}
     />
   {:else}
-    <p>Loading wizard...</p>
+    <p class="text-sm text-muted-foreground">Loading wizard...</p>
   {/if}
 </div>
 
@@ -178,87 +182,24 @@
 
 <style>
   .wizard-page { max-width: 600px; margin: 0 auto; }
-  .existing-install {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    margin-bottom: 1rem;
-    padding: 1rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--bg-surface) 85%, transparent);
-  }
-  .existing-title {
-    color: var(--accent);
-    font-size: 0.8rem;
-    font-weight: 700;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-  }
+
   .existing-detail {
-    margin-top: 0.35rem;
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: 0.78rem;
-    line-height: 1.45;
     overflow-wrap: anywhere;
   }
-  .existing-btn {
-    flex: 0 0 auto;
-    padding: 0.65rem 0.9rem;
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    color: var(--accent);
-    cursor: pointer;
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    white-space: nowrap;
+
+  .existing-detail code {
+    font-family: var(--prin7r-font-mono-standard);
+    font-size: 0.8125em;
+    color: var(--shadcn-foreground);
   }
-  .existing-btn:hover {
-    border-color: var(--accent);
-    box-shadow: 0 0 10px var(--border-glow);
-  }
-  .existing-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    box-shadow: none;
-  }
-  .wizard-error {
-    background: var(--bg-secondary);
-    border: 1px solid color-mix(in srgb, var(--error) 30%, transparent);
-    border-radius: var(--radius);
-    padding: 2rem;
-    text-align: center;
-  }
-  .wizard-error p {
-    color: var(--text-primary);
-    margin-bottom: 1rem;
-    font-size: 0.9rem;
-  }
-  .wizard-error button {
-    padding: 0.4rem 1rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    background: var(--bg-tertiary);
-    color: var(--text-primary);
-    font-size: 0.8125rem;
-    cursor: pointer;
-  }
-  .wizard-error button:hover {
-    background: var(--bg-hover);
-    border-color: var(--accent);
-  }
+
   @media (max-width: 640px) {
-    .existing-install {
-      align-items: stretch;
+    .wizard-page :global([data-slot="card"]:first-child) {
       flex-direction: column;
+      align-items: stretch;
     }
 
-    .existing-btn {
+    .wizard-page :global([data-slot="card"]:first-child [data-slot="button"]) {
       width: 100%;
     }
   }

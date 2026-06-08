@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api } from '$lib/api/client';
+  import { PageHeader } from '$lib/components/ui/page-header';
+  import { Card } from '$lib/components/ui/card';
+  import { Select } from '$lib/components/ui/select';
 
   type WindowOption = '24h' | '7d' | '30d' | 'all';
 
@@ -179,20 +182,22 @@
 </script>
 
 <div class="dashboard">
-  <div class="header">
-    <h1>Dashboard</h1>
-    <div class="window-selector">
-      {#each Object.entries(windowLabels) as [value, label]}
-        <button
-          class:active={selectedWindow === value}
-          onclick={() => changeWindow(value as WindowOption)}
-        >{label}</button>
-      {/each}
-    </div>
-  </div>
+  <PageHeader title="Dashboard" subtitle="Token usage across your models and bots.">
+    {#snippet controls()}
+      <Select
+        value={selectedWindow}
+        onchange={(e: Event) => changeWindow((e.currentTarget as HTMLSelectElement).value as WindowOption)}
+        aria-label="Time window"
+      >
+        {#each Object.entries(windowLabels) as [value, label]}
+          <option {value}>{label}</option>
+        {/each}
+      </Select>
+    {/snippet}
+  </PageHeader>
 
   {#if error}
-    <div class="error-banner">ERR: {error}</div>
+    <div class="error-banner">{error}</div>
   {/if}
 
   {#if loading && !data}
@@ -200,32 +205,42 @@
   {:else if data}
     <!-- Summary Cards -->
     <div class="cards">
-      <div class="card">
-        <div class="card-label">Total Tokens</div>
-        <div class="card-value">{formatNumber(data.totals.total_tokens)}</div>
-        <div class="card-sub">
-          <span class="prompt">{formatNumber(data.totals.prompt_tokens)} in</span>
-          <span class="completion">{formatNumber(data.totals.completion_tokens)} out</span>
+      <Card class="px-5">
+        <div class="stat">
+          <div class="stat-label">Total Tokens</div>
+          <div class="stat-value">{formatNumber(data.totals.total_tokens)}</div>
+          <div class="stat-sub">
+            <span>{formatNumber(data.totals.prompt_tokens)} in</span>
+            <span>{formatNumber(data.totals.completion_tokens)} out</span>
+          </div>
         </div>
-      </div>
-      <div class="card">
-        <div class="card-label">Requests</div>
-        <div class="card-value">{formatNumber(data.totals.requests)}</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Active Models</div>
-        <div class="card-value">{activeModels}</div>
-      </div>
-      <div class="card">
-        <div class="card-label">Active Bots</div>
-        <div class="card-value">{activeBots}</div>
-      </div>
+      </Card>
+      <Card class="px-5">
+        <div class="stat">
+          <div class="stat-label">Requests</div>
+          <div class="stat-value">{formatNumber(data.totals.requests)}</div>
+        </div>
+      </Card>
+      <Card class="px-5">
+        <div class="stat">
+          <div class="stat-label">Active Models</div>
+          <div class="stat-value">{activeModels}</div>
+        </div>
+      </Card>
+      <Card class="px-5">
+        <div class="stat">
+          <div class="stat-label">Active Bots</div>
+          <div class="stat-value">{activeBots}</div>
+        </div>
+      </Card>
     </div>
 
     <!-- Token Usage Over Time -->
     {#if data.timeseries.length > 0}
-      <div class="chart-section">
-        <h2>Token Usage Over Time</h2>
+      <Card class="px-5">
+        <div class="section-head">
+          <h2>Token Usage Over Time</h2>
+        </div>
         <div class="chart-container">
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <svg
@@ -264,25 +279,27 @@
             {@const pt = data.timeseries[hoveredPoint]}
             <div class="chart-tooltip">
               <div class="tt-date">{formatDate(pt.bucket_start)}</div>
-              <div class="tt-row"><span class="dot" style="background:#00d4ff"></span> Prompt: {formatNumber(pt.prompt_tokens)}</div>
-              <div class="tt-row"><span class="dot" style="background:#7b61ff"></span> Completion: {formatNumber(pt.completion_tokens)}</div>
+              <div class="tt-row"><span class="dot dot-prompt"></span> Prompt: {formatNumber(pt.prompt_tokens)}</div>
+              <div class="tt-row"><span class="dot dot-completion"></span> Completion: {formatNumber(pt.completion_tokens)}</div>
               <div class="tt-row">Requests: {pt.requests.toLocaleString()}</div>
             </div>
           {/if}
 
           <div class="legend">
-            <span class="legend-item"><span class="dot" style="background: #00d4ff"></span> Prompt</span>
-            <span class="legend-item"><span class="dot" style="background: #7b61ff"></span> Completion</span>
+            <span class="legend-item"><span class="dot dot-prompt"></span> Prompt</span>
+            <span class="legend-item"><span class="dot dot-completion"></span> Completion</span>
           </div>
         </div>
-      </div>
+      </Card>
     {/if}
 
     <!-- Bar Charts Row -->
     <div class="chart-row">
       {#if sortedModels.length > 0}
-        <div class="chart-section half">
-          <h2>Tokens by Model</h2>
+        <Card class="px-5">
+          <div class="section-head">
+            <h2>Tokens by Model</h2>
+          </div>
           <div class="bar-list">
             {#each sortedModels.slice(0, 10) as item}
               {@const maxTokens = sortedModels[0]?.total_tokens || 1}
@@ -298,12 +315,14 @@
               </div>
             {/each}
           </div>
-        </div>
+        </Card>
       {/if}
 
       {#if sortedInstances.length > 0}
-        <div class="chart-section half">
-          <h2>Tokens by Bot</h2>
+        <Card class="px-5">
+          <div class="section-head">
+            <h2>Tokens by Bot</h2>
+          </div>
           <div class="bar-list">
             {#each sortedInstances.slice(0, 10) as item}
               {@const maxTokens = sortedInstances[0]?.total_tokens || 1}
@@ -319,14 +338,16 @@
               </div>
             {/each}
           </div>
-        </div>
+        </Card>
       {/if}
     </div>
 
     <!-- Detail Table -->
     {#if sortedModels.length > 0}
-      <div class="chart-section">
-        <h2>Usage Details</h2>
+      <Card class="px-5">
+        <div class="section-head">
+          <h2>Usage Details</h2>
+        </div>
         <div class="table-wrap">
           <table>
             <thead>
@@ -355,12 +376,12 @@
             </tbody>
           </table>
         </div>
-      </div>
+      </Card>
     {/if}
 
     {#if !data.by_model?.length && !data.by_instance?.length}
       <div class="empty-state">
-        <p>> No usage data recorded yet.</p>
+        <p>No usage data recorded yet.</p>
         <p>Token usage will appear here once your bots start processing requests.</p>
       </div>
     {/if}
@@ -372,162 +393,104 @@
     padding: 2rem;
     max-width: 1400px;
     margin: 0 auto;
-  }
-  .header {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 2rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
+    flex-direction: column;
+    gap: 1.5rem;
   }
-  h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    text-shadow: var(--text-glow);
-    text-transform: uppercase;
-    letter-spacing: 2px;
-  }
-  h2 {
+
+  .section-head h2 {
+    margin: 0;
     font-size: 1rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 1rem;
-    color: var(--fg-dim);
-  }
-  .window-selector {
-    display: flex;
-    gap: 0.25rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 0.25rem;
-  }
-  .window-selector button {
-    padding: 0.375rem 0.75rem;
-    background: transparent;
-    color: var(--fg-dim);
-    border: 1px solid transparent;
-    border-radius: 3px;
-    font-size: 0.75rem;
     font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-  .window-selector button:hover {
-    color: var(--fg);
-    background: var(--bg-hover);
-  }
-  .window-selector button.active {
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    color: var(--accent);
-    border-color: var(--accent-dim);
-    text-shadow: var(--text-glow);
+    color: var(--shadcn-foreground);
   }
 
   .cards {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 1rem;
-    margin-bottom: 2rem;
   }
-  .card {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1.25rem;
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
   }
-  .card-label {
+  .stat-label {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--shadcn-muted-foreground);
+  }
+  .stat-value {
+    font-size: 1.875rem;
+    font-weight: 600;
+    color: var(--shadcn-foreground);
+    line-height: 1.1;
+  }
+  .stat-sub {
     font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
-    margin-bottom: 0.5rem;
-  }
-  .card-value {
-    font-size: 2rem;
-    font-weight: 700;
-    color: var(--accent);
-    text-shadow: var(--text-glow);
-    font-family: var(--font-mono);
-  }
-  .card-sub {
-    margin-top: 0.375rem;
-    font-size: 0.75rem;
+    color: var(--shadcn-muted-foreground);
     display: flex;
     gap: 0.75rem;
   }
-  .card-sub .prompt { color: #00d4ff; }
-  .card-sub .completion { color: #7b61ff; }
 
-  .chart-section {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    padding: 1.5rem;
-    margin-bottom: 1.5rem;
-  }
   .chart-container {
     position: relative;
   }
   .area-chart {
     width: 100%;
     height: auto;
+    color: var(--shadcn-foreground);
   }
   .area-chart :global(.grid-line) {
-    stroke: var(--border);
+    stroke: var(--shadcn-border);
     stroke-width: 0.5;
     stroke-dasharray: 4 4;
   }
-  .area-chart :global(.y-label) {
-    fill: var(--fg-dim);
+  .area-chart :global(.y-label),
+  .area-chart :global(.x-label) {
+    fill: var(--shadcn-muted-foreground);
     font-size: 10px;
+  }
+  .area-chart :global(.y-label) {
     text-anchor: end;
-    font-family: var(--font-mono);
   }
   .area-chart :global(.x-label) {
-    fill: var(--fg-dim);
-    font-size: 10px;
     text-anchor: middle;
-    font-family: var(--font-mono);
   }
   .area-chart :global(.area-prompt) {
-    fill: #00d4ff;
-    opacity: 0.6;
+    fill: var(--shadcn-foreground);
+    opacity: 0.85;
   }
   .area-chart :global(.area-completion) {
-    fill: #7b61ff;
-    opacity: 0.6;
+    fill: var(--shadcn-muted-foreground);
+    opacity: 0.45;
   }
   .area-chart :global(.hover-line) {
-    stroke: var(--accent);
+    stroke: var(--shadcn-foreground);
     stroke-width: 1;
     stroke-dasharray: 3 3;
-    opacity: 0.8;
+    opacity: 0.6;
   }
 
   .chart-tooltip {
     position: absolute;
     top: 0.5rem;
     right: 0.5rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 4px;
+    background: var(--shadcn-popover);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
     padding: 0.5rem 0.75rem;
     font-size: 0.75rem;
     pointer-events: none;
     z-index: 10;
   }
   .tt-date {
-    font-weight: 700;
-    color: var(--fg);
+    font-weight: 600;
+    color: var(--shadcn-foreground);
     margin-bottom: 0.25rem;
   }
   .tt-row {
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     display: flex;
     align-items: center;
     gap: 0.375rem;
@@ -539,7 +502,7 @@
     justify-content: center;
     margin-top: 0.75rem;
     font-size: 0.75rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
   }
   .legend-item {
     display: flex;
@@ -552,13 +515,16 @@
     border-radius: 50%;
     display: inline-block;
   }
+  .dot-prompt {
+    background: var(--shadcn-foreground);
+  }
+  .dot-completion {
+    background: var(--shadcn-muted-foreground);
+  }
   .chart-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 1.5rem;
-  }
-  .chart-section.half {
-    margin-bottom: 1.5rem;
   }
 
   .bar-list {
@@ -574,32 +540,31 @@
   }
   .bar-label {
     font-size: 0.75rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
   }
   .bar-track {
     height: 20px;
-    background: var(--bg-hover);
-    border-radius: 2px;
+    background: var(--shadcn-muted);
+    border-radius: 0.25rem;
     display: flex;
     overflow: hidden;
   }
   .bar-fill.prompt {
-    background: #00d4ff;
+    background: var(--shadcn-foreground);
     height: 100%;
     transition: width 0.3s ease;
   }
   .bar-fill.completion {
-    background: #7b61ff;
+    background: var(--shadcn-muted-foreground);
     height: 100%;
     transition: width 0.3s ease;
   }
   .bar-value {
     font-size: 0.75rem;
-    font-family: var(--font-mono);
-    color: var(--fg);
+    color: var(--shadcn-foreground);
     text-align: right;
   }
 
@@ -614,55 +579,48 @@
   th {
     text-align: left;
     padding: 0.625rem 0.75rem;
-    font-size: 0.6875rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
-    border-bottom: 1px solid var(--border);
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: var(--shadcn-muted-foreground);
+    border-bottom: 1px solid var(--shadcn-border);
     white-space: nowrap;
   }
   td {
     padding: 0.5rem 0.75rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 50%, transparent);
-    color: var(--fg);
+    border-bottom: 1px solid var(--shadcn-border);
+    color: var(--shadcn-foreground);
   }
   td.num {
-    font-family: var(--font-mono);
     text-align: right;
   }
   tr:hover td {
-    background: var(--bg-hover);
+    background: var(--shadcn-muted);
   }
 
   .loading {
     text-align: center;
     padding: 4rem 2rem;
-    color: var(--fg-dim);
-    font-size: 1rem;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.875rem;
   }
   .error-banner {
     padding: 0.75rem 1rem;
-    background: rgba(255, 0, 0, 0.1);
-    color: var(--error);
-    border: 1px solid var(--error);
-    border-radius: 4px;
-    margin-bottom: 1.5rem;
+    background: color-mix(in srgb, var(--shadcn-destructive) 8%, transparent);
+    color: var(--shadcn-destructive);
+    border: 1px solid var(--shadcn-destructive);
+    border-radius: var(--shadcn-radius);
     font-size: 0.875rem;
-    font-weight: bold;
-    text-shadow: 0 0 5px var(--error);
-    box-shadow: 0 0 10px rgba(255, 0, 0, 0.2);
   }
   .empty-state {
     text-align: center;
     padding: 4rem 2rem;
-    color: var(--fg-dim);
-    border: 1px dashed var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
+    color: var(--shadcn-muted-foreground);
+    border: 1px dashed var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
   }
   .empty-state p {
     margin-bottom: 0.75rem;
-    font-family: var(--font-mono);
   }
 
   @media (max-width: 900px) {

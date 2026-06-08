@@ -7,6 +7,14 @@
     type EntityRecord,
     type EntityViewAction,
   } from "$lib/entity-view";
+  import { PageHeader } from "$lib/components/ui/page-header";
+  import { Dialog } from "$lib/components/ui/dialog";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Textarea } from "$lib/components/ui/textarea";
+  import { Select } from "$lib/components/ui/select";
+  import { Label } from "$lib/components/ui/label";
+  import { Badge } from "$lib/components/ui/badge";
 
   type Pipeline = {
     id?: string;
@@ -220,6 +228,10 @@
   let artifactSize = $state("");
   let artifactMeta = $state("{}");
 
+  let showCreateProcess = $state(false);
+  let showCreateTask = $state(false);
+  let showCreateArtifact = $state(false);
+
   const selectedPipeline = $derived(
     pipelines.find((pipeline) => pipelineId(pipeline) === selectedPipelineId) || null,
   );
@@ -245,6 +257,22 @@
     (views.length ? views : allPanelViews).filter(
       (view, index, list) => allPanelViews.includes(view) && list.indexOf(view) === index,
     ),
+  );
+  const panelViewSubtitles: Record<PanelView, string> = {
+    tasks: "Browse and manage tasks for this backend.",
+    pipelines: "Process definitions and their state machines.",
+    queue: "Role-level dispatch capacity and failure counters.",
+    runs: "Drive the active run and inspect its event stream.",
+    artifacts: "Artifacts linked to tasks and runs.",
+  };
+  const headerSubtitle = $derived(
+    subtitle ||
+      (workMode === "planner"
+        ? "Plan tasks by process and priority."
+        : workMode === "dependencies"
+          ? "Inspect task dependencies and blockers."
+          : panelViewSubtitles[panelView]) ||
+      "",
   );
   const taskColumns: EntityColumn[] = [
     { id: "stage", label: "Stage", type: "status", width: "minmax(120px,.42fr)" },
@@ -710,6 +738,39 @@
   function pipelineStateCount(pipeline: Pipeline | null | undefined): number {
     const states = pipeline?.definition?.states;
     return states && typeof states === "object" ? Object.keys(states).length : 0;
+  }
+
+  function pipelineStateList(
+    pipeline: Pipeline | null | undefined,
+  ): { name: string; agentRole: string; description: string; terminal: boolean; initial: boolean }[] {
+    const definition = pipeline?.definition;
+    const states = definition?.states;
+    if (!states || typeof states !== "object") return [];
+    const initial = String(definition?.initial || "");
+    return Object.entries(states).map(([name, value]) => {
+      const state = (value || {}) as Record<string, any>;
+      return {
+        name,
+        agentRole: String(state.agent_role || ""),
+        description: String(state.description || ""),
+        terminal: Boolean(state.terminal),
+        initial: name === initial,
+      };
+    });
+  }
+
+  function queueBadgeVariant(status: string): "warning" | "success" | "muted" {
+    if (status === "attention") return "warning";
+    if (status === "claimable") return "success";
+    return "muted";
+  }
+
+  function runBadgeVariant(status: string | null | undefined): "success" | "warning" | "destructive" | "muted" {
+    const value = String(status || "").toLowerCase();
+    if (value === "succeeded" || value === "success" || value === "completed" || value === "done") return "success";
+    if (value === "failed" || value === "error") return "destructive";
+    if (value === "running" || value === "in_progress" || value === "active") return "warning";
+    return "muted";
   }
 
   function stateRange(count: number): string {
@@ -1375,73 +1436,81 @@
 
 <div class="tickets-panel">
   {#if !running}
+    <PageHeader {title} subtitle={headerSubtitle} />
     <div class="empty-state">Instance is stopped.</div>
   {:else}
-    <div class="tickets-header">
-      <div class="tickets-heading">
-        <h2>{title}</h2>
-        {#if subtitle}
-          <p>{subtitle}</p>
+    <PageHeader {title} subtitle={headerSubtitle}>
+      {#snippet controls()}
+        {#if visiblePanelViews.length > 1}
+          <div class="view-tabs" role="tablist" aria-label="NullTickets views">
+            {#each visiblePanelViews as view (view)}
+              <button
+                type="button"
+                role="tab"
+                aria-selected={panelView === view}
+                class:active={panelView === view}
+                onclick={() => setPanelView(view)}
+              >
+                {panelViewLabels[view]}
+              </button>
+            {/each}
+          </div>
         {/if}
-      </div>
-      {#if visiblePanelViews.length > 1}
-        <div class="tickets-tabs" role="tablist" aria-label="NullTickets views">
-          {#each visiblePanelViews as view (view)}
-            <button class:active={panelView === view} onclick={() => setPanelView(view)}>
-              {panelViewLabels[view]}
-            </button>
-          {/each}
-        </div>
-      {/if}
-      <button class="btn" onclick={refreshAll} disabled={loading || actionLoading}>
-        {loading ? "Refreshing..." : "Refresh"}
-      </button>
-    </div>
+
+        {#if panelView === "tasks"}
+          <Select bind:value={filterPipeline} aria-label="Filter by process" class="ph-field">
+            <option value="">All processes</option>
+            {#each pipelines as pipeline}
+              <option value={pipelineId(pipeline)}>{pipelineName(pipeline)}</option>
+            {/each}
+          </Select>
+          <Input bind:value={filterStage} placeholder="Stage" aria-label="Filter by stage" class="ph-field ph-field-sm" />
+          <Input bind:value={taskLimit} inputmode="numeric" aria-label="Limit" placeholder="Limit" class="ph-field ph-field-xs" />
+          <Button variant="outline" size="sm" onclick={() => loadTasks(false)} disabled={loading}>Apply</Button>
+        {:else if panelView === "artifacts"}
+          <Select bind:value={artifactScope} onchange={() => setArtifactScope(artifactScope)} aria-label="Artifact scope" class="ph-field">
+            <option value="selected">Selected</option>
+            <option value="custom">Custom</option>
+            <option value="all">All</option>
+          </Select>
+          {#if artifactScope === "custom"}
+            <Input bind:value={artifactTaskFilter} placeholder="Task ID" aria-label="Task ID" class="ph-field ph-field-sm" />
+            <Input bind:value={artifactRunFilter} placeholder="Run ID" aria-label="Run ID" class="ph-field ph-field-sm" />
+          {/if}
+          <Input bind:value={artifactLimit} inputmode="numeric" aria-label="Limit" placeholder="Limit" class="ph-field ph-field-xs" />
+          <Button variant="outline" size="sm" onclick={() => loadArtifacts(false)} disabled={loading}>Load</Button>
+        {:else if panelView === "runs"}
+          <Input bind:value={runEventsLimit} inputmode="numeric" aria-label="Events limit" placeholder="Limit" class="ph-field ph-field-xs" />
+          <Button variant="outline" size="sm" onclick={() => loadRunEvents(false)} disabled={loading || !selectedRunId}>Load events</Button>
+        {/if}
+      {/snippet}
+      {#snippet actions()}
+        <Button variant="outline" size="sm" onclick={refreshAll} disabled={loading || actionLoading}>
+          {loading ? "Refreshing…" : "Refresh"}
+        </Button>
+        {#if panelView === "tasks" && workMode === "tasks"}
+          <Button size="sm" onclick={() => (showCreateTask = true)}>+ New task</Button>
+        {:else if panelView === "pipelines"}
+          <Button size="sm" onclick={() => (showCreateProcess = true)}>+ New process</Button>
+        {:else if panelView === "artifacts"}
+          <Button size="sm" onclick={() => (showCreateArtifact = true)}>+ New artifact</Button>
+        {/if}
+      {/snippet}
+    </PageHeader>
 
     {#if error}
-      <div class="error-banner">{error}</div>
+      <div class="banner banner-error">{error}</div>
     {/if}
     {#if message}
-      <div class="message-banner">{message}</div>
+      <div class="banner banner-info">{message}</div>
     {/if}
 
     {#if panelView === "tasks" && workMode === "planner"}
-      <div class="planner-grid">
-        <section class="tickets-section full">
-          <div class="section-header">
-            <h3>Planning Filters</h3>
-            <span>{tasks.length} visible</span>
-          </div>
-          <div class="filter-grid">
-            <label class="field">
-              <span>Process</span>
-              <select bind:value={filterPipeline}>
-                <option value="">All</option>
-                {#each pipelines as pipeline}
-                  <option value={pipelineId(pipeline)}>{pipelineName(pipeline)}</option>
-                {/each}
-              </select>
-            </label>
-            <label class="field">
-              <span>Stage</span>
-              <input bind:value={filterStage} placeholder="todo" />
-            </label>
-            <label class="field small">
-              <span>Limit</span>
-              <input bind:value={taskLimit} inputmode="numeric" />
-            </label>
-            <button class="btn" onclick={() => loadTasks(false)} disabled={loading}>Apply</button>
-          </div>
-        </section>
-
-        <section class="tickets-section planner-main">
-          <div class="section-header">
-            <h3>Plan by Process</h3>
-            <span>{planningGroups().length} processes</span>
-          </div>
+      <div class="split-grid">
+        <section class="split-list-pane">
           <div class="insight-grid">
             <div class="insight-card">
-              <span>Visible Tasks</span>
+              <span>Visible tasks</span>
               <strong>{tasks.length}</strong>
             </div>
             <div class="insight-card">
@@ -1453,7 +1522,7 @@
               <strong>{visibleStageCount()}</strong>
             </div>
             <div class="insight-card">
-              <span>Top Priority</span>
+              <span>Top priority</span>
               <strong>{highestPriorityTask() ? `p${taskPriority(highestPriorityTask())}` : "-"}</strong>
             </div>
           </div>
@@ -1465,29 +1534,28 @@
               {#each planningGroups() as group (group.id)}
                 <div class="process-plan">
                   <div class="process-plan-header">
-                    <div>
-                      <span class="task-title">{group.name}</span>
-                      <span class="task-meta">{group.tasks.length} tasks / top p{group.maxPriority}</span>
+                    <div class="process-plan-title">
+                      <span class="item-title">{group.name}</span>
+                      <span class="item-meta">{group.tasks.length} tasks · top p{group.maxPriority}</span>
                     </div>
-                    <div class="stage-strip">
+                    <div class="badge-row">
                       {#each group.stages as item}
-                        <span>{item.stage} {item.count}</span>
+                        <Badge variant="outline">{item.stage} · {item.count}</Badge>
                       {/each}
                     </div>
                   </div>
-                  <div class="planner-task-list">
+                  <div class="plan-task-list">
                     {#each group.tasks as task (taskId(task))}
                       <button
-                        class="planner-task"
+                        type="button"
+                        class="list-row plan-task"
                         class:active={taskId(task) === selectedTaskId}
                         onclick={() => selectTask(taskId(task))}
                       >
-                        <span class="planner-priority">p{taskPriority(task)}</span>
-                        <span>
-                          <span class="task-title">{taskTitle(task)}</span>
-                          <span class="task-meta">
-                            {taskStage(task)} / {taskDependencyList(task).length} deps / {formatTime(task.created_at_ms)}
-                          </span>
+                        <span class="plan-priority">p{taskPriority(task)}</span>
+                        <span class="list-row-text">
+                          <span class="item-title">{taskTitle(task)}</span>
+                          <span class="item-meta">{taskStage(task)} · {taskDependencyList(task).length} deps · {formatTime(task.created_at_ms)}</span>
                         </span>
                       </button>
                     {/each}
@@ -1497,110 +1565,72 @@
             </div>
           {/if}
           {#if nextCursor}
-            <button class="btn subtle" onclick={() => loadTasks(true)} disabled={loading}>
-              Load More
-            </button>
+            <Button variant="ghost" size="sm" onclick={() => loadTasks(true)} disabled={loading}>Load more</Button>
           {/if}
         </section>
 
-        <section class="tickets-section planner-side">
-          <div class="section-header">
-            <h3>Next Up</h3>
-            <span>{Math.min(sortedPlanningTasks().length, 6)}</span>
-          </div>
-          <div class="task-list compact">
-            {#each sortedPlanningTasks().slice(0, 6) as task (taskId(task))}
-              <button
-                class="task-row"
-                class:active={taskId(task) === selectedTaskId}
-                onclick={() => selectTask(taskId(task))}
-              >
-                <span class="task-title">{taskTitle(task)}</span>
-                <span class="task-meta">
-                  p{taskPriority(task)} / {taskStage(task)} / {processNameById(task.pipeline_id)}
-                </span>
-              </button>
-            {:else}
-              <div class="empty-row">No planned tasks</div>
-            {/each}
-          </div>
-
-          <div class="selected-plan">
-            <div class="section-header inner">
-              <h3>Selected Task</h3>
-              {#if selectedTaskLoading}<span>Loading</span>{/if}
-            </div>
-            {#if selectedTask}
-              <div class="detail-stack">
-                <div class="detail-title">
-                  <span>{taskTitle(selectedTask)}</span>
-                  <code>{selectedTask.id}</code>
-                </div>
-                <div class="stats-grid">
-                  <div><span>Stage</span><strong>{selectedTask.stage || "-"}</strong></div>
-                  <div><span>Process</span><strong>{processNameById(selectedTask.pipeline_id)}</strong></div>
-                  <div><span>Priority</span><strong>{selectedTask.priority ?? 0}</strong></div>
-                  <div><span>Deps</span><strong>{taskDependencyList(selectedTask).length}</strong></div>
-                </div>
-                {#if selectedTask.description}
-                  <p class="description">{selectedTask.description}</p>
-                {/if}
-                {#if taskTransitions.length > 0}
-                  <div>
-                    <span class="subhead">Transitions</span>
-                    <div class="pill-list">
-                      {#each taskTransitions as transition}
-                        <span class="pill static">
-                          {transition.trigger || "-"} -> {transition.to || transition.new_stage || "-"}
-                        </span>
-                      {/each}
-                    </div>
-                  </div>
-                {/if}
+        <aside class="split-detail-pane">
+          {#if selectedTaskLoading}
+            <p class="detail-loading">Loading…</p>
+          {/if}
+          {#if selectedTask}
+            <div class="detail-stack">
+              <div class="detail-head">
+                <h3 class="detail-title">{taskTitle(selectedTask)}</h3>
+                <code class="detail-id">{selectedTask.id}</code>
               </div>
-            {:else}
-              <div class="empty-row">Select a task from the plan.</div>
-            {/if}
+              <div class="stats-grid">
+                <div class="stat"><span>Stage</span><strong>{selectedTask.stage || "-"}</strong></div>
+                <div class="stat"><span>Process</span><strong>{processNameById(selectedTask.pipeline_id)}</strong></div>
+                <div class="stat"><span>Priority</span><strong>{selectedTask.priority ?? 0}</strong></div>
+                <div class="stat"><span>Deps</span><strong>{taskDependencyList(selectedTask).length}</strong></div>
+              </div>
+              {#if selectedTask.description}
+                <p class="detail-description">{selectedTask.description}</p>
+              {/if}
+              {#if taskTransitions.length > 0}
+                <div class="detail-block">
+                  <span class="detail-subhead">Transitions</span>
+                  <div class="badge-row">
+                    {#each taskTransitions as transition}
+                      <Badge variant="secondary">{transition.trigger || "-"} → {transition.to || transition.new_stage || "-"}</Badge>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {:else}
+            <div class="detail-empty">Select a task from the plan.</div>
+          {/if}
+
+          <div class="detail-block detail-block-divided">
+            <span class="detail-subhead">Next up</span>
+            <div class="list-stack">
+              {#each sortedPlanningTasks().slice(0, 6) as task (taskId(task))}
+                <button
+                  type="button"
+                  class="list-row"
+                  class:active={taskId(task) === selectedTaskId}
+                  onclick={() => selectTask(taskId(task))}
+                >
+                  <span class="list-row-text">
+                    <span class="item-title">{taskTitle(task)}</span>
+                    <span class="item-meta">p{taskPriority(task)} · {taskStage(task)} · {processNameById(task.pipeline_id)}</span>
+                  </span>
+                </button>
+              {:else}
+                <div class="empty-row">No planned tasks.</div>
+              {/each}
+            </div>
           </div>
-        </section>
+        </aside>
       </div>
     {:else if panelView === "tasks" && workMode === "dependencies"}
-      <div class="dependency-grid">
-        <section class="tickets-section full">
-          <div class="section-header">
-            <h3>Dependency Filters</h3>
-            <span>{dependencyLoading ? "loading details" : `${dependencyEdges().length} edges`}</span>
-          </div>
-          <div class="filter-grid">
-            <label class="field">
-              <span>Process</span>
-              <select bind:value={filterPipeline}>
-                <option value="">All</option>
-                {#each pipelines as pipeline}
-                  <option value={pipelineId(pipeline)}>{pipelineName(pipeline)}</option>
-                {/each}
-              </select>
-            </label>
-            <label class="field">
-              <span>Stage</span>
-              <input bind:value={filterStage} placeholder="todo" />
-            </label>
-            <label class="field small">
-              <span>Limit</span>
-              <input bind:value={taskLimit} inputmode="numeric" />
-            </label>
-            <button class="btn" onclick={() => loadTasks(false)} disabled={loading}>Apply</button>
-          </div>
-        </section>
-
-        <section class="tickets-section dependency-main">
-          <div class="section-header">
-            <h3>Dependency Map</h3>
-            <span>{dependencyEdges().length}</span>
-          </div>
+      <div class="split-grid">
+        <section class="split-list-pane">
           <div class="insight-grid">
             <div class="insight-card">
-              <span>Visible Tasks</span>
+              <span>Visible tasks</span>
               <strong>{tasks.length}</strong>
             </div>
             <div class="insight-card">
@@ -1619,143 +1649,103 @@
 
           <div class="dependency-list">
             {#if dependencyEdges().length === 0}
-              <div class="empty-row">No dependencies in the current filter.</div>
+              <div class="empty-row">{dependencyLoading ? "Loading dependency details…" : "No dependencies in the current filter."}</div>
             {:else}
               {#each dependencyEdges() as edge (`${taskId(edge.task)}:${edge.dependsOnId}`)}
                 <button
-                  class="dependency-row"
+                  type="button"
+                  class="list-row dependency-row"
                   class:active={taskId(edge.task) === selectedTaskId || edge.dependsOnId === selectedTaskId}
                   onclick={() => selectTask(taskId(edge.task))}
                 >
                   <span class="dependency-node">
-                    <strong>{taskTitle(edge.task)}</strong>
-                    <small>{taskStage(edge.task)} / {processNameById(edge.task.pipeline_id)}</small>
+                    <span class="item-title">{taskTitle(edge.task)}</span>
+                    <span class="item-meta">{taskStage(edge.task)} · {processNameById(edge.task.pipeline_id)}</span>
                   </span>
                   <span class="dependency-arrow">depends on</span>
                   <span class="dependency-node">
-                    <strong>{edge.dependsOnTitle}</strong>
-                    <small>{edge.satisfied ? edge.dependsOnId : "outside current filter"}</small>
+                    <span class="item-title">{edge.dependsOnTitle}</span>
+                    <span class="item-meta">{edge.satisfied ? edge.dependsOnId : "outside current filter"}</span>
                   </span>
                 </button>
               {/each}
             {/if}
           </div>
           {#if nextCursor}
-            <button class="btn subtle" onclick={() => loadTasks(true)} disabled={loading}>
-              Load More
-            </button>
+            <Button variant="ghost" size="sm" onclick={() => loadTasks(true)} disabled={loading}>Load more</Button>
           {/if}
         </section>
 
-        <section class="tickets-section dependency-side">
-          <div class="section-header">
-            <h3>Selected Task Dependencies</h3>
-            {#if selectedTaskLoading}<span>Loading</span>{/if}
-          </div>
-          <div class="task-list compact">
-            {#each sortedPlanningTasks() as task (taskId(task))}
-              <button
-                class="task-row"
-                class:active={taskId(task) === selectedTaskId}
-                onclick={() => selectTask(taskId(task))}
-              >
-                <span class="task-title">{taskTitle(task)}</span>
-                <span class="task-meta">
-                  {taskDependencyList(task).length} deps / p{taskPriority(task)} / {taskStage(task)}
-                </span>
-              </button>
-            {:else}
-              <div class="empty-row">No tasks</div>
-            {/each}
-          </div>
-
+        <aside class="split-detail-pane">
+          {#if selectedTaskLoading}
+            <p class="detail-loading">Loading…</p>
+          {/if}
           {#if selectedTask}
-            <div class="dependency-detail">
-              <div class="detail-title">
-                <span>{taskTitle(selectedTask)}</span>
-                <code>{selectedTask.id}</code>
+            <div class="detail-stack">
+              <div class="detail-head">
+                <h3 class="detail-title">{taskTitle(selectedTask)}</h3>
+                <code class="detail-id">{selectedTask.id}</code>
               </div>
               <div class="stats-grid">
-                <div><span>Blocked By</span><strong>{selectedDependencyEdges().length}</strong></div>
-                <div><span>Blocking</span><strong>{tasksBlockingSelected().length}</strong></div>
-                <div><span>Stage</span><strong>{selectedTask.stage || "-"}</strong></div>
-                <div><span>Priority</span><strong>{selectedTask.priority ?? 0}</strong></div>
+                <div class="stat"><span>Blocked by</span><strong>{selectedDependencyEdges().length}</strong></div>
+                <div class="stat"><span>Blocking</span><strong>{tasksBlockingSelected().length}</strong></div>
+                <div class="stat"><span>Stage</span><strong>{selectedTask.stage || "-"}</strong></div>
+                <div class="stat"><span>Priority</span><strong>{selectedTask.priority ?? 0}</strong></div>
               </div>
 
-              <div>
-                <span class="subhead">Blocked By</span>
+              <div class="detail-block">
+                <span class="detail-subhead">Blocked by</span>
                 {#if selectedDependencyEdges().length > 0}
-                  <div class="pill-list">
+                  <div class="badge-row">
                     {#each selectedDependencyEdges() as edge}
                       <button
-                        class="pill"
+                        type="button"
+                        class="badge-button"
                         onclick={() => edge.dependsOnId && selectTask(edge.dependsOnId)}
                         disabled={!edge.satisfied}
                       >
-                        {edge.dependsOnTitle}
+                        <Badge variant={edge.satisfied ? "secondary" : "outline"}>{edge.dependsOnTitle}</Badge>
                       </button>
                     {/each}
                   </div>
                 {:else}
-                  <div class="empty-row compact">No blockers</div>
+                  <span class="detail-muted">No blockers.</span>
                 {/if}
               </div>
 
-              <div>
-                <span class="subhead">Blocking</span>
+              <div class="detail-block">
+                <span class="detail-subhead">Blocking</span>
                 {#if tasksBlockingSelected().length > 0}
-                  <div class="pill-list">
+                  <div class="badge-row">
                     {#each tasksBlockingSelected() as task}
-                      <button class="pill" onclick={() => selectTask(taskId(task))}>
-                        {taskTitle(task)}
+                      <button type="button" class="badge-button" onclick={() => selectTask(taskId(task))}>
+                        <Badge variant="secondary">{taskTitle(task)}</Badge>
                       </button>
                     {/each}
                   </div>
                 {:else}
-                  <div class="empty-row compact">Not blocking visible tasks</div>
+                  <span class="detail-muted">Not blocking visible tasks.</span>
                 {/if}
               </div>
 
-              <div class="action-grid">
-                <label class="field">
-                  <span>Dependency</span>
-                  <input bind:value={dependencyTaskId} placeholder="task-id" />
-                </label>
-                <button class="btn" onclick={addDependency} disabled={actionLoading || !dependencyTaskId.trim()}>
-                  Add
-                </button>
+              <div class="detail-block">
+                <Label for="dep-add-input">Add dependency</Label>
+                <div class="inline-form">
+                  <Input id="dep-add-input" bind:value={dependencyTaskId} placeholder="task-id" />
+                  <Button onclick={addDependency} disabled={actionLoading || !dependencyTaskId.trim()}>Add</Button>
+                </div>
               </div>
             </div>
           {:else}
-            <div class="empty-row">Select a task to inspect blockers.</div>
+            <div class="detail-empty">Select a task to inspect blockers.</div>
           {/if}
-        </section>
+        </aside>
       </div>
     {:else if panelView === "tasks"}
-      <div class="tickets-grid">
-        <section class="tickets-section browser-section">
-          <div class="filter-grid">
-            <label class="field">
-              <span>Process</span>
-              <select bind:value={filterPipeline}>
-                <option value="">All</option>
-                {#each pipelines as pipeline}
-                  <option value={pipelineId(pipeline)}>{pipelineName(pipeline)}</option>
-                {/each}
-              </select>
-            </label>
-            <label class="field">
-              <span>Stage</span>
-              <input bind:value={filterStage} placeholder="todo" />
-            </label>
-            <label class="field small">
-              <span>Limit</span>
-              <input bind:value={taskLimit} inputmode="numeric" />
-            </label>
-            <button class="btn" onclick={() => loadTasks(false)} disabled={loading}>Apply</button>
-          </div>
-
+      <div class="split-grid">
+        <section class="split-list-pane list-pane-flush">
           <UniversalEntityView
+            hideHeader
             title="Tasks"
             description="Visible NullTickets tasks for this backend."
             records={taskRecords}
@@ -1772,239 +1762,192 @@
             onOpen={(record) => void selectTask(taskRecordId(record))}
           />
           {#if nextCursor}
-            <button class="btn subtle" onclick={() => loadTasks(true)} disabled={loading}>
-              Load More
-            </button>
+            <Button variant="ghost" size="sm" onclick={() => loadTasks(true)} disabled={loading}>Load more</Button>
           {/if}
         </section>
 
-        <section class="tickets-section">
-          <div class="section-header">
-            <h3>Task Detail</h3>
-            {#if selectedTaskLoading}<span>Loading</span>{/if}
-          </div>
+        <aside class="split-detail-pane">
+          {#if selectedTaskLoading}
+            <p class="detail-loading">Loading…</p>
+          {/if}
           {#if selectedTask}
             <div class="detail-stack">
-              <div class="detail-title">
-                <span>{taskTitle(selectedTask)}</span>
-                <code>{selectedTask.id}</code>
+              <div class="detail-head">
+                <h3 class="detail-title">{taskTitle(selectedTask)}</h3>
+                <code class="detail-id">{selectedTask.id}</code>
               </div>
               <div class="stats-grid">
-                <div><span>Stage</span><strong>{selectedTask.stage || "-"}</strong></div>
-                <div><span>Process</span><strong>{processNameById(selectedTask.pipeline_id)}</strong></div>
-                <div><span>Priority</span><strong>{selectedTask.priority ?? 0}</strong></div>
-                <div><span>Version</span><strong>{selectedTask.task_version ?? "-"}</strong></div>
+                <div class="stat"><span>Stage</span><strong>{selectedTask.stage || "-"}</strong></div>
+                <div class="stat"><span>Process</span><strong>{processNameById(selectedTask.pipeline_id)}</strong></div>
+                <div class="stat"><span>Priority</span><strong>{selectedTask.priority ?? 0}</strong></div>
+                <div class="stat"><span>Version</span><strong>{selectedTask.task_version ?? "-"}</strong></div>
               </div>
               {#if selectedRun}
-                <div class="stats-grid">
-                  <div><span>Run</span><strong>{runId(selectedRun)}</strong></div>
-                  <div><span>Status</span><strong>{selectedRun.status || "-"}</strong></div>
-                  <div><span>Agent</span><strong>{selectedRun.agent_id || "-"}</strong></div>
-                  <div><span>Attempt</span><strong>{selectedRun.attempt ?? "-"}</strong></div>
+                <div class="detail-block">
+                  <span class="detail-subhead">Latest run</span>
+                  <div class="stats-grid">
+                    <div class="stat"><span>Run</span><strong class="mono">{runId(selectedRun) || "-"}</strong></div>
+                    <div class="stat"><span>Status</span><strong><Badge variant={runBadgeVariant(selectedRun.status)}>{selectedRun.status || "-"}</Badge></strong></div>
+                    <div class="stat"><span>Agent</span><strong>{selectedRun.agent_id || "-"}</strong></div>
+                    <div class="stat"><span>Attempt</span><strong>{selectedRun.attempt ?? "-"}</strong></div>
+                  </div>
                 </div>
               {/if}
               {#if selectedTask.description}
-                <p class="description">{selectedTask.description}</p>
+                <p class="detail-description">{selectedTask.description}</p>
               {/if}
               <div class="detail-columns">
-                <div>
-                  <span class="subhead">Assignments</span>
+                <div class="detail-block">
+                  <span class="detail-subhead">Assignments</span>
                   {#if activeTaskAssignments.length > 0}
-                    <div class="pill-list">
+                    <div class="badge-row">
                       {#each activeTaskAssignments as assignment}
                         <button
-                          class="pill"
+                          type="button"
+                          class="badge-button"
                           onclick={() => unassignTask(String(assignment.agent_id || ""))}
                           disabled={actionLoading}
+                          title="Unassign"
                         >
-                          {assignment.agent_id}
+                          <Badge variant="secondary">{assignment.agent_id}</Badge>
                         </button>
                       {/each}
                     </div>
                   {:else}
-                    <span class="muted">None</span>
+                    <span class="detail-muted">None</span>
                   {/if}
                 </div>
-                <div>
-                  <span class="subhead">Dependencies</span>
+                <div class="detail-block">
+                  <span class="detail-subhead">Dependencies</span>
                   {#if taskDependencies.length > 0}
-                    <div class="pill-list">
+                    <div class="badge-row">
                       {#each taskDependencies as dep}
-                        <span class="pill static">
-                          {dep.depends_on_task_id || dep.task_id || dep}
-                        </span>
+                        <Badge variant="outline">{dep.depends_on_task_id || dep.task_id || dep}</Badge>
                       {/each}
                     </div>
                   {:else}
-                    <span class="muted">None</span>
+                    <span class="detail-muted">None</span>
                   {/if}
                 </div>
               </div>
               {#if taskTransitions.length > 0}
-                <div>
-                  <span class="subhead">Transitions</span>
-                  <div class="pill-list">
+                <div class="detail-block">
+                  <span class="detail-subhead">Transitions</span>
+                  <div class="badge-row">
                     {#each taskTransitions as transition}
-                      <span class="pill static">
-                        {transition.trigger || "-"} -> {transition.to || transition.new_stage || "-"}
-                      </span>
+                      <Badge variant="secondary">{transition.trigger || "-"} → {transition.to || transition.new_stage || "-"}</Badge>
                     {/each}
                   </div>
                 </div>
               {/if}
-              <pre>{jsonPreview(selectedTask.metadata)}</pre>
-              <div class="action-grid">
-                <label class="field">
-                  <span>Assign Agent</span>
-                  <input bind:value={assignAgent} placeholder="agent-id" />
-                </label>
-                <button class="btn" onclick={assignTask} disabled={actionLoading || !assignAgent.trim()}>
-                  Assign
-                </button>
-                <label class="field">
-                  <span>Dependency</span>
-                  <input bind:value={dependencyTaskId} placeholder="task-id" />
-                </label>
-                <button class="btn" onclick={addDependency} disabled={actionLoading || !dependencyTaskId.trim()}>
-                  Add
-                </button>
-                {#if canShowPanelView("runs")}
-                  <button class="btn subtle" onclick={() => setPanelView("runs")} disabled={!selectedRunId}>
-                    Run Controls
-                  </button>
-                {/if}
-                {#if canShowPanelView("artifacts")}
-                  <button class="btn subtle" onclick={openSelectedArtifacts}>
-                    Artifacts
-                  </button>
-                {/if}
+              <div class="detail-block">
+                <span class="detail-subhead">Metadata</span>
+                <pre class="json-block">{jsonPreview(selectedTask.metadata)}</pre>
+              </div>
+              <div class="detail-block detail-actions">
+                <div class="inline-form">
+                  <div class="inline-form-field">
+                    <Label for="assign-agent-input">Assign agent</Label>
+                    <Input id="assign-agent-input" bind:value={assignAgent} placeholder="agent-id" />
+                  </div>
+                  <Button onclick={assignTask} disabled={actionLoading || !assignAgent.trim()}>Assign</Button>
+                </div>
+                <div class="inline-form">
+                  <div class="inline-form-field">
+                    <Label for="task-dep-input">Add dependency</Label>
+                    <Input id="task-dep-input" bind:value={dependencyTaskId} placeholder="task-id" />
+                  </div>
+                  <Button onclick={addDependency} disabled={actionLoading || !dependencyTaskId.trim()}>Add</Button>
+                </div>
+                <div class="detail-shortcuts">
+                  {#if canShowPanelView("runs")}
+                    <Button variant="outline" size="sm" onclick={() => setPanelView("runs")} disabled={!selectedRunId}>Run controls</Button>
+                  {/if}
+                  {#if canShowPanelView("artifacts")}
+                    <Button variant="outline" size="sm" onclick={openSelectedArtifacts}>Artifacts</Button>
+                  {/if}
+                </div>
               </div>
             </div>
           {:else}
-            <div class="empty-row">No task selected</div>
+            <div class="detail-empty">No task selected.</div>
           {/if}
-        </section>
-
-        <section class="tickets-section full">
-          <div class="section-header">
-            <h3>Create Task</h3>
-          </div>
-          <div class="create-grid">
-            <label class="field">
-              <span>Process</span>
-              <select bind:value={createTaskPipeline}>
-                <option value="">Select</option>
-                {#each pipelines as pipeline}
-                  <option value={pipelineId(pipeline)}>{pipelineName(pipeline)}</option>
-                {/each}
-              </select>
-            </label>
-            <label class="field">
-              <span>Title</span>
-              <input bind:value={createTaskTitle} placeholder="Task title" />
-            </label>
-            <label class="field small">
-              <span>Priority</span>
-              <input bind:value={createTaskPriority} inputmode="numeric" />
-            </label>
-            <label class="field">
-              <span>Assigned Agent</span>
-              <input bind:value={createTaskAssignedAgent} placeholder="optional" />
-            </label>
-            <label class="field wide">
-              <span>Description</span>
-              <textarea bind:value={createTaskDescription} rows="3"></textarea>
-            </label>
-            <label class="field wide">
-              <span>Dependencies</span>
-              <input bind:value={createTaskDependencies} placeholder="task-a, task-b" />
-            </label>
-            <label class="field wide">
-              <span>Metadata JSON</span>
-              <textarea bind:value={createTaskMetadata} rows="4"></textarea>
-            </label>
-            <button
-              class="btn"
-              onclick={createTask}
-              disabled={actionLoading ||
-                !createTaskTitle.trim() ||
-                !(createTaskPipeline.trim() || filterPipeline.trim() || selectedPipelineId.trim())}
-            >
-              Create Task
-            </button>
-          </div>
-          <div class="bulk-block">
-            <label class="field wide">
-              <span>Bulk Tasks JSON</span>
-              <textarea bind:value={bulkTasksJson} rows="8"></textarea>
-            </label>
-            <button class="btn subtle" onclick={bulkCreateTasks} disabled={actionLoading}>
-              Bulk Create
-            </button>
-          </div>
-        </section>
+        </aside>
       </div>
     {:else if panelView === "pipelines"}
-      <div class="tickets-grid">
-        <section class="tickets-section browser-section">
-          <UniversalEntityView
-            title="Processes"
-            description="Process definitions available on this NullTickets backend."
-            records={pipelineRecords}
-            columns={pipelineColumns}
-            views={pipelineViews}
-            defaultViewId="cards"
-            {loading}
-            error={error || null}
-            actions={pipelineActions}
-            emptyTitle="No processes"
-            emptyDescription="Create a process definition to populate this view."
-            onRefresh={refreshAll}
-            onSelect={(record) => (selectedPipelineId = pipelineRecordId(record))}
-            onOpen={(record) => (selectedPipelineId = pipelineRecordId(record))}
-          />
-        </section>
-
-        <section class="tickets-section">
-          <div class="section-header">
-            <h3>Process Definition</h3>
-          </div>
-          {#if selectedPipeline}
-            <div class="detail-stack">
-              <div class="detail-title">
-                <span>{pipelineName(selectedPipeline)}</span>
-                <code>{pipelineId(selectedPipeline)}</code>
-              </div>
-              <pre>{jsonPreview(selectedPipeline.definition)}</pre>
-            </div>
+      <div class="split-grid">
+        <section class="split-list-pane">
+          {#if loading && pipelines.length === 0}
+            <div class="empty-row">Loading processes…</div>
+          {:else if pipelines.length === 0}
+            <div class="empty-row">Create a process definition to populate this view.</div>
           {:else}
-            <div class="empty-row">No process selected</div>
+            <div class="list-stack">
+              {#each pipelines as pipeline (pipelineId(pipeline))}
+                {@const states = pipelineStateCount(pipeline)}
+                <button
+                  type="button"
+                  class="list-row process-row"
+                  class:active={pipelineId(pipeline) === selectedPipelineId}
+                  onclick={() => (selectedPipelineId = pipelineId(pipeline))}
+                >
+                  <span class="list-row-text">
+                    <span class="item-title">{pipelineName(pipeline)}</span>
+                    <span class="item-meta">{states} {states === 1 ? "state" : "states"}</span>
+                  </span>
+                  <Badge variant="outline">{stateRange(states)}</Badge>
+                </button>
+              {/each}
+            </div>
           {/if}
         </section>
 
-        <section class="tickets-section full">
-          <div class="section-header">
-            <h3>Create Process</h3>
-          </div>
-          <div class="create-grid">
-            <label class="field">
-              <span>Name</span>
-              <input bind:value={createPipelineName} placeholder="process name" />
-            </label>
-            <label class="field wide">
-              <span>Definition JSON</span>
-              <textarea bind:value={createPipelineDefinition} rows="12"></textarea>
-            </label>
-            <button class="btn" onclick={createPipeline} disabled={actionLoading || !createPipelineName.trim()}>
-              Create Process
-            </button>
-          </div>
-        </section>
+        <aside class="split-detail-pane">
+          {#if selectedPipeline}
+            <div class="detail-stack">
+              <div class="detail-head">
+                <h3 class="detail-title">{pipelineName(selectedPipeline)}</h3>
+                <code class="detail-id">{pipelineId(selectedPipeline)}</code>
+              </div>
+              <div class="stats-grid">
+                <div class="stat"><span>States</span><strong>{pipelineStateCount(selectedPipeline)}</strong></div>
+                <div class="stat"><span>Created</span><strong>{formatTime(selectedPipeline.created_at_ms)}</strong></div>
+              </div>
+              {#if pipelineStateList(selectedPipeline).length > 0}
+                <div class="detail-block">
+                  <span class="detail-subhead">States</span>
+                  <div class="state-list">
+                    {#each pipelineStateList(selectedPipeline) as state (state.name)}
+                      <div class="state-item">
+                        <div class="state-item-head">
+                          <span class="item-title">{state.name}</span>
+                          {#if state.initial}<Badge variant="secondary">initial</Badge>{/if}
+                          {#if state.terminal}<Badge variant="muted">terminal</Badge>{/if}
+                          {#if state.agentRole}<Badge variant="outline">{state.agentRole}</Badge>{/if}
+                        </div>
+                        {#if state.description}
+                          <p class="state-item-desc">{state.description}</p>
+                        {/if}
+                      </div>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+              <div class="detail-block">
+                <span class="detail-subhead">Definition</span>
+                <pre class="json-block">{jsonPreview(selectedPipeline.definition)}</pre>
+              </div>
+            </div>
+          {:else}
+            <div class="detail-empty">No process selected.</div>
+          {/if}
+        </aside>
       </div>
     {:else if panelView === "queue"}
-      <div class="tickets-grid">
-        <section class="tickets-section browser-section">
+      <div class="split-grid">
+        <section class="split-list-pane list-pane-flush">
           <UniversalEntityView
+            hideHeader
             title="Queue"
             description="Role-level dispatch capacity and failure counters."
             records={queueRecords}
@@ -2022,139 +1965,159 @@
           />
         </section>
 
-        <section class="tickets-section">
-          <div class="section-header">
-            <h3>Claim</h3>
-          </div>
-          <div class="create-grid">
-            <label class="field">
-              <span>Agent</span>
-              <input bind:value={claimAgent} placeholder="nullhub" />
-            </label>
-            <label class="field">
-              <span>Role</span>
-              <select bind:value={claimRole}>
-                {#if queueRoles.length === 0}
-                  <option value="coder">coder</option>
-                {:else}
-                  {#each queueRoles as role}
-                    <option value={role.role || "coder"}>{role.role || "coder"}</option>
-                  {/each}
-                {/if}
-              </select>
-            </label>
-            <label class="field">
-              <span>Lease TTL ms</span>
-              <input bind:value={claimTtl} inputmode="numeric" />
-            </label>
-            <button class="btn" onclick={claimNext} disabled={actionLoading || !claimRole.trim()}>
-              Claim Next
-            </button>
-          </div>
-          {#if claimed?.task}
-            <div class="claimed-box">
-              <span>{taskTitle(claimed.task)}</span>
-              <code>{claimed.lease_id}</code>
+        <aside class="split-detail-pane">
+          <div class="detail-stack">
+            <div class="detail-head">
+              <h3 class="detail-title">Claim next task</h3>
             </div>
-          {/if}
-        </section>
+            {#if queueRoles.length > 0}
+              <div class="detail-block">
+                <span class="detail-subhead">Roles</span>
+                <div class="badge-row">
+                  {#each queueRoles as role}
+                    {@const status = role.failed_count || role.stuck_count ? "attention" : role.claimable_count ? "claimable" : "idle"}
+                    <button type="button" class="badge-button" onclick={() => (claimRole = String(role.role || "coder"))}>
+                      <Badge variant={queueBadgeVariant(status)}>{role.role || "coder"} · {role.claimable_count || 0}</Badge>
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+            <div class="form-grid">
+              <div class="form-field">
+                <Label for="claim-agent">Agent</Label>
+                <Input id="claim-agent" bind:value={claimAgent} placeholder="nullhub" />
+              </div>
+              <div class="form-field">
+                <Label for="claim-role">Role</Label>
+                <Select id="claim-role" bind:value={claimRole}>
+                  {#if queueRoles.length === 0}
+                    <option value="coder">coder</option>
+                  {:else}
+                    {#each queueRoles as role}
+                      <option value={role.role || "coder"}>{role.role || "coder"}</option>
+                    {/each}
+                  {/if}
+                </Select>
+              </div>
+              <div class="form-field">
+                <Label for="claim-ttl">Lease TTL (ms)</Label>
+                <Input id="claim-ttl" bind:value={claimTtl} inputmode="numeric" />
+              </div>
+            </div>
+            <div class="form-actions">
+              <Button onclick={claimNext} disabled={actionLoading || !claimRole.trim()}>Claim next</Button>
+            </div>
+            {#if claimed?.task}
+              <div class="detail-block detail-block-divided">
+                <span class="detail-subhead">Claimed</span>
+                <div class="claimed-box">
+                  <span class="item-title">{taskTitle(claimed.task)}</span>
+                  <code class="detail-id">{claimed.lease_id}</code>
+                </div>
+              </div>
+            {/if}
+          </div>
+        </aside>
       </div>
     {:else if panelView === "runs"}
-      <div class="tickets-grid">
-        <section class="tickets-section">
-          <div class="section-header">
-            <h3>Run</h3>
-            {#if selectedRunId}<span>{selectedRunId}</span>{/if}
+      <div class="split-grid split-grid-runs">
+        <aside class="split-detail-pane">
+          <div class="detail-head">
+            <h3 class="detail-title">Run</h3>
+            {#if selectedRunId}<code class="detail-id">{selectedRunId}</code>{/if}
           </div>
           {#if selectedRun}
             <div class="detail-stack">
               <div class="stats-grid">
-                <div><span>Status</span><strong>{selectedRun.status || "-"}</strong></div>
-                <div><span>Task</span><strong>{selectedRun.task_id || selectedTaskId || "-"}</strong></div>
-                <div><span>Agent</span><strong>{selectedRun.agent_id || "-"}</strong></div>
-                <div><span>Role</span><strong>{selectedRun.agent_role || "-"}</strong></div>
-                <div><span>Started</span><strong>{formatTime(selectedRun.started_at_ms)}</strong></div>
-                <div><span>Ended</span><strong>{formatTime(selectedRun.ended_at_ms)}</strong></div>
+                <div class="stat"><span>Status</span><strong><Badge variant={runBadgeVariant(selectedRun.status)}>{selectedRun.status || "-"}</Badge></strong></div>
+                <div class="stat"><span>Task</span><strong class="mono">{selectedRun.task_id || selectedTaskId || "-"}</strong></div>
+                <div class="stat"><span>Agent</span><strong>{selectedRun.agent_id || "-"}</strong></div>
+                <div class="stat"><span>Role</span><strong>{selectedRun.agent_role || "-"}</strong></div>
+                <div class="stat"><span>Started</span><strong>{formatTime(selectedRun.started_at_ms)}</strong></div>
+                <div class="stat"><span>Ended</span><strong>{formatTime(selectedRun.ended_at_ms)}</strong></div>
               </div>
-              <div class="create-grid">
-                <label class="field">
-                  <span>Lease ID</span>
-                  <input bind:value={runLeaseId} placeholder="lease id from claim" />
-                </label>
-                <label class="field">
-                  <span>Lease Token</span>
-                  <input bind:value={runLeaseToken} placeholder="token from claim" />
-                </label>
-                <button class="btn" onclick={heartbeatLease} disabled={actionLoading || !runLeaseId.trim() || !runLeaseToken.trim()}>
-                  Heartbeat
-                </button>
+
+              <div class="detail-block">
+                <span class="detail-subhead">Lease</span>
+                <div class="form-grid">
+                  <div class="form-field">
+                    <Label for="lease-id">Lease ID</Label>
+                    <Input id="lease-id" bind:value={runLeaseId} placeholder="lease id from claim" />
+                  </div>
+                  <div class="form-field">
+                    <Label for="lease-token">Lease token</Label>
+                    <Input id="lease-token" bind:value={runLeaseToken} placeholder="token from claim" />
+                  </div>
+                </div>
+                <div class="form-actions">
+                  <Button variant="outline" onclick={heartbeatLease} disabled={actionLoading || !runLeaseId.trim() || !runLeaseToken.trim()}>Heartbeat</Button>
+                  {#if heartbeatExpiresAt}
+                    <span class="detail-muted">Lease expires {formatTime(heartbeatExpiresAt)}</span>
+                  {/if}
+                </div>
               </div>
-              {#if heartbeatExpiresAt}
-                <span class="muted">Lease expires {formatTime(heartbeatExpiresAt)}</span>
-              {/if}
+
               {#if taskTransitions.length > 0}
-                <div>
-                  <span class="subhead">Available Transitions</span>
-                  <div class="pill-list">
+                <div class="detail-block">
+                  <span class="detail-subhead">Available transitions</span>
+                  <div class="badge-row">
                     {#each taskTransitions as transition}
                       <button
-                        class="pill"
+                        type="button"
+                        class="badge-button"
                         onclick={() => transitionRun(String(transition.trigger || ""))}
                         disabled={actionLoading || !runLeaseToken.trim()}
                       >
-                        {transition.trigger || "-"} -> {transition.to || "-"}
+                        <Badge variant="secondary">{transition.trigger || "-"} → {transition.to || "-"}</Badge>
                       </button>
                     {/each}
                   </div>
                 </div>
               {/if}
-              <div class="create-grid">
-                <label class="field">
-                  <span>Trigger</span>
-                  <input bind:value={transitionTrigger} placeholder="complete" />
-                </label>
-                <label class="field wide">
-                  <span>Instructions</span>
-                  <textarea bind:value={transitionInstructions} rows="3"></textarea>
-                </label>
-                <label class="field wide">
-                  <span>Usage JSON</span>
-                  <textarea bind:value={transitionUsage} rows="4"></textarea>
-                </label>
-                <button class="btn" onclick={() => transitionRun()} disabled={actionLoading || !transitionTrigger.trim() || !runLeaseToken.trim()}>
-                  Transition
-                </button>
+
+              <div class="detail-block">
+                <span class="detail-subhead">Transition</span>
+                <div class="form-field">
+                  <Label for="transition-trigger">Trigger</Label>
+                  <Input id="transition-trigger" bind:value={transitionTrigger} placeholder="complete" />
+                </div>
+                <div class="form-field">
+                  <Label for="transition-instructions">Instructions</Label>
+                  <Textarea id="transition-instructions" bind:value={transitionInstructions} rows={3} />
+                </div>
+                <div class="form-field">
+                  <Label for="transition-usage">Usage JSON</Label>
+                  <Textarea id="transition-usage" bind:value={transitionUsage} rows={4} class="mono" />
+                </div>
+                <div class="form-actions">
+                  <Button onclick={() => transitionRun()} disabled={actionLoading || !transitionTrigger.trim() || !runLeaseToken.trim()}>Transition</Button>
+                </div>
               </div>
-              <div class="create-grid">
-                <label class="field wide">
-                  <span>Fail Reason</span>
-                  <textarea bind:value={failReason} rows="3"></textarea>
-                </label>
-                <label class="field wide">
-                  <span>Fail Usage JSON</span>
-                  <textarea bind:value={failUsage} rows="4"></textarea>
-                </label>
-                <button class="btn danger" onclick={failRun} disabled={actionLoading || !failReason.trim() || !runLeaseToken.trim()}>
-                  Fail Run
-                </button>
+
+              <div class="detail-block detail-block-divided">
+                <span class="detail-subhead">Fail run</span>
+                <div class="form-field">
+                  <Label for="fail-reason">Reason</Label>
+                  <Textarea id="fail-reason" bind:value={failReason} rows={3} />
+                </div>
+                <div class="form-field">
+                  <Label for="fail-usage">Usage JSON</Label>
+                  <Textarea id="fail-usage" bind:value={failUsage} rows={4} class="mono" />
+                </div>
+                <div class="form-actions">
+                  <Button variant="destructive" onclick={failRun} disabled={actionLoading || !failReason.trim() || !runLeaseToken.trim()}>Fail run</Button>
+                </div>
               </div>
             </div>
           {:else}
-            <div class="empty-row">Select or claim a task with a run.</div>
+            <div class="detail-empty">Select or claim a task with a run.</div>
           {/if}
-        </section>
+        </aside>
 
-        <section class="tickets-section browser-section">
-          <div class="filter-grid">
-            <label class="field small">
-              <span>Limit</span>
-              <input bind:value={runEventsLimit} inputmode="numeric" />
-            </label>
-            <button class="btn" onclick={() => loadRunEvents(false)} disabled={loading || !selectedRunId}>
-              Load Events
-            </button>
-          </div>
+        <section class="split-list-pane list-pane-flush">
           <UniversalEntityView
+            hideHeader
             title="Events"
             description="Event stream for the selected run."
             records={eventRecords}
@@ -2168,684 +2131,673 @@
             onRefresh={() => loadRunEvents(false)}
           />
           {#if runEventsCursor}
-            <button class="btn subtle" onclick={() => loadRunEvents(true)} disabled={loading}>
-              Load More
-            </button>
+            <Button variant="ghost" size="sm" onclick={() => loadRunEvents(true)} disabled={loading}>Load more</Button>
           {/if}
-          <div class="create-grid">
-            <label class="field">
-              <span>Kind</span>
-              <input bind:value={eventKind} placeholder="note" />
-            </label>
-            <label class="field wide">
-              <span>Data JSON</span>
-              <textarea bind:value={eventData} rows="5"></textarea>
-            </label>
-            <button class="btn" onclick={addRunEvent} disabled={actionLoading || !selectedRunId || !eventKind.trim() || !runLeaseToken.trim()}>
-              Add Event
-            </button>
+          <div class="detail-block detail-block-divided">
+            <span class="detail-subhead">Add event</span>
+            <div class="inline-form">
+              <div class="inline-form-field">
+                <Label for="event-kind">Kind</Label>
+                <Input id="event-kind" bind:value={eventKind} placeholder="note" />
+              </div>
+            </div>
+            <div class="form-field">
+              <Label for="event-data">Data JSON</Label>
+              <Textarea id="event-data" bind:value={eventData} rows={5} class="mono" />
+            </div>
+            <div class="form-actions">
+              <Button onclick={addRunEvent} disabled={actionLoading || !selectedRunId || !eventKind.trim() || !runLeaseToken.trim()}>Add event</Button>
+            </div>
           </div>
         </section>
       </div>
     {:else}
-      <div class="tickets-grid">
-        <section class="tickets-section browser-section">
-          <div class="filter-grid">
-            <div class="field wide">
-              <span>Scope</span>
-              <div class="scope-buttons">
-                <button
-                  class:active={artifactScope === "selected"}
-                  onclick={() => setArtifactScope("selected")}
-                  disabled={loading}
-                >
-                  Selected
-                </button>
-                <button
-                  class:active={artifactScope === "custom"}
-                  onclick={() => setArtifactScope("custom")}
-                  disabled={loading}
-                >
-                  Custom
-                </button>
-                <button
-                  class:active={artifactScope === "all"}
-                  onclick={() => setArtifactScope("all")}
-                  disabled={loading}
-                >
-                  All
-                </button>
-              </div>
-            </div>
-            {#if artifactScope === "custom"}
-              <label class="field">
-                <span>Task ID</span>
-                <input bind:value={artifactTaskFilter} placeholder="optional" />
-              </label>
-              <label class="field">
-                <span>Run ID</span>
-                <input bind:value={artifactRunFilter} placeholder="optional" />
-              </label>
-            {/if}
-            <label class="field small">
-              <span>Limit</span>
-              <input bind:value={artifactLimit} inputmode="numeric" />
-            </label>
-            <button class="btn" onclick={() => loadArtifacts(false)} disabled={loading}>
-              Load Artifacts
-            </button>
-          </div>
-          <UniversalEntityView
-            title="Artifacts"
-            description={`Artifacts for ${artifactScopeLabel()}.`}
-            records={artifactRecords}
-            columns={artifactColumns}
-            views={artifactViews}
-            defaultViewId="table"
-            {loading}
-            error={error || null}
-            emptyTitle="No artifacts"
-            emptyDescription="No artifacts match the current scope."
-            onRefresh={() => loadArtifacts(false)}
-          />
-          {#if artifactsCursor}
-            <button class="btn subtle" onclick={() => loadArtifacts(true)} disabled={loading}>
-              Load More
-            </button>
-          {/if}
-        </section>
-
-        <section class="tickets-section">
-          <div class="section-header">
-            <h3>Create Artifact</h3>
-            <span>{artifactScopeLabel()}</span>
-          </div>
-          <div class="create-grid">
-            <label class="field">
-              <span>Kind</span>
-              <input bind:value={artifactKind} placeholder="file" />
-            </label>
-            <label class="field wide">
-              <span>URI</span>
-              <input bind:value={artifactUri} placeholder="file:///tmp/result.txt" />
-            </label>
-            <label class="field">
-              <span>SHA-256</span>
-              <input bind:value={artifactSha256} placeholder="optional" />
-            </label>
-            <label class="field">
-              <span>Size Bytes</span>
-              <input bind:value={artifactSize} inputmode="numeric" />
-            </label>
-            <label class="field wide">
-              <span>Meta JSON</span>
-              <textarea bind:value={artifactMeta} rows="6"></textarea>
-            </label>
-            <button class="btn" onclick={createArtifact} disabled={actionLoading || !artifactKind.trim() || !artifactUri.trim()}>
-              Create Artifact
-            </button>
-          </div>
-        </section>
-      </div>
+      <section class="single-pane">
+        <UniversalEntityView
+          hideHeader
+          title="Artifacts"
+          description={`Artifacts for ${artifactScopeLabel()}.`}
+          records={artifactRecords}
+          columns={artifactColumns}
+          views={artifactViews}
+          defaultViewId="table"
+          {loading}
+          error={error || null}
+          emptyTitle="No artifacts"
+          emptyDescription="No artifacts match the current scope."
+          onRefresh={() => loadArtifacts(false)}
+        />
+        {#if artifactsCursor}
+          <Button variant="ghost" size="sm" onclick={() => loadArtifacts(true)} disabled={loading}>Load more</Button>
+        {/if}
+      </section>
     {/if}
   {/if}
 </div>
 
+<Dialog bind:open={showCreateProcess} title="New process" description="Define a process and its state machine." size="lg">
+  <div class="form-field">
+    <Label for="create-process-name">Name</Label>
+    <Input id="create-process-name" bind:value={createPipelineName} placeholder="process name" />
+  </div>
+  <div class="form-field">
+    <Label for="create-process-definition">Definition JSON</Label>
+    <Textarea id="create-process-definition" bind:value={createPipelineDefinition} rows={14} class="mono" />
+  </div>
+  {#snippet footer()}
+    <Button variant="outline" onclick={() => (showCreateProcess = false)}>Cancel</Button>
+    <Button
+      onclick={async () => {
+        await createPipeline();
+        if (!error) showCreateProcess = false;
+      }}
+      disabled={actionLoading || !createPipelineName.trim()}
+    >Create process</Button>
+  {/snippet}
+</Dialog>
+
+<Dialog bind:open={showCreateTask} title="New task" description="Create a task on a process." size="lg">
+  <div class="form-grid">
+    <div class="form-field">
+      <Label for="create-task-process">Process</Label>
+      <Select id="create-task-process" bind:value={createTaskPipeline}>
+        <option value="">Select</option>
+        {#each pipelines as pipeline}
+          <option value={pipelineId(pipeline)}>{pipelineName(pipeline)}</option>
+        {/each}
+      </Select>
+    </div>
+    <div class="form-field">
+      <Label for="create-task-priority">Priority</Label>
+      <Input id="create-task-priority" bind:value={createTaskPriority} inputmode="numeric" />
+    </div>
+  </div>
+  <div class="form-field">
+    <Label for="create-task-title">Title</Label>
+    <Input id="create-task-title" bind:value={createTaskTitle} placeholder="Task title" />
+  </div>
+  <div class="form-field">
+    <Label for="create-task-agent">Assigned agent</Label>
+    <Input id="create-task-agent" bind:value={createTaskAssignedAgent} placeholder="optional" />
+  </div>
+  <div class="form-field">
+    <Label for="create-task-description">Description</Label>
+    <Textarea id="create-task-description" bind:value={createTaskDescription} rows={3} />
+  </div>
+  <div class="form-field">
+    <Label for="create-task-dependencies">Dependencies</Label>
+    <Input id="create-task-dependencies" bind:value={createTaskDependencies} placeholder="task-a, task-b" />
+  </div>
+  <div class="form-field">
+    <Label for="create-task-metadata">Metadata JSON</Label>
+    <Textarea id="create-task-metadata" bind:value={createTaskMetadata} rows={4} class="mono" />
+  </div>
+  <div class="form-field form-field-divided">
+    <Label for="create-task-bulk">Bulk tasks JSON</Label>
+    <Textarea id="create-task-bulk" bind:value={bulkTasksJson} rows={6} class="mono" />
+    <div class="form-actions">
+      <Button variant="outline" size="sm" onclick={bulkCreateTasks} disabled={actionLoading}>Bulk create</Button>
+    </div>
+  </div>
+  {#snippet footer()}
+    <Button variant="outline" onclick={() => (showCreateTask = false)}>Cancel</Button>
+    <Button
+      onclick={async () => {
+        await createTask();
+        if (!error) showCreateTask = false;
+      }}
+      disabled={actionLoading ||
+        !createTaskTitle.trim() ||
+        !(createTaskPipeline.trim() || filterPipeline.trim() || selectedPipelineId.trim())}
+    >Create task</Button>
+  {/snippet}
+</Dialog>
+
+<Dialog bind:open={showCreateArtifact} title="New artifact" description={`Linked to ${artifactScopeLabel()}.`} size="md">
+  <div class="form-grid">
+    <div class="form-field">
+      <Label for="create-artifact-kind">Kind</Label>
+      <Input id="create-artifact-kind" bind:value={artifactKind} placeholder="file" />
+    </div>
+    <div class="form-field">
+      <Label for="create-artifact-size">Size bytes</Label>
+      <Input id="create-artifact-size" bind:value={artifactSize} inputmode="numeric" />
+    </div>
+  </div>
+  <div class="form-field">
+    <Label for="create-artifact-uri">URI</Label>
+    <Input id="create-artifact-uri" bind:value={artifactUri} placeholder="file:///tmp/result.txt" />
+  </div>
+  <div class="form-field">
+    <Label for="create-artifact-sha">SHA-256</Label>
+    <Input id="create-artifact-sha" bind:value={artifactSha256} placeholder="optional" />
+  </div>
+  <div class="form-field">
+    <Label for="create-artifact-meta">Meta JSON</Label>
+    <Textarea id="create-artifact-meta" bind:value={artifactMeta} rows={5} class="mono" />
+  </div>
+  {#snippet footer()}
+    <Button variant="outline" onclick={() => (showCreateArtifact = false)}>Cancel</Button>
+    <Button
+      onclick={async () => {
+        await createArtifact();
+        if (!error) showCreateArtifact = false;
+      }}
+      disabled={actionLoading || !artifactKind.trim() || !artifactUri.trim()}
+    >Create artifact</Button>
+  {/snippet}
+</Dialog>
+
 <style>
   .tickets-panel {
     display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 1.25rem;
+    color: var(--shadcn-foreground);
+  }
+
+  /* View tabs in the PageHeader controls */
+  .view-tabs {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.125rem;
+    padding: 0.1875rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
+  }
+  .view-tabs button {
+    padding: 0.3125rem 0.6875rem;
+    border: 0;
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    background: transparent;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    line-height: 1.2;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background-color 0.12s ease, color 0.12s ease;
+  }
+  .view-tabs button:hover {
+    color: var(--shadcn-foreground);
+  }
+  .view-tabs button.active {
+    background: var(--shadcn-card);
+    color: var(--shadcn-foreground);
+    box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
+  }
+
+  /* Header-band fields */
+  :global(.tickets-panel .ph-field) {
+    width: auto;
+    min-width: 9rem;
+  }
+  :global(.tickets-panel .ph-field-sm) {
+    min-width: 7rem;
+  }
+  :global(.tickets-panel .ph-field-xs) {
+    width: 5rem;
+    min-width: 5rem;
+  }
+
+  /* Banners */
+  .banner {
+    padding: 0.75rem 0.875rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.875rem;
+  }
+  .banner-error {
+    border-color: color-mix(in srgb, var(--shadcn-destructive) 35%, var(--shadcn-border));
+    background: color-mix(in srgb, var(--shadcn-destructive) 6%, var(--shadcn-card));
+    color: var(--shadcn-destructive);
+  }
+  .banner-info {
+    color: var(--shadcn-foreground);
+  }
+
+  /* Split layout */
+  .split-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+    gap: 1.25rem;
+    align-items: start;
+    min-width: 0;
+  }
+  .split-grid-runs {
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  }
+  .single-pane {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .split-list-pane {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .list-pane-flush {
+    gap: 0.5rem;
+  }
+  .split-detail-pane {
+    display: flex;
+    min-width: 0;
     flex-direction: column;
     gap: 1rem;
+    padding: 1.25rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
   }
-  .tickets-header,
-  .section-header {
+
+  /* List rows */
+  .list-stack {
     display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+  .list-row {
+    display: flex;
+    width: 100%;
     align-items: center;
     justify-content: space-between;
-    gap: 1rem;
-  }
-  .tickets-header {
-    flex-wrap: wrap;
-  }
-  .tickets-heading {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    min-width: min(100%, 18rem);
-    margin-right: auto;
-  }
-  .tickets-heading h2 {
-    margin: 0;
-    color: var(--accent);
-    font-size: 1.25rem;
-    line-height: 1.2;
-    letter-spacing: 0;
-  }
-  .tickets-heading p {
-    max-width: 46rem;
-    margin: 0;
-    color: var(--fg-dim);
-    font-size: 0.875rem;
-    line-height: 1.45;
-  }
-  .tickets-tabs {
-    display: inline-flex;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .tickets-tabs button {
-    min-width: 120px;
-    padding: 0.65rem 1rem;
-    border: 0;
-    border-right: 1px solid var(--border);
-    background: transparent;
-    color: var(--fg-dim);
+    gap: 0.75rem;
+    padding: 0.6875rem 0.875rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
+    color: var(--shadcn-foreground);
+    text-align: left;
     cursor: pointer;
-    text-transform: uppercase;
-    letter-spacing: 0;
-    font-weight: 700;
-    font-size: 0.75rem;
+    transition: background-color 0.12s ease, border-color 0.12s ease;
   }
-  .tickets-tabs button:last-child {
-    border-right: 0;
+  .list-row:hover {
+    background: var(--shadcn-accent);
   }
-  .tickets-tabs button.active {
-    color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    text-shadow: var(--text-glow);
+  .list-row.active {
+    border-color: var(--shadcn-foreground);
+    background: var(--shadcn-accent);
   }
-  .tickets-grid {
-    display: grid;
-    grid-template-columns: minmax(280px, 0.9fr) minmax(320px, 1.1fr);
-    gap: 1rem;
-  }
-  .planner-grid,
-  .dependency-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
-    gap: 1rem;
-  }
-  .tickets-section {
+  .list-row-text {
     display: flex;
-    flex-direction: column;
-    gap: 1rem;
     min-width: 0;
-    padding: 1rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--bg-surface);
+    flex-direction: column;
+    gap: 0.125rem;
   }
-  .tickets-section.full {
-    grid-column: 1 / -1;
-  }
-  .tickets-section.browser-section {
-    border: 0;
-    background: transparent;
-    padding: 0;
-  }
-  .planner-main,
-  .dependency-main {
-    min-height: 520px;
-  }
-  .planner-side,
-  .dependency-side {
-    align-self: start;
-  }
-  .section-header h3 {
-    margin: 0;
-    color: var(--accent);
-    font-size: 0.9rem;
-    text-transform: uppercase;
-    letter-spacing: 0;
-  }
-  .section-header span {
-    color: var(--fg-dim);
-    font-size: 0.75rem;
-    font-family: var(--font-mono);
+  .item-title {
+    color: var(--shadcn-foreground);
+    font-size: 0.875rem;
+    font-weight: 500;
+    line-height: 1.3;
     overflow-wrap: anywhere;
   }
-  .section-header.inner {
-    padding-top: 1rem;
-    border-top: 1px solid var(--border);
+  .item-meta {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.78125rem;
+    line-height: 1.35;
+    overflow-wrap: anywhere;
   }
+
+  /* Detail panel */
+  .detail-stack {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 1rem;
+  }
+  .detail-loading {
+    margin: 0;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.8125rem;
+  }
+  .detail-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+  .detail-title {
+    margin: 0;
+    color: var(--shadcn-foreground);
+    font-size: 1.0625rem;
+    font-weight: 600;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+  .detail-id {
+    color: var(--shadcn-muted-foreground);
+    font-family: var(--prin7r-font-mono-standard);
+    font-size: 0.78125rem;
+    overflow-wrap: anywhere;
+  }
+  .detail-description {
+    margin: 0;
+    color: var(--shadcn-foreground);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .detail-block {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .detail-block-divided,
+  .form-field-divided {
+    padding-top: 1rem;
+    border-top: 1px solid var(--shadcn-border);
+  }
+  .detail-subhead {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+  .detail-muted {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.8125rem;
+  }
+  .detail-columns {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
+  }
+  .detail-empty {
+    padding: 1.25rem 0;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.875rem;
+  }
+  .detail-actions {
+    gap: 0.75rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--shadcn-border);
+  }
+  .detail-shortcuts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  /* Stats */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+    gap: 0.5rem;
+  }
+  .stat {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
+  }
+  .stat span {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.71875rem;
+    line-height: 1.2;
+  }
+  .stat strong {
+    color: var(--shadcn-foreground);
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+  .stat strong.mono {
+    font-family: var(--prin7r-font-mono-standard);
+    font-size: 0.8125rem;
+    font-weight: 500;
+  }
+
+  /* Insight cards */
   .insight-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
     gap: 0.5rem;
   }
   .insight-card {
     display: flex;
     min-width: 0;
     flex-direction: column;
-    gap: 0.3rem;
-    padding: 0.7rem;
-    border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--bg) 72%, transparent);
+    gap: 0.25rem;
+    padding: 0.75rem 0.875rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
   }
   .insight-card span {
-    color: var(--fg-dim);
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: 0;
-    font-weight: 700;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.71875rem;
+    line-height: 1.2;
   }
   .insight-card strong {
-    color: var(--accent);
-    font-family: var(--font-mono);
-    font-size: 1rem;
-    overflow-wrap: anywhere;
+    color: var(--shadcn-foreground);
+    font-size: 1.125rem;
+    font-weight: 600;
+    line-height: 1.2;
   }
-  .filter-grid,
-  .action-grid,
-  .create-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
-    gap: 0.75rem;
-    align-items: end;
-  }
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-  }
-  .field.small {
-    min-width: 80px;
-  }
-  .field.wide {
-    grid-column: 1 / -1;
-  }
-  .field span,
-  .subhead {
-    color: var(--accent-dim);
-    font-size: 0.6875rem;
-    text-transform: uppercase;
-    letter-spacing: 0;
-    font-weight: 700;
-  }
-  .field input,
-  .field select,
-  .field textarea {
-    padding: 0.6rem 0.7rem;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    background: var(--bg);
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 0.8rem;
-  }
-  .field textarea {
-    resize: vertical;
-    min-height: 84px;
-  }
-  .scope-buttons {
-    display: inline-flex;
-    width: fit-content;
-    max-width: 100%;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    overflow: hidden;
-  }
-  .scope-buttons button {
-    min-width: 92px;
-    padding: 0.55rem 0.75rem;
-    border: 0;
-    border-right: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--fg-dim);
-    cursor: pointer;
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0;
-  }
-  .scope-buttons button:last-child {
-    border-right: 0;
-  }
-  .scope-buttons button.active {
-    color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-  .scope-buttons button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .field input:focus,
-  .field select:focus,
-  .field textarea:focus {
-    border-color: var(--accent);
-  }
-  .btn {
-    min-height: 38px;
-    padding: 0.5rem 0.85rem;
-    border: 1px solid var(--accent-dim);
-    border-radius: 2px;
-    background: var(--bg-surface);
-    color: var(--accent);
-    font-size: 0.75rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0;
-    cursor: pointer;
-  }
-  .btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-  .btn:hover:not(:disabled) {
-    border-color: var(--accent);
-    background: var(--bg-hover);
-  }
-  .btn.subtle {
-    color: var(--fg);
-    border-color: var(--border);
-  }
-  .btn.danger {
-    color: var(--error);
-    border-color: color-mix(in srgb, var(--error) 50%, transparent);
-  }
-  .bulk-block {
-    display: grid;
-    grid-template-columns: 1fr;
-    gap: 0.75rem;
-    margin-top: 1rem;
-    padding-top: 1rem;
-    border-top: 1px solid var(--border);
-  }
-  .task-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    max-height: 520px;
-    overflow: auto;
-  }
-  .task-list.compact {
-    max-height: 320px;
-  }
-  .task-row {
-    display: grid;
-    width: 100%;
-    gap: 0.25rem;
-    padding: 0.75rem;
-    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--bg) 70%, transparent);
-    color: var(--fg);
-    text-align: left;
-    cursor: pointer;
-  }
-  .task-row.active {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-  .task-title {
-    color: var(--fg);
-    font-weight: 700;
-    overflow-wrap: anywhere;
-  }
-  .task-meta,
-  .muted {
-    color: var(--fg-dim);
-    font-size: 0.75rem;
-    font-family: var(--font-mono);
-  }
-  .detail-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 1rem;
-    min-width: 0;
-  }
-  .detail-title {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-  }
-  .detail-title span {
-    color: var(--fg);
-    font-weight: 700;
-    overflow-wrap: anywhere;
-  }
-  code {
-    color: var(--accent);
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    overflow-wrap: anywhere;
-  }
-  .stats-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
-    gap: 0.5rem;
-  }
-  .stats-grid div {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-    padding: 0.65rem;
-    border: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-    border-radius: 2px;
-  }
-  .stats-grid span {
-    color: var(--fg-dim);
-    font-size: 0.68rem;
-    text-transform: uppercase;
-    letter-spacing: 0;
-  }
-  .stats-grid strong {
-    color: var(--accent);
-    font-family: var(--font-mono);
-    font-size: 0.85rem;
-  }
-  .description {
-    margin: 0;
-    color: var(--fg);
-    white-space: pre-wrap;
-  }
-  .detail-columns {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-    gap: 1rem;
-  }
-  .pill-list {
+
+  /* Badges */
+  .badge-row {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
+    gap: 0.375rem;
   }
-  .pill {
-    padding: 0.35rem 0.5rem;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    background: var(--bg);
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-  }
-  button.pill {
+  .badge-button {
+    padding: 0;
+    border: 0;
+    background: none;
     cursor: pointer;
   }
-  .pill.static {
-    cursor: default;
+  .badge-button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
   }
-  .process-plan-list,
-  .planner-task-list,
-  .dependency-list,
-  .dependency-detail,
-  .selected-plan {
+
+  /* JSON / mono blocks */
+  .json-block {
+    max-height: 22rem;
+    overflow: auto;
+    margin: 0;
+    padding: 0.75rem 0.875rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
+    color: var(--shadcn-foreground);
+    font-family: var(--prin7r-font-mono-standard);
+    font-size: 0.78125rem;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  :global(.tickets-panel textarea.mono),
+  :global(.dialog-content textarea.mono) {
+    font-family: var(--prin7r-font-mono-standard);
+  }
+
+  /* Forms */
+  .form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+    gap: 0.875rem;
+  }
+  .form-field {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+  .form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .inline-form {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+  }
+  .inline-form-field {
+    display: flex;
+    min-width: 0;
+    flex: 1 1 auto;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  /* Process plan (planner) */
+  .process-plan-list {
     display: flex;
     min-width: 0;
     flex-direction: column;
     gap: 0.75rem;
   }
-  .dependency-list {
-    max-height: 620px;
-    overflow: auto;
-  }
   .process-plan {
-    display: grid;
-    gap: 0.75rem;
-    padding: 0.85rem;
-    border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--bg) 70%, transparent);
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.625rem;
+    padding: 0.875rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
   }
   .process-plan-header {
     display: flex;
-    min-width: 0;
     align-items: flex-start;
     justify-content: space-between;
     gap: 0.75rem;
   }
-  .process-plan-header > div:first-child {
-    display: grid;
-    gap: 0.2rem;
-    min-width: 0;
-  }
-  .stage-strip {
+  .process-plan-title {
     display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: 0.35rem;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.125rem;
   }
-  .stage-strip span {
-    padding: 0.25rem 0.45rem;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
+  .plan-task-list {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.375rem;
   }
-  .planner-task {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    gap: 0.65rem;
-    width: 100%;
-    padding: 0.65rem;
-    border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-    border-radius: 2px;
-    background: var(--bg-surface);
-    color: var(--fg);
-    text-align: left;
-    cursor: pointer;
+  .plan-task {
+    align-items: center;
+    gap: 0.625rem;
+    justify-content: flex-start;
   }
-  .planner-task.active {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-  .planner-priority {
+  .plan-priority {
+    flex: 0 0 auto;
     min-width: 2.25rem;
-    padding: 0.2rem 0.35rem;
-    border: 1px solid color-mix(in srgb, var(--accent-dim) 60%, transparent);
-    border-radius: 2px;
-    color: var(--accent);
-    font-family: var(--font-mono);
-    font-size: 0.72rem;
-    font-weight: 700;
+    padding: 0.1875rem 0.375rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: calc(var(--shadcn-radius) - 2px);
+    background: var(--shadcn-muted);
+    color: var(--shadcn-foreground);
+    font-family: var(--prin7r-font-mono-standard);
+    font-size: 0.71875rem;
+    font-weight: 600;
     text-align: center;
+  }
+
+  /* Dependency map */
+  .dependency-list {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.375rem;
+    max-height: 40rem;
+    overflow: auto;
   }
   .dependency-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    gap: 0.75rem;
     align-items: center;
-    width: 100%;
-    padding: 0.75rem;
-    border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
-    border-radius: 2px;
-    background: color-mix(in srgb, var(--bg) 70%, transparent);
-    color: var(--fg);
-    text-align: left;
-    cursor: pointer;
-  }
-  .dependency-row.active {
-    border-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
   }
   .dependency-node {
-    display: grid;
+    display: flex;
     min-width: 0;
-    gap: 0.2rem;
-  }
-  .dependency-node strong {
-    overflow-wrap: anywhere;
-  }
-  .dependency-node small,
-  .dependency-arrow {
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
+    flex-direction: column;
+    gap: 0.125rem;
   }
   .dependency-arrow {
-    text-transform: uppercase;
-    letter-spacing: 0;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.71875rem;
     white-space: nowrap;
   }
-  .empty-row.compact {
-    margin-top: 0.5rem;
-    padding: 0.6rem;
+
+  /* Pipeline states */
+  .state-list {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.5rem;
   }
-  pre {
-    max-height: 280px;
-    overflow: auto;
+  .state-item {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 0.375rem;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
+  }
+  .state-item-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.375rem;
+  }
+  .state-item-desc {
     margin: 0;
-    padding: 0.85rem;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    background: var(--bg);
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: 0.75rem;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.8125rem;
+    line-height: 1.45;
   }
-  .claimed-box,
-  .empty-row,
-  .empty-state,
-  .error-banner,
-  .message-banner {
-    padding: 0.85rem;
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    background: var(--bg-surface);
-    color: var(--fg-dim);
-  }
-  .error-banner {
-    color: var(--error);
-    border-color: color-mix(in srgb, var(--error) 50%, transparent);
-  }
-  .message-banner {
-    color: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 50%, transparent);
-  }
+
+  /* Claimed box */
   .claimed-box {
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
-    color: var(--fg);
+    gap: 0.25rem;
+    padding: 0.75rem 0.875rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
   }
+
+  /* Empty rows / states */
+  .empty-row,
+  .empty-state {
+    padding: 1rem 0.875rem;
+    border: 1px dashed var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.875rem;
+    text-align: center;
+  }
+
   @media (max-width: 900px) {
-    .tickets-grid,
-    .planner-grid,
-    .dependency-grid {
+    .split-grid,
+    .split-grid-runs {
       grid-template-columns: 1fr;
     }
-    .tickets-tabs {
-      width: 100%;
-    }
-    .tickets-tabs button {
-      flex: 1;
-      min-width: 0;
-    }
-    .process-plan-header,
     .dependency-row {
       grid-template-columns: 1fr;
-    }
-    .process-plan-header {
-      flex-direction: column;
-    }
-    .stage-strip {
-      justify-content: flex-start;
+      gap: 0.375rem;
     }
     .dependency-arrow {
       white-space: normal;

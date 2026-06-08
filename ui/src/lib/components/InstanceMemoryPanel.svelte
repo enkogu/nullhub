@@ -4,6 +4,14 @@
     describeInstanceCliError,
     isInstanceCliError,
   } from "$lib/instanceCli";
+  import { Card } from "$lib/components/ui/card";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Select } from "$lib/components/ui/select";
+  import { Label } from "$lib/components/ui/label";
+  import { Badge } from "$lib/components/ui/badge";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+  import SearchIcon from "@lucide/svelte/icons/search";
 
   type MemoryStats = {
     backend?: string;
@@ -217,9 +225,16 @@
       <h2>Memory</h2>
       <p>Backend status, persisted entries, and semantic search results.</p>
     </div>
-    <button class="toolbar-btn" onclick={refreshMemory} disabled={statsLoading || entriesLoading}>
-      Refresh
-    </button>
+    <Button
+      variant="outline"
+      size="icon"
+      onclick={refreshMemory}
+      disabled={statsLoading || entriesLoading}
+      title="Refresh"
+      aria-label="Refresh memory"
+    >
+      <RefreshCwIcon />
+    </Button>
   </div>
 
   <div class="stats-grid">
@@ -228,54 +243,54 @@
     {:else if statsLoading && !stats}
       <div class="panel-state">Loading memory stats...</div>
     {:else if stats}
-      <div class="stat-card">
+      <Card class="stat-card px-5">
         <span>Backend</span>
         <strong>{stats.backend || "-"}</strong>
-      </div>
-      <div class="stat-card">
+      </Card>
+      <Card class="stat-card px-5">
         <span>Retrieval</span>
         <strong>{stats.retrieval || "-"}</strong>
-      </div>
-      <div class="stat-card">
+      </Card>
+      <Card class="stat-card px-5">
         <span>Vector</span>
         <strong>{stats.vector || "-"}</strong>
-      </div>
-      <div class="stat-card">
+      </Card>
+      <Card class="stat-card px-5">
         <span>Entries</span>
         <strong>{stats.entries ?? 0}</strong>
-      </div>
-      <div class="stat-card">
-        <span>Vector Entries</span>
+      </Card>
+      <Card class="stat-card px-5">
+        <span>Vector entries</span>
         <strong>{stats.vector_entries ?? "-"}</strong>
-      </div>
-      <div class="stat-card">
-        <span>Outbox Pending</span>
+      </Card>
+      <Card class="stat-card px-5">
+        <span>Outbox pending</span>
         <strong>{stats.outbox_pending ?? "-"}</strong>
-      </div>
+      </Card>
     {/if}
   </div>
 
-  <section class="memory-section">
+  <Card class="memory-section px-5">
     <div class="section-header">
-      <h3>Stored Entries</h3>
+      <h3>Stored entries</h3>
       <div class="controls">
-        <label>
-          <span>Category</span>
-          <select bind:value={category}>
+        <div class="control-field">
+          <Label for="memory-category">Category</Label>
+          <Select id="memory-category" bind:value={category}>
             <option value="all">All</option>
             <option value="core">Core</option>
             <option value="daily">Daily</option>
             <option value="conversation">Conversation</option>
-          </select>
-        </label>
-        <label>
-          <span>Limit</span>
-          <select bind:value={limit}>
+          </Select>
+        </div>
+        <div class="control-field">
+          <Label for="memory-limit">Limit</Label>
+          <Select id="memory-limit" bind:value={limit}>
             <option value="20">20</option>
             <option value="50">50</option>
             <option value="100">100</option>
-          </select>
-        </label>
+          </Select>
+        </div>
       </div>
     </div>
 
@@ -306,9 +321,9 @@
         {/each}
       </div>
     {/if}
-  </section>
+  </Card>
 
-  <section class="memory-section">
+  <Card class="memory-section px-5">
     <div class="section-header">
       <h3>Search</h3>
       <form
@@ -318,10 +333,10 @@
           void runSearch();
         }}
       >
-        <input bind:value={searchQuery} placeholder="Find facts, snippets, or memory keys" />
-        <button class="toolbar-btn" type="submit" disabled={searchLoading || !searchQuery.trim()}>
-          {searchLoading ? "Searching..." : "Search"}
-        </button>
+        <Input bind:value={searchQuery} placeholder="Find facts, snippets, or memory keys" />
+        <Button type="submit" size="icon" disabled={searchLoading || !searchQuery.trim()} title="Search" aria-label="Search memory">
+          <SearchIcon />
+        </Button>
       </form>
     </div>
 
@@ -357,7 +372,7 @@
     {:else}
       <div class="panel-state">Search memory when you need a specific fact or snippet.</div>
     {/if}
-  </section>
+  </Card>
 </div>
 
 <style>
@@ -376,73 +391,51 @@
   .panel-toolbar h2,
   .section-header h3 {
     margin: 0;
-    color: var(--accent);
+    color: var(--shadcn-foreground);
+    font-weight: 600;
+  }
+  .panel-toolbar h2 {
+    font-size: 1.1rem;
+  }
+  .section-header h3 {
+    font-size: 1rem;
   }
   .panel-toolbar p {
     margin: 0.25rem 0 0;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.875rem;
-  }
-  .toolbar-btn {
-    padding: 0.55rem 0.9rem;
-    border: 1px solid var(--accent-dim);
-    background: var(--bg-surface);
-    color: var(--accent);
-    border-radius: 2px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-  }
-  .toolbar-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
   .panel-state {
     padding: 1.5rem;
-    border: 1px dashed color-mix(in srgb, var(--border) 75%, transparent);
-    background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
-    color: var(--fg-dim);
-    border-radius: 4px;
+    border: 1px dashed var(--shadcn-border);
+    background: var(--shadcn-muted);
+    color: var(--shadcn-muted-foreground);
+    border-radius: var(--shadcn-radius);
     text-align: center;
   }
   .panel-state.warning {
-    border-color: color-mix(in srgb, var(--warning, #777777) 50%, transparent);
-    color: var(--warning, #777777);
-    background: color-mix(in srgb, var(--warning, #777777) 8%, transparent);
+    border-color: color-mix(in srgb, var(--shadcn-destructive) 35%, var(--shadcn-border));
+    color: var(--shadcn-destructive);
+    background: color-mix(in srgb, var(--shadcn-destructive) 6%, var(--shadcn-card));
   }
   .stats-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap: 0.75rem;
   }
-  .stat-card {
-    display: flex;
-    flex-direction: column;
+  :global(.stat-card) {
     gap: 0.35rem;
-    padding: 1rem;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
   }
-  .stat-card span {
-    color: var(--accent-dim);
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+  :global(.stat-card) span {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.75rem;
   }
-  .stat-card strong {
+  :global(.stat-card) strong {
     font-size: 0.95rem;
+    color: var(--shadcn-foreground);
   }
-  .memory-section {
-    display: flex;
-    flex-direction: column;
+  :global(.memory-section) {
     gap: 0.9rem;
-    padding: 1rem;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
   }
   .controls,
   .search-form {
@@ -450,29 +443,17 @@
     gap: 0.75rem;
     align-items: end;
   }
-  .controls label,
-  .search-form {
-    color: var(--fg-dim);
-    font-size: 0.8rem;
-  }
-  .controls label {
+  .control-field {
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
-  }
-  select,
-  input {
     min-width: 120px;
-    padding: 0.6rem 0.7rem;
-    border: 1px solid color-mix(in srgb, var(--border) 75%, transparent);
-    background: color-mix(in srgb, var(--bg-surface) 92%, black 8%);
-    color: var(--fg);
-    border-radius: 2px;
   }
   .search-form {
     flex: 1;
+    align-items: center;
   }
-  .search-form input {
+  .search-form :global(input) {
     flex: 1;
   }
   .entry-list,
@@ -484,9 +465,9 @@
   .entry-card,
   .search-card {
     padding: 0.95rem 1rem;
-    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-    border-radius: 4px;
-    background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-card);
   }
   .entry-card header,
   .search-card header {
@@ -496,8 +477,9 @@
     margin-bottom: 0.65rem;
   }
   .entry-key {
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.82rem;
+    color: var(--shadcn-foreground);
     word-break: break-all;
   }
   .entry-meta,
@@ -506,25 +488,26 @@
     flex-wrap: wrap;
     gap: 0.5rem 0.75rem;
     margin-top: 0.3rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
   }
   .search-path {
     margin-bottom: 0.65rem;
-    color: var(--accent-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.74rem;
     word-break: break-all;
   }
   .mono {
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
   }
   pre {
     margin: 0;
     white-space: pre-wrap;
     word-break: break-word;
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.82rem;
     line-height: 1.55;
+    color: var(--shadcn-foreground);
   }
 
   @media (max-width: 900px) {

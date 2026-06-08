@@ -93,11 +93,8 @@
 </script>
 
 <div class="tickets-workspace">
-  <div class="tickets-toolbar">
+  <div class="tickets-instance-row">
     <TicketsInstanceSelector label="NullTickets backend" onChange={handleTicketsInstanceChange} />
-    <button class="btn" onclick={() => refreshStatus(true)} disabled={loading}>
-      {loading ? "Refreshing..." : "Refresh backend"}
-    </button>
   </div>
 
   {#if error}
@@ -132,33 +129,16 @@
     gap: 1rem;
   }
 
-  .tickets-toolbar {
+  .tickets-instance-row {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
     justify-content: flex-end;
     gap: 0.75rem;
-    padding-bottom: 0.75rem;
-    border-bottom: 1px solid var(--shadcn-border);
   }
 
-  .btn {
-    min-height: 2.25rem;
-    padding: 0.5rem 0.875rem;
-    border: 1px solid var(--shadcn-input);
-    border-radius: var(--shadcn-radius);
-    background: var(--shadcn-background);
-    color: var(--shadcn-foreground);
-    font-size: 0.875rem;
-    font-weight: 500;
-  }
-
-  .btn:hover:not(:disabled) {
-    background: var(--shadcn-accent);
-  }
-
-  .btn:disabled {
-    opacity: 0.6;
+  .tickets-instance-row:empty {
+    display: none;
   }
 
   .error-banner,

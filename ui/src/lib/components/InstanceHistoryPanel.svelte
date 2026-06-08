@@ -5,6 +5,10 @@
     isInstanceCliError,
   } from "$lib/instanceCli";
   import { normalizeMojibakeText } from "$lib/textEncoding";
+  import { Button } from "$lib/components/ui/button";
+  import { Badge } from "$lib/components/ui/badge";
+  import type { BadgeVariant } from "$lib/components/ui/badge";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
 
   type HistorySession = {
     session_id: string;
@@ -78,6 +82,18 @@
         return "tool";
       default:
         return "user";
+    }
+  }
+
+  function roleBadgeVariant(role: string): BadgeVariant {
+    switch ((role || "").toLowerCase()) {
+      case "assistant":
+        return "success";
+      case "system":
+      case "tool":
+        return "warning";
+      default:
+        return "secondary";
     }
   }
 
@@ -278,9 +294,16 @@
       <h2>Conversation History</h2>
       <p>Stored sessions and message transcripts from this instance.</p>
     </div>
-    <button class="toolbar-btn" onclick={refreshHistory} disabled={sessionsLoading || messagesLoading}>
-      Refresh
-    </button>
+    <Button
+      variant="outline"
+      size="icon-sm"
+      onclick={refreshHistory}
+      disabled={sessionsLoading || messagesLoading}
+      title="Refresh history"
+      aria-label="Refresh history"
+    >
+      <RefreshCwIcon />
+    </Button>
   </div>
 
   {#if sessionsError}
@@ -303,12 +326,12 @@
           </span>
         </div>
         <div class="session-page-controls">
-          <button class="toolbar-btn small" onclick={showNewerSessions} disabled={!canShowNewerSessions}>
+          <Button variant="outline" size="sm" onclick={showNewerSessions} disabled={!canShowNewerSessions}>
             Newer
-          </button>
-          <button class="toolbar-btn small" onclick={showOlderSessions} disabled={!canShowOlderSessions}>
+          </Button>
+          <Button variant="outline" size="sm" onclick={showOlderSessions} disabled={!canShowOlderSessions}>
             Older
-          </button>
+          </Button>
         </div>
         {#each sessions as session}
           <button
@@ -341,9 +364,9 @@
               </div>
             </div>
             {#if canLoadOlder}
-              <button class="toolbar-btn" onclick={loadOlderMessages} disabled={olderMessagesLoading}>
-                {olderMessagesLoading ? "Loading..." : "Load Older"}
-              </button>
+              <Button variant="outline" size="sm" onclick={loadOlderMessages} disabled={olderMessagesLoading}>
+                {olderMessagesLoading ? "Loading..." : "Load older"}
+              </Button>
             {/if}
           </div>
 
@@ -358,7 +381,7 @@
               {#each visibleMessages as message}
                 <article class={`message-card ${messageClass(message.role)}`}>
                   <header>
-                    <span class="message-role">{message.role}</span>
+                    <Badge variant={roleBadgeVariant(message.role)}>{message.role}</Badge>
                     <span class="message-time">{formatTimestamp(message.created_at)}</span>
                   </header>
                   <pre>{message.content}</pre>
@@ -387,41 +410,26 @@
   .panel-toolbar h2 {
     margin: 0;
     font-size: 1.1rem;
-    color: var(--accent);
+    font-weight: 600;
+    color: var(--shadcn-foreground);
   }
   .panel-toolbar p {
     margin: 0.25rem 0 0;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.875rem;
-  }
-  .toolbar-btn {
-    padding: 0.55rem 0.9rem;
-    border: 1px solid var(--accent-dim);
-    background: var(--bg-surface);
-    color: var(--accent);
-    border-radius: 2px;
-    font-size: 0.78rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-  }
-  .toolbar-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
   }
   .panel-state {
     padding: 1.5rem;
-    border: 1px dashed color-mix(in srgb, var(--border) 75%, transparent);
-    background: color-mix(in srgb, var(--bg-surface) 82%, transparent);
-    color: var(--fg-dim);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-muted);
+    color: var(--shadcn-muted-foreground);
+    border-radius: var(--shadcn-radius);
     text-align: center;
   }
   .panel-state.warning {
-    border-color: color-mix(in srgb, var(--warning, #777777) 50%, transparent);
-    color: var(--warning, #777777);
-    background: color-mix(in srgb, var(--warning, #777777) 8%, transparent);
+    border-color: var(--shadcn-border);
+    color: var(--shadcn-destructive);
+    background: color-mix(in srgb, var(--shadcn-destructive) 6%, transparent);
   }
   .history-grid {
     display: grid;
@@ -430,9 +438,9 @@
   }
   .session-list,
   .message-pane {
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    border-radius: 4px;
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
+    border-radius: var(--shadcn-radius);
   }
   .session-list {
     display: flex;
@@ -444,21 +452,16 @@
     display: flex;
     justify-content: space-between;
     padding: 0.9rem 1rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-    color: var(--accent-dim);
-    font-size: 0.78rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    border-bottom: 1px solid var(--shadcn-border);
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.8125rem;
+    font-weight: 600;
   }
   .session-page-controls {
     display: flex;
     gap: 0.5rem;
     padding: 0.75rem 1rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
-  }
-  .toolbar-btn.small {
-    padding: 0.45rem 0.7rem;
-    font-size: 0.72rem;
+    border-bottom: 1px solid var(--shadcn-border);
   }
   .session-item {
     display: flex;
@@ -468,16 +471,16 @@
     text-align: left;
     background: transparent;
     border: none;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
-    color: var(--fg);
+    border-bottom: 1px solid var(--shadcn-border);
+    color: var(--shadcn-foreground);
     cursor: pointer;
   }
   .session-item:hover,
   .session-item.active {
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: var(--shadcn-accent);
   }
   .session-id {
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.78rem;
     word-break: break-all;
   }
@@ -485,7 +488,7 @@
     display: flex;
     justify-content: space-between;
     gap: 0.75rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.75rem;
   }
   .message-pane {
@@ -499,16 +502,17 @@
     gap: 1rem;
     align-items: flex-start;
     padding: 1rem 1.2rem;
-    border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+    border-bottom: 1px solid var(--shadcn-border);
   }
   .message-title {
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.85rem;
     word-break: break-all;
+    color: var(--shadcn-foreground);
   }
   .message-subtitle {
     margin-top: 0.25rem;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.78rem;
   }
   .message-list {
@@ -519,38 +523,34 @@
   }
   .message-card {
     padding: 0.95rem 1rem;
-    border-radius: 4px;
-    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-    background: color-mix(in srgb, var(--bg-surface) 88%, transparent);
-  }
-  .message-card.user {
-    border-color: color-mix(in srgb, var(--accent-dim) 55%, transparent);
+    border-radius: var(--shadcn-radius);
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-card);
   }
   .message-card.assistant {
-    border-color: color-mix(in srgb, var(--success, #22c55e) 45%, transparent);
+    background: var(--shadcn-muted);
   }
   .message-card.system,
   .message-card.tool {
-    border-color: color-mix(in srgb, var(--warning, #777777) 45%, transparent);
+    background: var(--shadcn-muted);
   }
   .message-card header {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     gap: 0.75rem;
     margin-bottom: 0.65rem;
     font-size: 0.76rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--fg-dim);
+    color: var(--shadcn-muted-foreground);
   }
   .message-card pre {
     margin: 0;
     white-space: pre-wrap;
     word-break: break-word;
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.82rem;
     line-height: 1.55;
-    color: var(--fg);
+    color: var(--shadcn-foreground);
   }
 
   @media (max-width: 900px) {

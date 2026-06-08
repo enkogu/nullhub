@@ -4,6 +4,8 @@
   import ConfigEditorUI from "./ConfigEditorUI.svelte";
   import StructuredConfigEditor from "./StructuredConfigEditor.svelte";
   import { supportsStructuredConfig } from "./componentConfigSchemas";
+  import { Button } from "$lib/components/ui/button";
+  import SaveIcon from "@lucide/svelte/icons/save";
 
   let {
     component = "",
@@ -126,12 +128,13 @@
       </div>
     {/if}
     <div class="action-buttons">
-      <button class="save-btn" onclick={() => save()} disabled={busy}>
+      <Button onclick={() => save()} disabled={busy} title="Save config" aria-label="Save config">
+        <SaveIcon />
         {action === "save" ? "Saving..." : "Save"}
-      </button>
-      <button class="save-btn secondary" onclick={() => save(true)} disabled={busy}>
-        {action === "save-restart" ? "Restarting..." : "Save & Restart"}
-      </button>
+      </Button>
+      <Button variant="outline" onclick={() => save(true)} disabled={busy}>
+        {action === "save-restart" ? "Restarting..." : "Save & restart"}
+      </Button>
     </div>
   </div>
   {#if message}
@@ -177,73 +180,29 @@
   }
   .mode-btn {
     padding: 0.5rem 1rem;
-    border: 1px solid var(--border);
-    background: var(--bg-surface);
-    color: var(--fg-dim);
+    border: 1px solid var(--shadcn-border);
+    background: var(--shadcn-background);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.8125rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
+    font-weight: 500;
     cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, text-shadow 0.2s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
   .mode-btn:first-child {
-    border-radius: 2px 0 0 2px;
+    border-radius: var(--shadcn-radius) 0 0 var(--shadcn-radius);
   }
   .mode-btn:last-child {
-    border-radius: 0 2px 2px 0;
+    border-radius: 0 var(--shadcn-radius) var(--shadcn-radius) 0;
     border-left: none;
   }
   .mode-btn:hover {
-    background: var(--bg-hover);
-    border-color: var(--accent-dim);
-    color: var(--fg);
+    background: var(--shadcn-accent);
+    color: var(--shadcn-foreground);
   }
   .mode-btn.active {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    border-color: var(--accent);
-    color: var(--accent);
-    text-shadow: var(--text-glow);
-    box-shadow: inset 0 0 5px color-mix(in srgb, var(--accent) 30%, transparent);
-  }
-  .save-btn {
-    padding: 0.5rem 1.25rem;
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    color: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 2px;
-    cursor: pointer;
-    font-size: 0.8125rem;
-    font-family: var(--font-mono);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 0 8px color-mix(in srgb, var(--accent) 30%, transparent);
-  }
-  .save-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 30%, transparent);
-    box-shadow: 0 0 10px var(--border-glow), inset 0 0 10px color-mix(in srgb, var(--accent) 50%, transparent);
-    text-shadow: var(--text-glow);
-  }
-  .save-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    box-shadow: none;
-    border-color: var(--border);
-    color: var(--fg-dim);
-  }
-  .save-btn.secondary {
-    background: color-mix(in srgb, var(--warning, #777777) 12%, transparent);
-    color: var(--warning, #777777);
-    border-color: color-mix(in srgb, var(--warning, #777777) 65%, var(--border));
-    box-shadow: inset 0 0 8px color-mix(in srgb, var(--warning, #777777) 25%, transparent);
-  }
-  .save-btn.secondary:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--warning, #777777) 24%, transparent);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--warning, #777777) 20%, transparent),
-      inset 0 0 10px color-mix(in srgb, var(--warning, #777777) 40%, transparent);
-    text-shadow: 0 0 5px color-mix(in srgb, var(--warning, #777777) 70%, transparent);
+    background: var(--shadcn-foreground);
+    border-color: var(--shadcn-foreground);
+    color: var(--shadcn-background);
   }
   .ui-content {
     max-height: 600px;
@@ -257,50 +216,43 @@
     background: transparent;
   }
   .ui-content::-webkit-scrollbar-thumb {
-    background: var(--border);
+    background: var(--shadcn-border);
     border-radius: 3px;
   }
   .ui-content::-webkit-scrollbar-thumb:hover {
-    background: var(--accent-dim);
+    background: var(--shadcn-muted-foreground);
   }
   .raw-editor {
     flex: 1;
     min-height: 400px;
-    background: var(--bg-surface);
-    color: var(--fg);
-    border: 1px solid var(--border);
-    border-radius: 2px;
+    background: var(--shadcn-muted);
+    color: var(--shadcn-foreground);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
     padding: 1rem;
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.875rem;
     resize: none;
     line-height: 1.6;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
   }
   .raw-editor:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-    border-color: var(--accent);
-    box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 8px var(--border-glow);
+    outline: none;
+    border-color: var(--shadcn-ring);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--shadcn-ring) 50%, transparent);
   }
   .message {
     padding: 0.75rem 1rem;
     margin-bottom: 0.75rem;
-    border-radius: 2px;
+    border-radius: var(--shadcn-radius);
     font-size: 0.8125rem;
-    font-family: var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    background: color-mix(in srgb, var(--success, #22c55e) 15%, transparent);
-    color: var(--success, #22c55e);
-    border: 1px solid color-mix(in srgb, var(--success, #22c55e) 30%, transparent);
-    text-shadow: 0 0 5px var(--success, #22c55e);
+    background: var(--shadcn-muted);
+    color: var(--shadcn-foreground);
+    border: 1px solid var(--shadcn-border);
   }
   .message.error {
-    background: color-mix(in srgb, var(--error) 15%, transparent);
-    color: var(--error);
-    border-color: color-mix(in srgb, var(--error) 30%, transparent);
-    text-shadow: 0 0 5px var(--error);
+    background: color-mix(in srgb, var(--shadcn-destructive) 6%, transparent);
+    color: var(--shadcn-destructive);
+    border-color: color-mix(in srgb, var(--shadcn-destructive) 30%, transparent);
   }
 </style>

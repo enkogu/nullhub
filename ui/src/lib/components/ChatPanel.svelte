@@ -279,7 +279,7 @@
     border: 0;
     border-radius: 0;
     overflow: hidden;
-    background: #ffffff;
+    background: var(--shadcn-background);
     box-shadow: none;
   }
   .chat-unavailable {
@@ -287,17 +287,12 @@
     align-items: center;
     justify-content: center;
     height: 100%;
-    color: var(--warning, #777777);
+    color: var(--shadcn-muted-foreground);
     font-size: 0.875rem;
-    font-family: var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: 1px;
     padding: 2rem;
     text-align: center;
-    border: 1px dashed
-      color-mix(in srgb, var(--warning, #777777) 50%, transparent);
-    background: color-mix(in srgb, var(--warning, #777777) 5%, transparent);
-    text-shadow: 0 0 5px
-      color-mix(in srgb, var(--warning, #777777) 50%, transparent);
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
   }
 </style>

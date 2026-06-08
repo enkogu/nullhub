@@ -1,6 +1,16 @@
 <script lang="ts">
   import { api, type ReportOption } from "$lib/api/client";
   import { onMount } from "svelte";
+  import { PageHeader } from "$lib/components/ui/page-header";
+  import { Card } from "$lib/components/ui/card";
+  import { Button } from "$lib/components/ui/button";
+  import { Input } from "$lib/components/ui/input";
+  import { Textarea } from "$lib/components/ui/textarea";
+  import { Select } from "$lib/components/ui/select";
+  import { Label } from "$lib/components/ui/label";
+  import { Badge } from "$lib/components/ui/badge";
+  import CopyIcon from "@lucide/svelte/icons/copy";
+  import CheckIcon from "@lucide/svelte/icons/check";
 
   type Step = "form" | "preview" | "result";
 
@@ -158,71 +168,75 @@
 </script>
 
 <div class="report-page">
-  <h1>Report Issue</h1>
+  <PageHeader title="Report Issue" subtitle="File a bug or feature request as a GitHub issue." />
 
   {#if step === "form"}
-    <div class="form-section">
-      <div class="field">
-        <label for="report-repo">Repository</label>
-        <select id="report-repo" bind:value={repo} disabled={metaLoading || repoOptions.length === 0}>
-          {#each repoOptions as r}
-            <option value={r.value}>{r.label}</option>
-          {/each}
-        </select>
-      </div>
+    <Card class="px-5">
+      <div class="fields">
+        <div class="field">
+          <Label for="report-repo">Repository</Label>
+          <Select id="report-repo" bind:value={repo} disabled={metaLoading || repoOptions.length === 0}>
+            {#each repoOptions as r}
+              <option value={r.value}>{r.label}</option>
+            {/each}
+          </Select>
+        </div>
 
-      <div class="field">
-        <label for="report-type">Report Type</label>
-        <select id="report-type" bind:value={type} disabled={metaLoading || typeOptions.length === 0}>
-          {#each typeOptions as t}
-            <option value={t.value}>{t.label}</option>
-          {/each}
-        </select>
-      </div>
+        <div class="field">
+          <Label for="report-type">Report type</Label>
+          <Select id="report-type" bind:value={type} disabled={metaLoading || typeOptions.length === 0}>
+            {#each typeOptions as t}
+              <option value={t.value}>{t.label}</option>
+            {/each}
+          </Select>
+        </div>
 
-      <div class="field">
-        <label for="report-message">Summary</label>
-        <textarea
-          id="report-message"
-          bind:value={message}
-          rows="4"
-          placeholder="One-line summary of the bug or feature. You'll be able to fill repro steps, impact, and the rest in the preview."
-        ></textarea>
-      </div>
+        <div class="field">
+          <Label for="report-message">Summary</Label>
+          <Textarea
+            id="report-message"
+            bind:value={message}
+            rows={4}
+            placeholder="One-line summary of the bug or feature. You'll be able to fill repro steps, impact, and the rest in the preview."
+          />
+        </div>
 
-      {#if error}
-        <div class="message message-error">{error}</div>
-      {/if}
+        {#if error}
+          <div class="banner banner-error">{error}</div>
+        {/if}
+      </div>
 
       <div class="actions">
-        <button class="primary-btn" onclick={goToPreview} disabled={loading || metaLoading || !repo || !type}>
+        <Button onclick={goToPreview} disabled={loading || metaLoading || !repo || !type}>
           {metaLoading ? "Loading..." : loading ? "Loading..." : "Next"}
-        </button>
+        </Button>
       </div>
-    </div>
+    </Card>
 
   {:else if step === "preview"}
-    <div class="preview-section">
-      <div class="preview-header">
-        <span class="preview-label">Title</span>
-        <code>{previewTitle}</code>
-      </div>
-      <div class="preview-header">
-        <span class="preview-label">Labels</span>
-        <span class="label-list">
-          {#each previewLabels as label}
-            <span class="label-pill">{label}</span>
-          {/each}
-        </span>
-      </div>
-      <div class="preview-header">
-        <span class="preview-label">Repository</span>
-        <code>{previewRepo}</code>
+    <Card class="px-5">
+      <div class="meta-list">
+        <div class="meta-row">
+          <span class="meta-label">Title</span>
+          <code>{previewTitle}</code>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Labels</span>
+          <span class="label-list">
+            {#each previewLabels as label}
+              <Badge variant="outline">{label}</Badge>
+            {/each}
+          </span>
+        </div>
+        <div class="meta-row">
+          <span class="meta-label">Repository</span>
+          <code>{previewRepo}</code>
+        </div>
       </div>
 
       <div class="field">
-        <label for="report-preview">Issue Body</label>
-        <textarea id="report-preview" bind:value={previewMarkdown} rows="16"></textarea>
+        <Label for="report-preview">Issue body</Label>
+        <Textarea id="report-preview" bind:value={previewMarkdown} rows={16} class="mono" />
       </div>
 
       <p class="hint">
@@ -230,50 +244,46 @@
       </p>
 
       {#if error}
-        <div class="message message-error">{error}</div>
+        <div class="banner banner-error">{error}</div>
       {/if}
 
       <div class="actions actions-split">
-        <button class="btn" onclick={() => (step = "form")}>Back</button>
-        <button class="primary-btn" onclick={submit} disabled={loading}>
+        <Button variant="outline" onclick={() => (step = "form")}>Back</Button>
+        <Button onclick={submit} disabled={loading}>
           {loading ? "Submitting..." : "Submit"}
-        </button>
+        </Button>
       </div>
-    </div>
+    </Card>
 
   {:else if step === "result"}
-    <div class="result-section">
+    <Card class="px-5">
       {#if resultUrl}
-        <div class="message message-success">
-          Issue created successfully!
-        </div>
+        <div class="banner banner-success">Issue created successfully.</div>
         <div class="result-link">
           <a href={resultUrl} target="_blank" rel="noopener noreferrer">{resultUrl}</a>
         </div>
       {:else}
-        <div class="message message-error">
-          Could not submit automatically.
-        </div>
+        <div class="banner banner-error">Could not submit automatically.</div>
         {#if resultError}
           <p class="hint"><strong>Error:</strong> {resultError}</p>
         {/if}
         {#if resultHint}
           <p class="hint">{resultHint}</p>
         {/if}
-        <div class="manual-meta">
-          <div class="preview-header">
-            <span class="preview-label">Repository</span>
+        <div class="meta-list">
+          <div class="meta-row">
+            <span class="meta-label">Repository</span>
             <code>{resultRepo}</code>
           </div>
-          <div class="preview-header">
-            <span class="preview-label">Title</span>
+          <div class="meta-row">
+            <span class="meta-label">Title</span>
             <code>{resultTitle}</code>
           </div>
-          <div class="preview-header">
-            <span class="preview-label">Labels</span>
+          <div class="meta-row">
+            <span class="meta-label">Labels</span>
             <span class="label-list">
               {#each resultLabels as label}
-                <span class="label-pill">{label}</span>
+                <Badge variant="outline">{label}</Badge>
               {/each}
             </span>
           </div>
@@ -286,126 +296,86 @@
         <div class="fallback-block">
           <div class="fallback-header">
             <span>Copy this content and create the issue manually:</span>
-            <button class="btn copy-btn" onclick={copyMarkdown}>
-              {copied ? "Copied!" : "Copy"}
-            </button>
+            <Button
+              variant="outline"
+              size="icon-sm"
+              onclick={copyMarkdown}
+              title={copied ? "Copied" : "Copy markdown"}
+              aria-label={copied ? "Copied" : "Copy markdown"}
+            >
+              {#if copied}<CheckIcon size={15} />{:else}<CopyIcon size={15} />{/if}
+            </Button>
           </div>
           <pre>{resultMarkdown}</pre>
         </div>
       {/if}
 
       <div class="actions">
-        <button class="btn" onclick={reset}>New Report</button>
+        <Button variant="outline" onclick={reset}>New report</Button>
       </div>
-    </div>
+    </Card>
   {/if}
 </div>
 
 <style>
   .report-page {
-    max-width: 700px;
+    max-width: 720px;
     margin: 0 auto;
     padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
   }
 
-  h1 {
-    font-size: 1.75rem;
-    font-weight: 700;
-    margin-bottom: 2rem;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    color: var(--accent);
-    text-shadow: var(--text-glow);
+  .fields {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
   }
 
   .field {
-    margin-bottom: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
   }
 
-  .field label {
-    display: block;
-    font-size: 0.8125rem;
-    font-weight: 700;
-    color: var(--fg-dim);
-    margin-bottom: 0.5rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-
-  .field select,
-  .field textarea {
-    width: 100%;
-    padding: 0.625rem 0.875rem;
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    color: var(--fg);
-    font-size: 0.875rem;
-    font-family: var(--font-mono);
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
-  }
-
-  .field select:focus,
-  .field textarea:focus {
-    border-color: var(--accent);
-    box-shadow: 0 0 8px var(--border-glow);
-  }
-
-  .field textarea::placeholder {
-    color: color-mix(in srgb, var(--fg-dim) 50%, transparent);
-  }
-
-  .field textarea {
-    resize: vertical;
-    min-height: 200px;
+  .field :global(textarea.mono) {
+    font-family: var(--prin7r-font-mono-standard);
     line-height: 1.5;
   }
 
-  .field select {
-    cursor: pointer;
+  .meta-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
   }
 
-  .preview-header {
+  .meta-row {
     display: flex;
     align-items: center;
     gap: 0.75rem;
-    margin-bottom: 0.75rem;
   }
 
-  .preview-label {
-    font-size: 0.75rem;
-    font-weight: 700;
-    color: var(--fg-dim);
-    text-transform: uppercase;
-    letter-spacing: 1px;
+  .meta-label {
     min-width: 6rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--shadcn-muted-foreground);
   }
 
-  .preview-header code {
-    font-family: var(--font-mono);
+  .meta-row code {
     font-size: 0.875rem;
-    color: var(--fg);
+    color: var(--shadcn-foreground);
+    word-break: break-all;
   }
 
   .label-list {
     display: flex;
-    gap: 0.5rem;
+    gap: 0.375rem;
     flex-wrap: wrap;
   }
 
-  .label-pill {
-    padding: 0.125rem 0.5rem;
-    border: 1px solid var(--accent-dim);
-    border-radius: var(--radius-sm);
-    font-size: 0.75rem;
-    color: var(--accent);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
   .actions {
-    padding-top: 1rem;
     display: flex;
     justify-content: flex-end;
   }
@@ -414,102 +384,22 @@
     justify-content: space-between;
   }
 
-  .primary-btn {
-    padding: 0.75rem 2rem;
-    background: color-mix(in srgb, var(--accent) 20%, transparent);
-    color: var(--accent);
-    border: 1px solid var(--accent);
-    border-radius: 2px;
-    font-size: 0.875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 2px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-    text-shadow: var(--text-glow);
-    box-shadow: inset 0 0 10px color-mix(in srgb, var(--accent) 30%, transparent);
-  }
-
-  .primary-btn:hover:not(:disabled) {
-    background: var(--bg-hover);
-    box-shadow: 0 0 15px var(--border-glow), inset 0 0 15px color-mix(in srgb, var(--accent) 40%, transparent);
-    text-shadow: 0 0 10px var(--accent);
-  }
-
-  .primary-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .btn {
-    padding: 0.5rem 1.25rem;
-    background: var(--bg-surface);
-    color: var(--fg-dim);
-    border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
-    border-radius: 2px;
-    font-size: 0.875rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, color 0.2s ease, transform 0.2s ease, text-shadow 0.2s ease;
-  }
-
-  .btn:hover {
-    background: var(--bg-hover);
-    color: var(--fg);
-    border-color: var(--accent-dim);
-  }
-
-  .message {
-    padding: 0.875rem 1.25rem;
-    border-radius: 2px;
-    font-size: 0.875rem;
-    font-weight: bold;
-    margin-bottom: 1rem;
-  }
-
-  .message-success {
-    background: color-mix(in srgb, var(--success) 10%, transparent);
-    border: 1px solid var(--success);
-    color: var(--success);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--success) 30%, transparent);
-  }
-
-  .message-error {
-    background: color-mix(in srgb, var(--error) 10%, transparent);
-    border: 1px solid var(--error);
-    color: var(--error);
-    box-shadow: 0 0 10px color-mix(in srgb, var(--error) 30%, transparent);
-  }
-
-  .result-link {
-    margin-bottom: 1.5rem;
+  .hint {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--shadcn-muted-foreground);
+    line-height: 1.5;
   }
 
   .result-link a {
-    color: var(--accent);
-    font-family: var(--font-mono);
+    color: var(--shadcn-foreground);
     font-size: 0.875rem;
     word-break: break-all;
   }
 
-  .hint {
-    font-size: 0.8125rem;
-    color: var(--fg-dim);
-    margin-bottom: 1rem;
-    font-family: var(--font-mono);
-    line-height: 1.5;
-  }
-
-  .manual-meta {
-    margin-bottom: 1rem;
-  }
-
   .fallback-block {
-    border: 1px solid var(--border);
-    border-radius: 2px;
-    margin-bottom: 1.5rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
     overflow: hidden;
   }
 
@@ -517,29 +407,20 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.75rem 1rem;
-    background: var(--bg-surface);
-    border-bottom: 1px solid var(--border);
-    font-size: 0.8125rem;
-    color: var(--fg-dim);
-  }
-
-  .copy-btn {
-    padding: 0.25rem 0.75rem;
-    font-size: 0.75rem;
-    margin-top: 0;
-  }
-
-  .fallback-header {
     gap: 1rem;
+    padding: 0.625rem 0.875rem;
+    background: var(--shadcn-muted);
+    border-bottom: 1px solid var(--shadcn-border);
+    font-size: 0.8125rem;
+    color: var(--shadcn-muted-foreground);
   }
 
   .fallback-block pre {
     padding: 1rem;
     margin: 0;
-    font-family: var(--font-mono);
+    font-family: var(--prin7r-font-mono-standard);
     font-size: 0.8125rem;
-    color: var(--fg);
+    color: var(--shadcn-foreground);
     white-space: pre-wrap;
     word-break: break-word;
     line-height: 1.5;
@@ -547,21 +428,42 @@
     overflow-y: auto;
   }
 
-  @media (max-width: 700px) {
+  .banner {
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--shadcn-border);
+    border-radius: var(--shadcn-radius);
+    background: var(--shadcn-muted);
+    font-size: 0.875rem;
+    color: var(--shadcn-foreground);
+  }
+
+  .banner-success {
+    border-color: color-mix(in srgb, #16a34a 40%, transparent);
+    color: #15803d;
+    background: color-mix(in srgb, #16a34a 8%, transparent);
+  }
+
+  .banner-error {
+    border-color: var(--shadcn-destructive);
+    color: var(--shadcn-destructive);
+    background: color-mix(in srgb, var(--shadcn-destructive) 8%, transparent);
+  }
+
+  @media (max-width: 640px) {
     .report-page {
       padding: 1.25rem;
     }
 
-    .preview-header,
+    .meta-row,
     .fallback-header {
-      align-items: flex-start;
       flex-direction: column;
+      align-items: flex-start;
     }
 
     .actions-split {
-      gap: 0.75rem;
       flex-direction: column;
       align-items: stretch;
+      gap: 0.5rem;
     }
   }
 </style>

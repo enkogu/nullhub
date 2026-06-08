@@ -2,6 +2,9 @@
   import { nullBoilerApi } from "$lib/api/client";
   import { nullboilerUiRoutes } from "$lib/nullboiler/routes";
   import BoilerInstanceSelector from "$lib/components/nullboiler/BoilerInstanceSelector.svelte";
+  import { Button } from "$lib/components/ui/button";
+  import { Select } from "$lib/components/ui/select";
+  import { Input } from "$lib/components/ui/input";
   import {
     UniversalEntityView,
     createViewSet,
@@ -15,6 +18,7 @@
   let loading = $state(true);
   let loadingMore = $state(false);
   let error = $state<string | null>(null);
+  let offline = $state(false);
 
   let filterStatus = $state("");
   let filterWorkflow = $state("");
@@ -68,6 +72,20 @@
     }) satisfies EntityRecord[],
   );
 
+  function isOfflineError(message: string): boolean {
+    const text = (message || "").toLowerCase();
+    return (
+      text.includes("unreachable") ||
+      text.includes("offline") ||
+      text.includes("econnrefused") ||
+      text.includes("connection refused") ||
+      text.includes("failed to fetch") ||
+      text.includes("networkerror") ||
+      text.includes("network error") ||
+      /\b5\d\d\b/.test(text)
+    );
+  }
+
   function boundedInt(raw: string, fallback: number, min: number, max: number): number {
     const value = Number.parseInt(raw || String(fallback), 10);
     if (!Number.isFinite(value)) return fallback;
@@ -109,8 +127,21 @@
       nextOffset = hasMore ? page.nextOffset || 0 : null;
       workflows = w || [];
       error = null;
+      offline = false;
     } catch (e) {
-      error = (e as Error).message;
+      const message = (e as Error).message;
+      if (isOfflineError(message)) {
+        offline = true;
+        error = null;
+        if (!append) {
+          runs = [];
+          hasMore = false;
+          nextOffset = null;
+        }
+      } else {
+        offline = false;
+        error = message;
+      }
     } finally {
       if (append) loadingMore = false;
       else loading = false;
@@ -140,34 +171,6 @@
 </script>
 
 <div class="page">
-  <div class="topbar">
-    <BoilerInstanceSelector onChange={() => { error = null; void loadData(); }} />
-  </div>
-
-  <div class="filter-bar">
-    <label>
-      <span>Status</span>
-      <select bind:value={filterStatus}>
-        {#each statuses as status}
-          <option value={status}>{status || "All"}</option>
-        {/each}
-      </select>
-    </label>
-    <label>
-      <span>Workflow</span>
-      <select bind:value={filterWorkflow}>
-        <option value="">All</option>
-        {#each workflows as workflow}
-          <option value={workflow.id}>{workflow.name || workflow.id}</option>
-        {/each}
-      </select>
-    </label>
-    <label>
-      <span>Limit</span>
-      <input bind:value={runLimit} inputmode="numeric" />
-    </label>
-  </div>
-
   <UniversalEntityView
     title="Runs"
     description="Execution history from the selected NullBoiler instance."
@@ -176,18 +179,36 @@
     views={runViews}
     defaultViewId="table"
     {loading}
-    {error}
+    error={offline ? null : error}
     actions={runActions}
-    emptyTitle="No runs"
-    emptyDescription="No runs match the current filter."
+    emptyTitle={offline ? "NullBoiler is offline" : "No runs"}
+    emptyDescription={offline
+      ? "Start the NullBoiler instance to load runs."
+      : "No runs match the current filter."}
     onRefresh={loadData}
-  />
+  >
+    {#snippet headerControls()}
+      <BoilerInstanceSelector onChange={() => { error = null; offline = false; void loadData(); }} />
+      <Select bind:value={filterStatus} class="filter-select" aria-label="Filter by status">
+        {#each statuses as status}
+          <option value={status}>{status || "All statuses"}</option>
+        {/each}
+      </Select>
+      <Select bind:value={filterWorkflow} class="filter-select" aria-label="Filter by workflow">
+        <option value="">All workflows</option>
+        {#each workflows as workflow}
+          <option value={workflow.id}>{workflow.name || workflow.id}</option>
+        {/each}
+      </Select>
+      <Input bind:value={runLimit} inputmode="numeric" class="filter-limit" aria-label="Result limit" placeholder="Limit" />
+    {/snippet}
+  </UniversalEntityView>
 
   {#if hasMore}
     <div class="load-more-row">
-      <button type="button" class="load-more" onclick={() => loadData(true)} disabled={loadingMore}>
-        {loadingMore ? "Loading" : "Load More"}
-      </button>
+      <Button variant="secondary" size="sm" onclick={() => loadData(true)} disabled={loadingMore}>
+        {loadingMore ? "Loading" : "Load more"}
+      </Button>
     </div>
   {/if}
 </div>
@@ -200,69 +221,17 @@
     gap: 1rem;
   }
 
-  .topbar {
-    display: flex;
-    justify-content: flex-end;
+  .page :global(.filter-select) {
+    width: auto;
+    min-width: 9rem;
   }
 
-  .filter-bar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    border: 1px solid var(--shadcn-border);
-    border-radius: var(--shadcn-radius);
-    padding: 0.75rem;
-    background: var(--shadcn-card);
-  }
-
-  .filter-bar label {
-    display: grid;
-    gap: 0.35rem;
-    min-width: 10rem;
-  }
-
-  .filter-bar span {
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.75rem;
-    font-weight: 600;
-  }
-
-  .filter-bar select,
-  .filter-bar input {
-    min-height: 2.25rem;
-    border: 1px solid var(--shadcn-border);
-    border-radius: var(--shadcn-radius);
-    padding: 0 0.625rem;
-    background: var(--shadcn-background);
-    color: var(--shadcn-foreground);
-    font: inherit;
-    font-size: 0.875rem;
-  }
-
-  .filter-bar input {
-    width: 6rem;
+  .page :global(.filter-limit) {
+    width: 5rem;
   }
 
   .load-more-row {
     display: flex;
     justify-content: center;
-  }
-
-  .load-more {
-    min-height: 2.25rem;
-    border: 1px solid var(--shadcn-border);
-    border-radius: var(--shadcn-radius);
-    padding: 0 0.875rem;
-    background: var(--shadcn-secondary);
-    color: var(--shadcn-secondary-foreground);
-    font: inherit;
-    font-size: 0.875rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-
-  .load-more:disabled {
-    cursor: not-allowed;
-    opacity: 0.55;
   }
 </style>
