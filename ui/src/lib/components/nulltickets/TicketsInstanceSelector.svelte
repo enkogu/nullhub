@@ -6,15 +6,17 @@
   } from "$lib/nullstack/backendSelection";
 
   let {
+    label = "NullTickets",
     onChange = () => {},
   } = $props<{
+    label?: string;
     onChange?: (name: string) => void;
   }>();
 </script>
 
 <ManagedInstanceSelector
   component="nulltickets"
-  label="NullTickets"
+  {label}
   getSelected={getSelectedTicketsInstance}
   setSelected={setSelectedTicketsInstance}
   {onChange}

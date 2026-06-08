@@ -138,7 +138,7 @@
 
 <div class="page">
   <div class="header">
-    <h1>NullTickets</h1>
+    <h1>Store</h1>
   </div>
 
   {#if error}
@@ -151,7 +151,7 @@
       <div class="panel-section">
         <h2 class="panel-title">Browse Namespace</h2>
         <div class="store-selector">
-          <TicketsInstanceSelector onChange={handleTicketsInstanceChange} />
+          <TicketsInstanceSelector label="Store backend" onChange={handleTicketsInstanceChange} />
         </div>
         <div class="input-row">
           <input

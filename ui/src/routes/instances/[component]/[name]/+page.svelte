@@ -845,8 +845,16 @@
       loadedConfig = await api.getConfig(component, name);
       config = loadedConfig;
     } catch {
-      config = null;
-      providerHealth = null;
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 350));
+        loadedConfig = await api.getConfig(component, name);
+        config = loadedConfig;
+      } catch {
+        loadedConfig = config;
+        if (!config) {
+          providerHealth = null;
+        }
+      }
     }
     if (component === "nullclaw") {
       try {

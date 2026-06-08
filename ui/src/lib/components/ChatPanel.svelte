@@ -68,6 +68,11 @@
     return host === "127.0.0.1" || host === "localhost" || host === "::1" || host === "[::1]";
   }
 
+  function websocketHost(host: string): string {
+    if (host.includes(":") && !host.startsWith("[")) return `[${host}]`;
+    return host;
+  }
+
   const wsUrl = $derived.by(() => {
     if (port <= 0) return "";
     const token = authToken.trim();
@@ -80,7 +85,7 @@
     if (typeof window !== "undefined" && !isLoopbackHost(host)) return "";
     if (typeof window !== "undefined" && window.location.protocol === "https:") return "";
 
-    const url = new URL(`ws://${host}:${port}/ws`);
+    const url = new URL(`ws://${websocketHost(host)}:${port}/ws`);
     if (token) url.searchParams.set("token", token);
     return url.toString();
   });

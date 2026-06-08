@@ -1,4 +1,4 @@
-import { nullTicketsStoreApi } from '$lib/api/client';
+import { api, nullTicketsStoreApi } from '$lib/api/client';
 
 export const MARKDOWN_DOCUMENT_NAMESPACE = 'markdown.documents';
 
@@ -10,7 +10,7 @@ export type MarkdownDocument = {
   tags: string[];
   owner_component: string;
   owner_instance: string;
-  source: 'store';
+  source: 'store' | 'workspace';
   created_at_ms: number;
   updated_at_ms: number;
   artifact_id: string | null;
@@ -40,6 +40,15 @@ type MarkdownDocumentInput = {
   artifact_id?: string | null;
 };
 
+type WorkspaceDocumentMeta = {
+  path: string;
+  title?: string;
+  content?: string;
+  source?: 'workspace';
+  size_bytes?: number;
+  updated_at_ms?: number;
+};
+
 export function normalizeMarkdownPath(path: string): string {
   return path
     .trim()
@@ -59,6 +68,19 @@ export function isValidMarkdownPath(path: string): boolean {
 
 export function markdownDocumentKey(component: string, name: string, path: string): string {
   return `${component}/${name}/${normalizeMarkdownPath(path)}`;
+}
+
+function workspaceDocumentKey(component: string, name: string, path: string): string {
+  return `workspace:${component}/${name}/${normalizeMarkdownPath(path)}`;
+}
+
+function isWorkspaceDocumentKey(key: string): boolean {
+  return key.startsWith('workspace:');
+}
+
+function pathFromWorkspaceDocumentKey(key: string, component: string, name: string): string {
+  const prefix = `workspace:${component}/${name}/`;
+  return key.startsWith(prefix) ? key.slice(prefix.length) : '';
 }
 
 function asTags(value: unknown): string[] {
@@ -86,6 +108,35 @@ function normalizeDocument(value: any, component: string, name: string, fallback
     created_at_ms: Number.isFinite(value?.created_at_ms) ? Number(value.created_at_ms) : now,
     updated_at_ms: Number.isFinite(value?.updated_at_ms) ? Number(value.updated_at_ms) : now,
     artifact_id: typeof value?.artifact_id === 'string' && value.artifact_id ? value.artifact_id : null,
+  };
+}
+
+function normalizeWorkspaceDocument(
+  value: WorkspaceDocumentMeta,
+  component: string,
+  name: string,
+): MarkdownDocumentEntry {
+  const now = Date.now();
+  const path = normalizeMarkdownPath(String(value.path || 'untitled.md'));
+  const updated = Number.isFinite(value.updated_at_ms) ? Number(value.updated_at_ms) : now;
+  const document: MarkdownDocument = {
+    schema_version: 1,
+    title: String(value.title || titleFromPath(path)),
+    path,
+    content: String(value.content || ''),
+    tags: [],
+    owner_component: component,
+    owner_instance: name,
+    source: 'workspace',
+    created_at_ms: updated,
+    updated_at_ms: updated,
+    artifact_id: null,
+  };
+  return {
+    key: workspaceDocumentKey(component, name, path),
+    document,
+    created_at_ms: null,
+    updated_at_ms: updated,
   };
 }
 
@@ -147,16 +198,27 @@ export async function listMarkdownDocuments(
   name: string,
   ticketsInstance?: string,
 ): Promise<MarkdownDocumentEntry[]> {
-  const entries = await Promise.all(
-    ((await nullTicketsStoreApi.storeList(MARKDOWN_DOCUMENT_NAMESPACE, ticketsInstance)) || []).map((entry: StoreEntry) =>
+  const workspaceEntries = await api
+    .listDocs(component, name)
+    .then((result) => {
+      const documents = Array.isArray(result?.documents) ? result.documents : [];
+      return documents
+        .map((entry: WorkspaceDocumentMeta) => normalizeWorkspaceDocument(entry, component, name))
+        .filter((entry: MarkdownDocumentEntry) => isValidMarkdownPath(entry.document.path));
+    })
+    .catch(() => [] as MarkdownDocumentEntry[]);
+
+  const storeEntries = await Promise.all(
+    ((await nullTicketsStoreApi.storeList(MARKDOWN_DOCUMENT_NAMESPACE, ticketsInstance).catch(() => [])) || []).map((entry: StoreEntry) =>
       resolveListedEntry(entry, ticketsInstance),
     ),
   );
-  return sortDocuments(
-    entries
+  return sortDocuments([
+    ...workspaceEntries,
+    ...storeEntries
       .map((entry) => (entry ? normalizeEntry(entry, component, name) : null))
       .filter((entry): entry is MarkdownDocumentEntry => entry !== null),
-  );
+  ]);
 }
 
 export async function searchMarkdownDocuments(
@@ -178,6 +240,12 @@ export async function getMarkdownDocument(
   name: string,
   ticketsInstance?: string,
 ): Promise<MarkdownDocumentEntry> {
+  if (isWorkspaceDocumentKey(key)) {
+    const path = pathFromWorkspaceDocumentKey(key, component, name);
+    if (!path) throw new Error('Markdown document was not found in this instance scope.');
+    const entry = await api.getDoc(component, name, path);
+    return normalizeWorkspaceDocument(entry, component, name);
+  }
   const entry = await nullTicketsStoreApi.storeGet(MARKDOWN_DOCUMENT_NAMESPACE, key, ticketsInstance);
   const normalized = normalizeEntry(entry, component, name);
   if (!normalized) throw new Error('Markdown document was not found in this instance scope.');
@@ -196,6 +264,19 @@ export async function saveMarkdownDocument(
   }
 
   const path = normalizeMarkdownPath(input.path);
+  if (!previousKey || isWorkspaceDocumentKey(previousKey)) {
+    const previousPath = previousKey ? pathFromWorkspaceDocumentKey(previousKey, component, name) : '';
+    const saved = normalizeWorkspaceDocument(
+      await api.saveDoc(component, name, path, input.content),
+      component,
+      name,
+    );
+    if (previousPath && previousPath !== path) {
+      await api.deleteDoc(component, name, previousPath).catch(() => undefined);
+    }
+    return saved;
+  }
+
   const now = Date.now();
   const key = markdownDocumentKey(component, name, path);
   if (previousKey !== key) {
@@ -238,5 +319,16 @@ export async function saveMarkdownDocument(
 }
 
 export async function deleteMarkdownDocument(key: string, ticketsInstance?: string): Promise<void> {
+  if (isWorkspaceDocumentKey(key)) {
+    const withoutPrefix = key.slice('workspace:'.length);
+    const first = withoutPrefix.indexOf('/');
+    const second = first >= 0 ? withoutPrefix.indexOf('/', first + 1) : -1;
+    if (second < 0) throw new Error('Markdown document was not found in this instance scope.');
+    const component = withoutPrefix.slice(0, first);
+    const name = withoutPrefix.slice(first + 1, second);
+    const path = withoutPrefix.slice(second + 1);
+    await api.deleteDoc(component, name, path);
+    return;
+  }
   await nullTicketsStoreApi.storeDelete(MARKDOWN_DOCUMENT_NAMESPACE, key, ticketsInstance);
 }

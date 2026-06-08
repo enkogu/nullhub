@@ -54,7 +54,16 @@ pub fn appendEscaped(buf: *std.array_list.Managed(u8), s: []const u8) !void {
             '\n' => try buf.appendSlice("\\n"),
             '\r' => try buf.appendSlice("\\r"),
             '\t' => try buf.appendSlice("\\t"),
-            else => try buf.append(c),
+            else => {
+                if (c < 0x20) {
+                    const hex = "0123456789abcdef";
+                    try buf.appendSlice("\\u00");
+                    try buf.append(hex[c >> 4]);
+                    try buf.append(hex[c & 0x0f]);
+                } else {
+                    try buf.append(c);
+                }
+            },
         }
     }
 }
@@ -68,6 +77,15 @@ test "appendEscaped escapes special characters" {
 
     try appendEscaped(&buf, "hello \"world\"\nnewline\\backslash");
     try std.testing.expectEqualStrings("hello \\\"world\\\"\\nnewline\\\\backslash", buf.items);
+}
+
+test "appendEscaped escapes all JSON control characters" {
+    const allocator = std.testing.allocator;
+    var buf = std.array_list.Managed(u8).init(allocator);
+    defer buf.deinit();
+
+    try appendEscaped(&buf, "a\x08\x0cb");
+    try std.testing.expectEqualStrings("a\\u0008\\u000cb", buf.items);
 }
 
 test "appendEscaped passes through plain text" {

@@ -5,7 +5,6 @@
     getMarkdownDocument,
     isValidMarkdownPath,
     listMarkdownDocuments,
-    markdownDocumentKey,
     normalizeMarkdownPath,
     saveMarkdownDocument,
     type MarkdownDocument,
@@ -39,6 +38,7 @@
   let loadKey = $state('');
   let deleteConfirmKey = $state('');
   let viewMode = $state<'preview' | 'source'>('preview');
+  let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
   const normalizedDraftPath = $derived(normalizeMarkdownPath(draftPath));
   const draftTagsList = $derived(parseTags(draftTags));
@@ -52,11 +52,11 @@
   const dirty = $derived(draftSnapshot !== lastSavedSnapshot);
   const pathValid = $derived(isValidMarkdownPath(draftPath));
   const overEditLimit = $derived(draftContent.length > 512 * 1024);
-  const canSave = $derived(pathValid && !overEditLimit && dirty && !saving);
+  const canSave = $derived(pathValid && !overEditLimit && dirty && !saving && !deleting);
   const storeTicketsInstance = $derived(component === 'nulltickets' ? name : '');
   const softStoreError = $derived(error.trim().toLowerCase() === 'not found');
   const renderedMarkdown = $derived(renderMarkdown(draftContent));
-  const displayName = $derived(draftTitle.trim() || titleFromPath(normalizedDraftPath || 'untitled.md'));
+  const saveState = $derived(saving ? 'Saving' : dirty ? 'Unsaved' : selectedKey ? 'Saved' : 'Draft');
 
   function parseTags(value: string): string[] {
     return value
@@ -76,8 +76,8 @@
   }
 
   function documentKeyExists(path: string, ignoredKey = ''): boolean {
-    const key = markdownDocumentKey(component, name, path);
-    return documents.some((entry) => entry.key === key && entry.key !== ignoredKey);
+    const normalized = normalizeMarkdownPath(path);
+    return documents.some((entry) => normalizeMarkdownPath(entry.document.path) === normalized && entry.key !== ignoredKey);
   }
 
   function uniqueMarkdownPath(basePath: string): string {
@@ -140,14 +140,20 @@
       documents = await listMarkdownDocuments(component, name, storeTicketsInstance);
       if (selectedKey) {
         const next = documents.find((entry) => entry.key === selectedKey) || null;
-        if (next && !dirty) loadDraft(next);
-        else if (!next && !dirty) loadDraft(documents[0] || null);
+        if (next && !dirty) await loadDocumentKey(next.key);
+        else if (!next && !dirty && documents[0]) await loadDocumentKey(documents[0].key);
+        else if (!next && !dirty) loadDraft(null);
       } else if (documents.length > 0 && !dirty) {
-        loadDraft(documents[0]);
+        await loadDocumentKey(documents[0].key);
       }
     } catch (e) {
       error = (e as Error).message;
     }
+  }
+
+  async function loadDocumentKey(key: string) {
+    const entry = await getMarkdownDocument(key, component, name, storeTicketsInstance);
+    loadDraft(entry);
   }
 
   async function selectDocument(key: string) {
@@ -155,8 +161,7 @@
     error = '';
     message = '';
     try {
-      const entry = await getMarkdownDocument(key, component, name, storeTicketsInstance);
-      loadDraft(entry);
+      await loadDocumentKey(key);
     } catch (e) {
       error = (e as Error).message;
     }
@@ -208,10 +213,9 @@
       );
       selectedKey = saved.key;
       lastSavedSnapshot = documentSnapshot(saved.document);
-      message = 'Document saved.';
+      message = '';
       await refresh();
-      const next = documents.find((entry) => entry.key === saved.key) || saved;
-      loadDraft(next);
+      loadDraft(saved);
       return true;
     } catch (e) {
       error = (e as Error).message;
@@ -278,12 +282,45 @@
     loadDraft(null);
     void refresh();
   });
+
+  $effect(() => {
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = null;
+    }
+    if (!active || !canSave) return;
+    const snapshot = draftSnapshot;
+    autoSaveTimer = setTimeout(() => {
+      if (snapshot === draftSnapshot && canSave) void saveDraft();
+    }, 700);
+    return () => {
+      if (autoSaveTimer) {
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = null;
+      }
+    };
+  });
 </script>
 
 <div class="markdown-manager">
+  <section class="document-list" aria-label="Markdown files">
+    <div class="document-list-header">Files</div>
+    {#if documents.length > 0}
+      <div class="doc-scroll">
+        {#each documents as entry}
+          <button class="doc-row" class:active={entry.key === selectedKey} onclick={() => selectDocument(entry.key)}>
+            <span class="doc-title">{entry.document.title}</span>
+            <span class="doc-path">{entry.document.path}</span>
+          </button>
+        {/each}
+      </div>
+    {:else}
+      <div class="empty-list">No Markdown files</div>
+    {/if}
+  </section>
+
   <section class="editor-shell" aria-label="Markdown editor">
     <div class="fields-row">
-      <input aria-label="Title" bind:value={draftTitle} placeholder="Title" />
       <input aria-label="Path" class:invalid={!pathValid && draftPath.trim()} bind:value={draftPath} placeholder="docs/runbook.md" />
       <div class="mode-switch" aria-label="File view mode">
         <button type="button" aria-pressed={viewMode === 'preview'} class:active={viewMode === 'preview'} onclick={() => (viewMode = 'preview')}>
@@ -297,10 +334,10 @@
       <button class="btn danger" onclick={removeDraft} disabled={!selectedKey || deleting}>
         {selectedKey && deleteConfirmKey === selectedKey ? 'Confirm' : 'Delete'}
       </button>
-      <button class="btn primary" onclick={saveDraft} disabled={!canSave}>{saving ? 'Saving' : 'Save'}</button>
       {#if onExit}
         <button class="btn" onclick={onExit}>Back</button>
       {/if}
+      <span class:dirty class:saving class="save-state">{saveState}</span>
     </div>
 
     <div class="status-row">
@@ -317,7 +354,6 @@
       {#if viewMode === 'preview'}
         <div class="preview-pane" aria-label="Rendered Markdown">
           {#if draftContent.trim()}
-            <div class="preview-title">{displayName}</div>
             <div class="prose-preview">
               {@html renderedMarkdown}
             </div>
@@ -332,30 +368,16 @@
       {/if}
     </div>
   </section>
-  {#if documents.length > 0}
-    <section class="document-strip" aria-label="Markdown documents">
-      <div class="doc-scroll">
-        {#each documents as entry}
-          <button class="doc-row" class:active={entry.key === selectedKey} onclick={() => selectDocument(entry.key)}>
-            <span class="doc-title">{entry.document.title}</span>
-            <span class="doc-path">{entry.document.path}</span>
-          </button>
-        {/each}
-      </div>
-    </section>
-  {/if}
 </div>
 
 <style>
   .markdown-manager {
     display: grid;
-    grid-template-rows: minmax(0, 1fr) auto;
-    gap: 6px;
+    grid-template-columns: minmax(190px, 260px) minmax(0, 1fr);
+    gap: 10px;
     width: 100%;
-    max-width: 1360px;
     height: 100%;
-    margin: 0 auto;
-    padding: 6px 10px 8px;
+    padding: 10px;
     overflow: hidden;
   }
 
@@ -375,21 +397,10 @@
     opacity: 0.55;
   }
 
-  button.active,
-  .btn.primary {
+  button.active {
     border-color: var(--accent);
     background: var(--accent);
     color: #fff;
-  }
-
-  .fields-row .btn.primary {
-    color: #fff !important;
-  }
-
-  .btn.primary:disabled {
-    border-color: var(--border);
-    background: var(--bg-hover);
-    color: var(--fg-dim);
   }
 
   .btn.danger {
@@ -428,9 +439,9 @@
   .inline-error,
   .inline-message {
     display: block;
-    min-height: 22px;
+    min-height: 0;
     overflow: hidden;
-    padding: 0 2px 5px;
+    padding: 0 2px 4px;
     font-size: 12px;
     line-height: 18px;
     white-space: nowrap;
@@ -485,14 +496,6 @@
     border-radius: 6px;
     background: var(--bg);
     padding: 18px 20px 32px;
-  }
-
-  .preview-title {
-    margin: 0 0 14px;
-    color: var(--fg);
-    font-size: 24px;
-    font-weight: 700;
-    line-height: 1.18;
   }
 
   .prose-preview {
@@ -602,65 +605,111 @@
     color: var(--fg-dim);
   }
 
-  .document-strip,
+  .document-list,
   .editor-shell {
     border: 1px solid var(--border);
     border-radius: 8px;
     background: var(--bg-elevated);
   }
 
-  .document-strip,
+  .document-list,
   .editor-shell {
-    padding: 5px 6px;
+    padding: 6px;
   }
 
   .editor-shell {
     min-height: 0;
     display: grid;
-    grid-template-rows: auto auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, auto) minmax(0, 1fr);
   }
 
-  .document-strip {
-    min-height: 36px;
-    display: flex;
-    align-items: center;
+  .document-list {
+    min-height: 0;
+    overflow: hidden;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .document-list-header {
+    padding: 4px 6px 8px;
+    color: var(--fg-dim);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
   }
 
   .doc-scroll {
-    display: flex;
-    gap: 6px;
-    overflow-x: auto;
+    min-height: 0;
+    overflow: auto;
     width: 100%;
   }
 
   .doc-row {
     display: grid;
     gap: 2px;
-    min-width: 220px;
-    max-width: 320px;
+    width: 100%;
+    min-width: 0;
+    min-height: 44px;
+    margin-bottom: 4px;
     text-align: left;
     padding: 7px 8px;
   }
 
   .doc-title {
+    overflow: hidden;
     font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .doc-path {
     color: var(--fg-dim);
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .empty-list {
+    display: grid;
+    place-items: center;
+    color: var(--fg-dim);
+    font-size: 13px;
+    min-height: 120px;
   }
 
   .fields-row {
     display: grid;
-    grid-template-columns: minmax(160px, 1fr) minmax(220px, 2fr) auto auto auto auto auto;
+    grid-template-columns: minmax(180px, 1fr) auto auto auto auto minmax(56px, auto);
     align-items: center;
-    gap: 5px;
+    gap: 6px;
     margin-bottom: 5px;
   }
 
+  .save-state {
+    color: var(--fg-dim);
+    font-size: 12px;
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .save-state.dirty {
+    color: var(--warning);
+  }
+
+  .save-state.saving {
+    color: var(--accent);
+  }
+
   @media (max-width: 920px) {
+    .markdown-manager {
+      grid-template-columns: 1fr;
+      grid-template-rows: minmax(120px, 28vh) minmax(0, 1fr);
+      padding: 8px;
+    }
+
     .fields-row {
       grid-template-columns: 1fr;
     }

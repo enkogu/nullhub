@@ -338,6 +338,19 @@ export const api = {
     ),
   getOnboarding: (c: string, n: string) =>
     request<any>(instanceApiPath(c, n, '/onboarding')),
+  listDocs: (c: string, n: string) =>
+    request<any>(instanceApiPath(c, n, '/docs'), { timeoutMs: 15000 }),
+  getDoc: (c: string, n: string, path: string) =>
+    request<any>(withQuery(instanceApiPath(c, n, '/docs'), { path }), { timeoutMs: 15000 }),
+  saveDoc: (c: string, n: string, path: string, content: string) =>
+    request<any>(instanceApiPath(c, n, '/docs'), {
+      method: 'PUT',
+      body: JSON.stringify({ path, content }),
+    }),
+  deleteDoc: (c: string, n: string, path: string) =>
+    request<any>(withQuery(instanceApiPath(c, n, '/docs'), { path }), {
+      method: 'DELETE',
+    }),
   getMemory: (
     c: string,
     n: string,

@@ -3,6 +3,7 @@
 	import BotIcon from "@lucide/svelte/icons/bot";
 	import BoxesIcon from "@lucide/svelte/icons/boxes";
 	import CircleIcon from "@lucide/svelte/icons/circle";
+	import DatabaseIcon from "@lucide/svelte/icons/database";
 	import GalleryVerticalEndIcon from "@lucide/svelte/icons/gallery-vertical-end";
 	import HouseIcon from "@lucide/svelte/icons/house";
 	import LayoutDashboardIcon from "@lucide/svelte/icons/layout-dashboard";
@@ -12,7 +13,6 @@
 	import RadioIcon from "@lucide/svelte/icons/radio";
 	import ServerIcon from "@lucide/svelte/icons/server";
 	import Settings2Icon from "@lucide/svelte/icons/settings-2";
-	import TicketIcon from "@lucide/svelte/icons/ticket";
 	import WorkflowIcon from "@lucide/svelte/icons/workflow";
 </script>
 
@@ -58,7 +58,7 @@
 		{ title: "NullBoiler", url: "/nullboiler", icon: WorkflowIcon, match: "exact" },
 		{ title: "Workflows", url: "/nullboiler/workflows", icon: WorkflowIcon, match: "prefix" },
 		{ title: "Runs", url: "/nullboiler/runs", icon: ListChecksIcon, match: "prefix" },
-		{ title: "Ticket Store", url: "/nulltickets/store", icon: TicketIcon, match: "prefix" },
+		{ title: "Store", url: "/nulltickets/store", icon: DatabaseIcon, match: "prefix" },
 		{ title: "Observability", url: "/nullwatch", icon: ActivityIcon, match: "prefix" },
 	];
 

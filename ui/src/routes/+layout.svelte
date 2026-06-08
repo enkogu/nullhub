@@ -22,7 +22,7 @@
     { test: (path) => path.startsWith('/nullboiler/workflows'), title: 'Workflows', section: 'NullBoiler' },
     { test: (path) => path.startsWith('/nullboiler/runs'), title: 'Runs', section: 'NullBoiler' },
     { test: (path) => path.startsWith('/nullboiler'), title: 'Dashboard', section: 'NullBoiler' },
-    { test: (path) => path.startsWith('/nulltickets/store'), title: 'Ticket Store', section: 'NullTickets' },
+    { test: (path) => path.startsWith('/nulltickets/store'), title: 'Store' },
     { test: (path) => path.startsWith('/nullwatch'), title: 'Observability' },
     { test: (path) => path.startsWith('/report'), title: 'Report Issue' },
     { test: (path) => path.startsWith('/settings'), title: 'Settings' },

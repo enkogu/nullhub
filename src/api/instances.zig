@@ -3641,8 +3641,21 @@ fn cloneMcpDraftForStorage(allocator: std.mem.Allocator, obj: std.json.ObjectMap
         _ = cloned.object.swapRemove("name");
         _ = cloned.object.swapRemove("replace_env");
         _ = cloned.object.swapRemove("replace_headers");
+        pruneMcpServerFieldsForTransport(&cloned.object);
     }
     return cloned;
+}
+
+fn pruneMcpServerFieldsForTransport(server: *std.json.ObjectMap) void {
+    const transport = mcpDraftTransport(server.*) orelse return;
+    if (std.mem.eql(u8, transport, "stdio")) {
+        _ = server.swapRemove("url");
+        _ = server.swapRemove("headers");
+    } else if (std.mem.eql(u8, transport, "http")) {
+        _ = server.swapRemove("command");
+        _ = server.swapRemove("args");
+        _ = server.swapRemove("env");
+    }
 }
 
 fn mergeMcpDraftIntoExisting(allocator: std.mem.Allocator, existing: *std.json.Value, obj: std.json.ObjectMap) !void {
@@ -3679,6 +3692,7 @@ fn mergeMcpDraftIntoExisting(allocator: std.mem.Allocator, existing: *std.json.V
         const cloned = try cloneJsonValue(allocator, entry.value_ptr.*);
         try existing.object.put(allocator, entry.key_ptr.*, cloned);
     }
+    pruneMcpServerFieldsForTransport(&existing.object);
 }
 
 fn saveMcpConfig(allocator: std.mem.Allocator, paths: paths_mod.Paths, component: []const u8, name: []const u8, value: std.json.Value) !void {
@@ -4016,6 +4030,330 @@ fn instanceWorkspaceDir(allocator: std.mem.Allocator, paths: paths_mod.Paths, co
     const inst_dir = try paths.instanceDir(allocator, component, name);
     defer allocator.free(inst_dir);
     return try std.fs.path.join(allocator, &.{ inst_dir, "workspace" });
+}
+
+const max_markdown_doc_bytes: usize = 512 * 1024;
+const max_markdown_docs: usize = 1000;
+
+const MarkdownDocWriteBody = struct {
+    path: []const u8,
+    content: []const u8 = "",
+};
+
+fn isMarkdownDocPath(path: []const u8) bool {
+    return std.ascii.endsWithIgnoreCase(path, ".md") or std.ascii.endsWithIgnoreCase(path, ".markdown");
+}
+
+fn isSafeMarkdownDocPath(path: []const u8) bool {
+    if (path.len == 0) return false;
+    if (path[0] == '/' or std.mem.indexOfScalar(u8, path, '\\') != null or std.mem.indexOfScalar(u8, path, 0) != null) return false;
+    if (!isMarkdownDocPath(path)) return false;
+
+    var it = std.mem.splitScalar(u8, path, '/');
+    while (it.next()) |segment| {
+        if (segment.len == 0) return false;
+        if (std.mem.eql(u8, segment, ".") or std.mem.eql(u8, segment, "..")) return false;
+    }
+    return true;
+}
+
+fn shouldSkipMarkdownWalkPath(path: []const u8) bool {
+    var it = std.mem.splitScalar(u8, path, '/');
+    while (it.next()) |segment| {
+        if (segment.len == 0) continue;
+        if (std.mem.eql(u8, segment, ".git")) return true;
+        if (std.mem.eql(u8, segment, "node_modules")) return true;
+        if (std.mem.eql(u8, segment, "zig-cache") or std.mem.eql(u8, segment, ".zig-cache")) return true;
+        if (std.mem.eql(u8, segment, "target")) return true;
+        if (std.mem.eql(u8, segment, "dist")) return true;
+        if (std.mem.eql(u8, segment, "build")) return true;
+        if (std.mem.eql(u8, segment, "out")) return true;
+        if (std.mem.eql(u8, segment, ".cache")) return true;
+    }
+    return false;
+}
+
+fn markdownTitleFromPath(path: []const u8) []const u8 {
+    const base = std.fs.path.basename(path);
+    if (std.ascii.endsWithIgnoreCase(base, ".markdown")) return base[0 .. base.len - ".markdown".len];
+    if (std.ascii.endsWithIgnoreCase(base, ".md")) return base[0 .. base.len - ".md".len];
+    return base;
+}
+
+fn markdownDocAbsolutePath(allocator: std.mem.Allocator, workspace_dir: []const u8, rel_path: []const u8) ![]u8 {
+    if (!isSafeMarkdownDocPath(rel_path)) return error.InvalidPath;
+    return std.fs.path.join(allocator, &.{ workspace_dir, rel_path });
+}
+
+fn pathIsInsideRoot(root: []const u8, path: []const u8) bool {
+    if (std.mem.eql(u8, root, path)) return true;
+    if (!std.mem.startsWith(u8, path, root)) return false;
+    if (root.len > 0 and root[root.len - 1] == std.fs.path.sep) return true;
+    return path.len > root.len and path[root.len] == std.fs.path.sep;
+}
+
+fn ensureExistingPathInsideWorkspace(allocator: std.mem.Allocator, workspace_dir: []const u8, abs_path: []const u8) !void {
+    const real_workspace = try std_compat.fs.realpathAlloc(allocator, workspace_dir);
+    defer allocator.free(real_workspace);
+    const real_path = try std_compat.fs.realpathAlloc(allocator, abs_path);
+    defer allocator.free(real_path);
+    if (!pathIsInsideRoot(real_workspace, real_path)) return error.InvalidPath;
+}
+
+fn ensureExistingParentInsideWorkspace(allocator: std.mem.Allocator, workspace_dir: []const u8, abs_path: []const u8) !void {
+    const real_workspace = try std_compat.fs.realpathAlloc(allocator, workspace_dir);
+    defer allocator.free(real_workspace);
+
+    var current = std.fs.path.dirname(abs_path) orelse return error.InvalidPath;
+    while (true) {
+        const real_current = std_compat.fs.realpathAlloc(allocator, current) catch |err| switch (err) {
+            error.FileNotFound => {
+                current = std.fs.path.dirname(current) orelse return error.InvalidPath;
+                continue;
+            },
+            else => return err,
+        };
+        defer allocator.free(real_current);
+        if (!pathIsInsideRoot(real_workspace, real_current)) return error.InvalidPath;
+        return;
+    }
+}
+
+fn appendMarkdownDocMeta(
+    allocator: std.mem.Allocator,
+    buf: *std.array_list.Managed(u8),
+    workspace_dir: []const u8,
+    rel_path: []const u8,
+) !bool {
+    const abs_path = try std.fs.path.join(allocator, &.{ workspace_dir, rel_path });
+    defer allocator.free(abs_path);
+
+    const file = std_compat.fs.openFileAbsolute(abs_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound, error.SymLinkLoop, error.AccessDenied => return false,
+        else => return err,
+    };
+    defer file.close();
+    try ensureExistingPathInsideWorkspace(allocator, workspace_dir, abs_path);
+    const stat = file.stat() catch return false;
+
+    try buf.appendSlice("{\"path\":\"");
+    try appendEscaped(buf, rel_path);
+    try buf.appendSlice("\",\"title\":\"");
+    try appendEscaped(buf, markdownTitleFromPath(rel_path));
+    try buf.appendSlice("\",\"source\":\"workspace\",\"size_bytes\":");
+    const size_text = try std.fmt.allocPrint(allocator, "{d}", .{stat.size});
+    defer allocator.free(size_text);
+    try buf.appendSlice(size_text);
+    try buf.appendSlice(",\"updated_at_ms\":");
+    const updated_text = try std.fmt.allocPrint(allocator, "{d}", .{@divFloor(@as(i64, @intCast(stat.mtime)), 1_000_000)});
+    defer allocator.free(updated_text);
+    try buf.appendSlice(updated_text);
+    try buf.appendSlice("}");
+    return true;
+}
+
+fn handleDocsList(allocator: std.mem.Allocator, workspace_dir: []const u8) ApiResponse {
+    var buf = std.array_list.Managed(u8).init(allocator);
+    errdefer buf.deinit();
+
+    buf.appendSlice("{\"root\":\"") catch return helpers.serverError();
+    appendEscaped(&buf, workspace_dir) catch return helpers.serverError();
+    buf.appendSlice("\",\"documents\":[") catch return helpers.serverError();
+
+    var dir = std_compat.fs.openDirAbsolute(workspace_dir, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => {
+            buf.appendSlice("]}") catch return helpers.serverError();
+            return jsonOk(buf.items);
+        },
+        else => return helpers.serverError(),
+    };
+    defer dir.close();
+
+    var walker = dir.walk(allocator) catch return helpers.serverError();
+    defer walker.deinit();
+
+    var count: usize = 0;
+    while (walker.next() catch return helpers.serverError()) |entry| {
+        if (entry.kind == .directory and shouldSkipMarkdownWalkPath(entry.path)) {
+            walker.leave();
+            continue;
+        }
+        if (entry.kind != .file) continue;
+        if (!isSafeMarkdownDocPath(entry.path)) continue;
+        if (shouldSkipMarkdownWalkPath(entry.path)) continue;
+
+        const before_len = buf.items.len;
+        if (count > 0) buf.appendSlice(",") catch return helpers.serverError();
+        if (!(appendMarkdownDocMeta(allocator, &buf, workspace_dir, entry.path) catch return helpers.serverError())) {
+            buf.shrinkRetainingCapacity(before_len);
+            continue;
+        }
+        count += 1;
+        if (count >= max_markdown_docs) break;
+    }
+
+    buf.appendSlice("]}") catch return helpers.serverError();
+    return jsonOk(buf.items);
+}
+
+fn handleDocsRead(allocator: std.mem.Allocator, workspace_dir: []const u8, rel_path: []const u8) ApiResponse {
+    const abs_path = markdownDocAbsolutePath(allocator, workspace_dir, rel_path) catch |err| switch (err) {
+        error.InvalidPath => return badRequest("{\"error\":\"invalid markdown path\"}"),
+        else => return helpers.serverError(),
+    };
+    defer allocator.free(abs_path);
+
+    const file = std_compat.fs.openFileAbsolute(abs_path, .{ .follow_symlinks = false }) catch |err| switch (err) {
+        error.FileNotFound => return notFound(),
+        error.SymLinkLoop, error.AccessDenied => return notFound(),
+        else => return helpers.serverError(),
+    };
+    defer file.close();
+    ensureExistingPathInsideWorkspace(allocator, workspace_dir, abs_path) catch |err| switch (err) {
+        error.InvalidPath => return badRequest("{\"error\":\"invalid markdown path\"}"),
+        else => return helpers.serverError(),
+    };
+    const stat = file.stat() catch return helpers.serverError();
+    if (stat.size > max_markdown_doc_bytes) {
+        return badRequest("{\"error\":\"markdown file exceeds the 512 KB edit limit\"}");
+    }
+    const content = file.readToEndAlloc(allocator, max_markdown_doc_bytes) catch return helpers.serverError();
+    defer allocator.free(content);
+
+    var buf = std.array_list.Managed(u8).init(allocator);
+    errdefer buf.deinit();
+    buf.appendSlice("{\"path\":\"") catch return helpers.serverError();
+    appendEscaped(&buf, rel_path) catch return helpers.serverError();
+    buf.appendSlice("\",\"title\":\"") catch return helpers.serverError();
+    appendEscaped(&buf, markdownTitleFromPath(rel_path)) catch return helpers.serverError();
+    buf.appendSlice("\",\"source\":\"workspace\",\"size_bytes\":") catch return helpers.serverError();
+    const size_text = std.fmt.allocPrint(allocator, "{d}", .{stat.size}) catch return helpers.serverError();
+    defer allocator.free(size_text);
+    buf.appendSlice(size_text) catch return helpers.serverError();
+    buf.appendSlice(",\"updated_at_ms\":") catch return helpers.serverError();
+    const updated_text = std.fmt.allocPrint(allocator, "{d}", .{@divFloor(@as(i64, @intCast(stat.mtime)), 1_000_000)}) catch return helpers.serverError();
+    defer allocator.free(updated_text);
+    buf.appendSlice(updated_text) catch return helpers.serverError();
+    buf.appendSlice(",\"content\":\"") catch return helpers.serverError();
+    appendEscaped(&buf, content) catch return helpers.serverError();
+    buf.appendSlice("\"}") catch return helpers.serverError();
+    return jsonOk(buf.items);
+}
+
+fn writeMarkdownDocAtomically(allocator: std.mem.Allocator, abs_path: []const u8, contents: []const u8) !void {
+    const dir_path = std.fs.path.dirname(abs_path) orelse return error.InvalidPath;
+    const base_name = std.fs.path.basename(abs_path);
+    const tmp_name = try std.fmt.allocPrint(allocator, ".{s}.{x}.tmp", .{
+        base_name,
+        std_compat.crypto.random.int(u64),
+    });
+    defer allocator.free(tmp_name);
+
+    const tmp_path = try std.fs.path.join(allocator, &.{ dir_path, tmp_name });
+    defer allocator.free(tmp_path);
+    errdefer std_compat.fs.deleteFileAbsolute(tmp_path) catch {};
+
+    {
+        const file = try std_compat.fs.createFileAbsolute(tmp_path, .{ .truncate = true });
+        defer file.close();
+        try file.writeAll(contents);
+        try file.sync();
+    }
+
+    try std_compat.fs.renameAbsolute(tmp_path, abs_path);
+    try durable_file.syncDirectory(dir_path);
+}
+
+fn handleDocsWrite(allocator: std.mem.Allocator, workspace_dir: []const u8, body: []const u8) ApiResponse {
+    const parsed = std.json.parseFromSlice(MarkdownDocWriteBody, allocator, body, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    }) catch return badRequest("{\"error\":\"invalid JSON body\"}");
+    defer parsed.deinit();
+
+    if (parsed.value.content.len > max_markdown_doc_bytes) {
+        return badRequest("{\"error\":\"markdown file exceeds the 512 KB edit limit\"}");
+    }
+
+    const abs_path = markdownDocAbsolutePath(allocator, workspace_dir, parsed.value.path) catch |err| switch (err) {
+        error.InvalidPath => return badRequest("{\"error\":\"invalid markdown path\"}"),
+        else => return helpers.serverError(),
+    };
+    defer allocator.free(abs_path);
+
+    ensurePath(workspace_dir) catch return helpers.serverError();
+    ensureExistingParentInsideWorkspace(allocator, workspace_dir, abs_path) catch |err| switch (err) {
+        error.InvalidPath => return badRequest("{\"error\":\"invalid markdown path\"}"),
+        else => return helpers.serverError(),
+    };
+    if (std.fs.path.dirname(abs_path)) |parent| ensurePath(parent) catch return helpers.serverError();
+    if (std.fs.path.dirname(abs_path)) |parent| {
+        ensureExistingPathInsideWorkspace(allocator, workspace_dir, parent) catch |err| switch (err) {
+            error.InvalidPath => return badRequest("{\"error\":\"invalid markdown path\"}"),
+            else => return helpers.serverError(),
+        };
+    }
+    writeMarkdownDocAtomically(allocator, abs_path, parsed.value.content) catch return helpers.serverError();
+    return handleDocsRead(allocator, workspace_dir, parsed.value.path);
+}
+
+fn handleDocsDelete(allocator: std.mem.Allocator, workspace_dir: []const u8, rel_path: []const u8) ApiResponse {
+    const abs_path = markdownDocAbsolutePath(allocator, workspace_dir, rel_path) catch |err| switch (err) {
+        error.InvalidPath => return badRequest("{\"error\":\"invalid markdown path\"}"),
+        else => return helpers.serverError(),
+    };
+    defer allocator.free(abs_path);
+
+    ensureExistingPathInsideWorkspace(allocator, workspace_dir, abs_path) catch |err| switch (err) {
+        error.FileNotFound => return notFound(),
+        error.InvalidPath => return badRequest("{\"error\":\"invalid markdown path\"}"),
+        else => return helpers.serverError(),
+    };
+
+    std_compat.fs.deleteFileAbsolute(abs_path) catch |err| switch (err) {
+        error.FileNotFound => return notFound(),
+        else => return helpers.serverError(),
+    };
+    return jsonOk("{\"status\":\"deleted\"}");
+}
+
+fn handleDocs(
+    allocator: std.mem.Allocator,
+    s: *state_mod.State,
+    paths: paths_mod.Paths,
+    component: []const u8,
+    name: []const u8,
+    method: []const u8,
+    target: []const u8,
+    body: []const u8,
+) ApiResponse {
+    _ = s.getInstance(component, name) orelse return notFound();
+    const workspace_dir = instanceWorkspaceDir(allocator, paths, component, name) catch return helpers.serverError();
+    defer allocator.free(workspace_dir);
+
+    if (std.mem.eql(u8, method, "GET")) {
+        const rel_path = query_api.valueAlloc(allocator, target, "path") catch return helpers.serverError();
+        defer if (rel_path) |value| allocator.free(value);
+        if (rel_path) |value| {
+            if (value.len == 0) return badRequest("{\"error\":\"path is required\"}");
+            return handleDocsRead(allocator, workspace_dir, value);
+        }
+        return handleDocsList(allocator, workspace_dir);
+    }
+
+    if (std.mem.eql(u8, method, "PUT") or std.mem.eql(u8, method, "PATCH")) {
+        return handleDocsWrite(allocator, workspace_dir, body);
+    }
+
+    if (std.mem.eql(u8, method, "DELETE")) {
+        const rel_path = query_api.valueAlloc(allocator, target, "path") catch return helpers.serverError();
+        defer if (rel_path) |value| allocator.free(value);
+        const value = rel_path orelse return badRequest("{\"error\":\"path is required\"}");
+        if (value.len == 0) return badRequest("{\"error\":\"path is required\"}");
+        return handleDocsDelete(allocator, workspace_dir, value);
+    }
+
+    return methodNotAllowed();
 }
 
 fn handleSkillsCatalog(allocator: std.mem.Allocator, component: []const u8) ApiResponse {
@@ -5769,6 +6107,9 @@ pub fn dispatch(
         if (std.mem.eql(u8, action, "tickets")) {
             if (!std.mem.eql(u8, method, "POST")) return methodNotAllowed();
             return handleNullTicketsAction(allocator, s, manager, mutex, paths, parsed.component, parsed.name, body);
+        }
+        if (std.mem.eql(u8, action, "docs")) {
+            return handleDocs(allocator, s, paths, parsed.component, parsed.name, method, target, body);
         }
 
         // Remaining actions are POST-only.
@@ -8049,6 +8390,109 @@ test "dispatch routes GET onboarding action" {
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"completed\":true") != null);
 }
 
+test "dispatch manages markdown docs in instance workspace" {
+    const allocator = std.testing.allocator;
+    var state_fixture = try test_helpers.TempPaths.init(allocator);
+    defer state_fixture.deinit();
+    const state_path = try state_fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var s = state_mod.State.init(allocator, state_path);
+    defer s.deinit();
+    var mctx = TestManagerCtx.init(allocator);
+    defer mctx.deinit(allocator);
+
+    try s.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0" });
+
+    const inst_dir = try mctx.paths.instanceDir(allocator, "nullclaw", "my-agent");
+    defer allocator.free(inst_dir);
+    const docs_dir = try std.fs.path.join(allocator, &.{ inst_dir, "workspace", "docs" });
+    defer allocator.free(docs_dir);
+    try ensurePath(docs_dir);
+
+    const runbook_path = try std.fs.path.join(allocator, &.{ docs_dir, "runbook.md" });
+    defer allocator.free(runbook_path);
+    try writeAbsoluteFile(runbook_path, "# Runbook\n\n- Check status\n");
+
+    const control_doc_path = try std.fs.path.join(allocator, &.{ docs_dir, "control.md" });
+    defer allocator.free(control_doc_path);
+    try writeAbsoluteFile(control_doc_path, "# Control\x0c\n");
+
+    const skipped_dir = try std.fs.path.join(allocator, &.{ inst_dir, "workspace", "node_modules", "pkg" });
+    defer allocator.free(skipped_dir);
+    try ensurePath(skipped_dir);
+    const skipped_doc_path = try std.fs.path.join(allocator, &.{ skipped_dir, "hidden.md" });
+    defer allocator.free(skipped_doc_path);
+    try writeAbsoluteFile(skipped_doc_path, "# Hidden\n");
+
+    if (comptime builtin.os.tag != .windows) {
+        const outside_secret_path = try std.fs.path.join(allocator, &.{ inst_dir, "outside-secret.md" });
+        defer allocator.free(outside_secret_path);
+        try writeAbsoluteFile(outside_secret_path, "# Secret\n");
+        const link_path = try std.fs.path.join(allocator, &.{ docs_dir, "secret-link.md" });
+        defer allocator.free(link_path);
+        try std_compat.fs.symLinkAbsolute(outside_secret_path, link_path, .{});
+    }
+
+    const list_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "GET", "/api/instances/nullclaw/my-agent/docs", "").?;
+    defer allocator.free(list_resp.body);
+    try std.testing.expectEqualStrings("200 OK", list_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, list_resp.body, "\"path\":\"docs/runbook.md\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, list_resp.body, "node_modules") == null);
+    try std.testing.expect(std.mem.indexOf(u8, list_resp.body, "secret-link.md") == null);
+
+    const read_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "GET", "/api/instances/nullclaw/my-agent/docs?path=docs%2Frunbook.md", "").?;
+    defer allocator.free(read_resp.body);
+    try std.testing.expectEqualStrings("200 OK", read_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, read_resp.body, "\"content\":\"# Runbook\\n\\n- Check status\\n\"") != null);
+
+    const control_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "GET", "/api/instances/nullclaw/my-agent/docs?path=docs%2Fcontrol.md", "").?;
+    defer allocator.free(control_resp.body);
+    try std.testing.expectEqualStrings("200 OK", control_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, control_resp.body, "\\u000c") != null);
+
+    if (comptime builtin.os.tag != .windows) {
+        const symlink_read_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "GET", "/api/instances/nullclaw/my-agent/docs?path=docs%2Fsecret-link.md", "").?;
+        defer allocator.free(symlink_read_resp.body);
+        try std.testing.expectEqualStrings("404 Not Found", symlink_read_resp.status);
+    }
+
+    const write_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "PUT",
+        "/api/instances/nullclaw/my-agent/docs",
+        "{\"path\":\"docs/new-note.md\",\"content\":\"# New note\\n\"}",
+    ).?;
+    defer allocator.free(write_resp.body);
+    try std.testing.expectEqualStrings("200 OK", write_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, write_resp.body, "\"path\":\"docs/new-note.md\"") != null);
+
+    const delete_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "DELETE", "/api/instances/nullclaw/my-agent/docs?path=docs%2Fnew-note.md", "").?;
+    defer allocator.free(delete_resp.body);
+    try std.testing.expectEqualStrings("200 OK", delete_resp.status);
+    const new_note_path = try std.fs.path.join(allocator, &.{ docs_dir, "new-note.md" });
+    defer allocator.free(new_note_path);
+    try std.testing.expectError(error.FileNotFound, std_compat.fs.openFileAbsolute(new_note_path, .{}));
+
+    try s.addInstance("nullclaw", "fresh-agent", .{ .version = "1.0.0" });
+    const fresh_write_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "PUT",
+        "/api/instances/nullclaw/fresh-agent/docs",
+        "{\"path\":\"docs/first.md\",\"content\":\"# First\\n\"}",
+    ).?;
+    defer allocator.free(fresh_write_resp.body);
+    try std.testing.expectEqualStrings("200 OK", fresh_write_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, fresh_write_resp.body, "\"path\":\"docs/first.md\"") != null);
+}
+
 test "dispatch routes GET integration action for linked nullboiler" {
     const allocator = std.testing.allocator;
     var state_fixture = try test_helpers.TempPaths.init(allocator);
@@ -10080,6 +10524,38 @@ test "dispatch mutates mcp server config subtree" {
         try std.testing.expect(context_server.get("replace_env") == null);
     }
 
+    const stdio_to_http_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "PATCH",
+        "/api/instances/nullclaw/my-agent/mcp?name=context7",
+        "{\"transport\":\"http\",\"url\":\"http://localhost:6001/mcp\",\"headers\":{\"Authorization\":\"Bearer new\"}}",
+    ).?;
+    defer allocator.free(stdio_to_http_resp.body);
+    try std.testing.expectEqualStrings("200 OK", stdio_to_http_resp.status);
+
+    {
+        const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
+        defer allocator.free(config_path);
+        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        defer allocator.free(config_bytes);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        const context_server = parsed.value.object.get("mcp_servers").?.object.get("context7").?.object;
+        try std.testing.expectEqualStrings("http", context_server.get("transport").?.string);
+        try std.testing.expectEqualStrings("http://localhost:6001/mcp", context_server.get("url").?.string);
+        try std.testing.expect(context_server.get("command") == null);
+        try std.testing.expect(context_server.get("args") == null);
+        try std.testing.expect(context_server.get("env") == null);
+        try std.testing.expectEqualStrings("Bearer new", context_server.get("headers").?.object.get("Authorization").?.string);
+    }
+
     const http_create_resp = dispatch(
         allocator,
         &s,
@@ -10147,6 +10623,37 @@ test "dispatch mutates mcp server config subtree" {
         const http_server = parsed.value.object.get("mcp_servers").?.object.get("http-one").?.object;
         try std.testing.expectEqual(@as(usize, 0), http_server.get("headers").?.object.count());
         try std.testing.expect(http_server.get("replace_headers") == null);
+    }
+
+    const http_to_stdio_resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "PATCH",
+        "/api/instances/nullclaw/my-agent/mcp?name=http-one",
+        "{\"transport\":\"stdio\",\"command\":\"node\",\"args\":[\"server.js\"]}",
+    ).?;
+    defer allocator.free(http_to_stdio_resp.body);
+    try std.testing.expectEqualStrings("200 OK", http_to_stdio_resp.status);
+
+    {
+        const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
+        defer allocator.free(config_path);
+        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        defer allocator.free(config_bytes);
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
+            .allocate = .alloc_always,
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        const http_server = parsed.value.object.get("mcp_servers").?.object.get("http-one").?.object;
+        try std.testing.expectEqualStrings("stdio", http_server.get("transport").?.string);
+        try std.testing.expectEqualStrings("node", http_server.get("command").?.string);
+        try std.testing.expectEqual(@as(usize, 1), http_server.get("args").?.array.items.len);
+        try std.testing.expect(http_server.get("url") == null);
+        try std.testing.expect(http_server.get("headers") == null);
     }
 
     const delete_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "DELETE", "/api/instances/nullclaw/my-agent/mcp?name=context7", "").?;
