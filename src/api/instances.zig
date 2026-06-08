@@ -948,6 +948,13 @@ pub fn isGatewayProxyPath(target: []const u8) bool {
     return gatewayProxyRouteForAction(action) != null;
 }
 
+pub fn isMarkdownDocsPath(target: []const u8) bool {
+    const parsed = parsePath(target) orelse return false;
+    if (!parsedPathSegmentsAreSafe(parsed)) return false;
+    const action = parsed.action orelse return false;
+    return std.mem.eql(u8, action, "docs");
+}
+
 pub fn prepareGatewayProxy(
     allocator: std.mem.Allocator,
     s: *state_mod.State,
@@ -4032,7 +4039,7 @@ fn instanceWorkspaceDir(allocator: std.mem.Allocator, paths: paths_mod.Paths, co
     return try std.fs.path.join(allocator, &.{ inst_dir, "workspace" });
 }
 
-const max_markdown_doc_bytes: usize = 512 * 1024;
+pub const max_markdown_doc_bytes: usize = 512 * 1024;
 const max_markdown_docs: usize = 1000;
 
 const MarkdownDocWriteBody = struct {
@@ -6767,6 +6774,10 @@ test "buildAgentStreamA2aBody translates managed agent request to A2A message st
     try std.testing.expect(isGatewayProxyPath("/api/instances/nullclaw/Opencode%20Go/a2a"));
     try std.testing.expect(!isGatewayProxyPath("/api/instances/nullclaw/name%2Fwith%2Fslash/a2a"));
     try std.testing.expect(!isGatewayProxyPath("/api/instances/nullclaw/name%GG/a2a"));
+    try std.testing.expect(isMarkdownDocsPath("/api/instances/nullclaw/hat/docs"));
+    try std.testing.expect(isMarkdownDocsPath("/api/instances/nullclaw/hat/docs?path=docs%2Frunbook.md"));
+    try std.testing.expect(!isMarkdownDocsPath("/api/instances/nullclaw/name%2Fwith%2Fslash/docs"));
+    try std.testing.expect(!isMarkdownDocsPath("/api/instances/nullclaw/name%GG/docs"));
 }
 
 fn writeTestTrackerWorkflow(

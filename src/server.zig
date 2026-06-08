@@ -42,6 +42,7 @@ const test_helpers = @import("test_helpers.zig");
 
 const default_max_request_size: usize = 64 * 1024;
 const gateway_max_request_size: usize = @as(usize, @intCast(nullclaw_gateway_config.min_body_size));
+const markdown_docs_max_request_size: usize = instances_api.max_markdown_doc_bytes * 2 + 16 * 1024;
 const initial_request_buffer_size: usize = 64 * 1024;
 const mission_workflow_evidence_ttl_ms: i64 = 5000;
 const mission_workflow_scan_limit: usize = 50;
@@ -2185,6 +2186,7 @@ fn jsonResponse(body: []const u8) Response {
 
 fn maxRequestBodySize(target: []const u8) usize {
     if (instances_api.isGatewayProxyPath(target)) return gateway_max_request_size;
+    if (instances_api.isMarkdownDocsPath(target)) return markdown_docs_max_request_size;
     return default_max_request_size;
 }
 
@@ -3456,8 +3458,11 @@ test "initial request buffer stays small while media body limit remains high" {
     try std.testing.expect(gateway_max_request_size >= 64 * 1024 * 1024);
     try std.testing.expectEqual(@as(usize, @intCast(nullclaw_gateway_config.min_body_size)), gateway_max_request_size);
     try std.testing.expectEqual(default_max_request_size, maxRequestBodySize("/api/status"));
+    try std.testing.expectEqual(markdown_docs_max_request_size, maxRequestBodySize("/api/instances/nullclaw/demo/docs"));
+    try std.testing.expectEqual(markdown_docs_max_request_size, maxRequestBodySize("/api/instances/nullclaw/demo/docs?path=docs%2Frunbook.md"));
     try std.testing.expectEqual(gateway_max_request_size, maxRequestBodySize("/api/instances/nullclaw/demo/a2a"));
     try std.testing.expectEqual(gateway_max_request_size, maxRequestBodySize("/api/instances/nullclaw/Opencode%20Go/a2a"));
+    try std.testing.expectEqual(default_max_request_size, maxRequestBodySize("/api/instances/nullclaw/name%2Fwith%2Fslash/docs"));
     try std.testing.expectEqual(default_max_request_size, maxRequestBodySize("/api/instances/nullclaw/name%2Fwith%2Fslash/a2a"));
 }
 
