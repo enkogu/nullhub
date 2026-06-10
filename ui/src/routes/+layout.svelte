@@ -3,7 +3,7 @@
   import '../shadcn.css';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
-  import AppSidebar from '$lib/components/app-sidebar.svelte';
+  import AppSidebar from '$lib/components/AppSidebar.svelte';
   import GlobalAgentChatDrawer from '$lib/components/GlobalAgentChatDrawer.svelte';
   import * as Breadcrumb from '$lib/components/ui/breadcrumb/index.js';
   import { Button } from '$lib/components/ui/button';
