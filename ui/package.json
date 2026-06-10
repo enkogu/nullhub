@@ -9,6 +9,7 @@
     "storybook:build": "svelte-kit sync && storybook build",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.svelte-check.json",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "test:mcp": "node src/lib/mcpEditor.test.mjs",
     "test:mission-control": "node src/lib/missionControl/replayAutomation.test.mjs",
     "preview": "vite preview"
@@ -16,6 +17,7 @@
   "devDependencies": {
     "@internationalized/date": "^3.12.2",
     "@lucide/svelte": "^0.561.0",
+    "@playwright/test": "^1.60.0",
     "@storybook/addon-svelte-csf": "^5.1.2",
     "@storybook/sveltekit": "^10.4.3",
     "@sveltejs/adapter-static": "^3.0.0",
