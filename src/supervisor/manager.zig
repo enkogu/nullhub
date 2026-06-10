@@ -234,10 +234,7 @@ pub const Manager = struct {
     ) void {
         const logs_dir = self.p.instanceLogs(self.allocator, component, name) catch return;
         defer self.allocator.free(logs_dir);
-        std_compat.fs.makeDirAbsolute(logs_dir) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return,
-        };
+        std_compat.fs.makePathAbsolute(logs_dir) catch return;
 
         const nullhub_log = std.fs.path.join(self.allocator, &.{ logs_dir, "nullhub.log" }) catch return;
         defer self.allocator.free(nullhub_log);
@@ -430,10 +427,7 @@ pub const Manager = struct {
         // Ensure logs directory exists and compute log file path
         const logs_dir = try self.p.instanceLogs(self.allocator, component, name);
         defer self.allocator.free(logs_dir);
-        std_compat.fs.makeDirAbsolute(logs_dir) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => return err,
-        };
+        try std_compat.fs.makePathAbsolute(logs_dir);
         const stdout_log = try std.fs.path.join(self.allocator, &.{ logs_dir, "stdout.log" });
         defer self.allocator.free(stdout_log);
 
@@ -840,13 +834,10 @@ pub const Manager = struct {
             return;
         };
         defer self.allocator.free(logs_dir);
-        std_compat.fs.makeDirAbsolute(logs_dir) catch |err| switch (err) {
-            error.PathAlreadyExists => {},
-            else => {
-                self.logSupervisor(inst.component, inst.name, "restart failed: cannot create logs dir: {s}", .{@errorName(err)});
-                inst.status = .failed;
-                return;
-            },
+        std_compat.fs.makePathAbsolute(logs_dir) catch |err| {
+            self.logSupervisor(inst.component, inst.name, "restart failed: cannot create logs dir: {s}", .{@errorName(err)});
+            inst.status = .failed;
+            return;
         };
         const stdout_log = std.fs.path.join(self.allocator, &.{ logs_dir, "stdout.log" }) catch |err| {
             self.logSupervisor(inst.component, inst.name, "restart failed: cannot build stdout.log path: {s}", .{@errorName(err)});
@@ -1122,15 +1113,18 @@ test "restart preserves launch args with spaces" {
     try script_file.writeAll(script);
 
     var mgr = Manager.init(allocator, fixture.paths);
+    // Drain detached log pump threads after deinit reaps the children, so the
+    // leak-checking allocator does not race their cleanup.
+    defer process.waitForLogPumpDrain();
     defer mgr.deinit();
 
     const launch_args = [_][]const u8{ script_path, "hello world", output_path };
     try mgr.startInstance("nullclaw", "argv", "/bin/sh", &launch_args, 0, "/health", "", "", "gateway");
 
-    std.time.sleep(100 * std.time.ns_per_ms);
+    std_compat.thread.sleep(100 * std.time.ns_per_ms);
     mgr.tick();
 
-    std.time.sleep(1200 * std.time.ns_per_ms);
+    std_compat.thread.sleep(1200 * std.time.ns_per_ms);
     mgr.tick();
     mgr.tick();
 
@@ -1139,7 +1133,7 @@ test "restart preserves launch args with spaces" {
     while (attempts < 20 and !found) : (attempts += 1) {
         const file = std_compat.fs.openFileAbsolute(output_path, .{}) catch |err| switch (err) {
             error.FileNotFound => {
-                std.time.sleep(50 * std.time.ns_per_ms);
+                std_compat.thread.sleep(50 * std.time.ns_per_ms);
                 continue;
             },
             else => return err,
@@ -1154,7 +1148,7 @@ test "restart preserves launch args with spaces" {
             break;
         }
 
-        std.time.sleep(50 * std.time.ns_per_ms);
+        std_compat.thread.sleep(50 * std.time.ns_per_ms);
     }
 
     try std.testing.expect(found);
@@ -1494,6 +1488,9 @@ test "tick: restarting with binary_path spawns new process" {
     defer fixture.deinit();
 
     var mgr = Manager.init(allocator, fixture.paths);
+    // Drain detached log pump threads after deinit reaps the children, so the
+    // leak-checking allocator does not race their cleanup.
+    defer process.waitForLogPumpDrain();
     defer mgr.deinit();
 
     const key = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ "comp", "restartable" });
@@ -1564,6 +1561,9 @@ test "tick: restarting uses capped backoff before spawning" {
     defer fixture.deinit();
 
     var mgr = Manager.init(allocator, fixture.paths);
+    // Drain detached log pump threads after deinit reaps the children, so the
+    // leak-checking allocator does not race their cleanup.
+    defer process.waitForLogPumpDrain();
     defer mgr.deinit();
 
     const key = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ "comp", "backoff-cap" });
@@ -1660,7 +1660,8 @@ test "adoptInstance marks live portless runtime as running" {
     });
     errdefer {
         process.terminate(spawned.pid) catch {};
-        _ = spawned.child.wait() catch {};
+        var spawned_child = spawned.child;
+        _ = spawned_child.wait() catch {};
     }
 
     var runtime = try makePersistedRuntime(
@@ -1685,7 +1686,8 @@ test "adoptInstance marks live portless runtime as running" {
     try std.testing.expectEqual(@as(?i64, null), inst.starting_since);
 
     try mgr.stopInstance("comp", "portless");
-    _ = spawned.child.wait() catch {};
+    var spawned_child = spawned.child;
+    _ = spawned_child.wait() catch {};
 }
 
 test "adoptInstance keeps unhealthy http runtime in starting state" {
@@ -1714,7 +1716,7 @@ test "adoptInstance keeps unhealthy http runtime in starting state" {
     const addr = try std_compat.net.Address.resolveIp("127.0.0.1", 0);
     var server = try addr.listen(.{});
     const unhealthy_port = server.listen_address.in.getPort();
-    const thread = try std.Thread.spawn(.{}, ThreadCtx.run, .{.{ .server = &server }});
+    const thread = try std.Thread.spawn(.{}, ThreadCtx.run, .{ThreadCtx{ .server = &server }});
     defer thread.join();
     defer server.deinit();
 
@@ -1724,7 +1726,8 @@ test "adoptInstance keeps unhealthy http runtime in starting state" {
     });
     errdefer {
         process.terminate(spawned.pid) catch {};
-        _ = spawned.child.wait() catch {};
+        var spawned_child = spawned.child;
+        _ = spawned_child.wait() catch {};
     }
 
     const original_started = std_compat.time.milliTimestamp() - 10_000;
@@ -1752,5 +1755,6 @@ test "adoptInstance keeps unhealthy http runtime in starting state" {
     try std.testing.expectEqual(@as(?i64, null), inst.last_health_ok);
 
     try mgr.stopInstance("comp", "http");
-    _ = spawned.child.wait() catch {};
+    var spawned_child = spawned.child;
+    _ = spawned_child.wait() catch {};
 }

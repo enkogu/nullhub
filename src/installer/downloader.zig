@@ -178,13 +178,12 @@ test "download performs atomic rename and sets executable bit" {
     }
 
     // Verify executable permission is set.
-    {
-        const stat = try std_compat.fs.openFileAbsolute(dest_path, .{});
-        defer stat.close();
-        const md = try stat.metadata();
-        const perms = md.permissions().inner;
+    if (comptime std_compat.fs.has_executable_bit) {
+        const file = try std_compat.fs.openFileAbsolute(dest_path, .{});
+        defer file.close();
+        const st = try file.stat();
         // Check owner execute bit.
-        try std.testing.expect(perms.unixHas(.user, .execute));
+        try std.testing.expect(st.mode & 0o100 != 0);
     }
 }
 

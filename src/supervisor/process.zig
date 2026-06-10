@@ -168,6 +168,11 @@ fn cloneEnvMap(allocator: std.mem.Allocator, source: *const std_compat.process.E
     return dst;
 }
 
+/// Number of live log pump threads. Tests wait for this to drain to zero so
+/// the leak-checking test allocator does not race the detached threads'
+/// cleanup of their LogPumpContext allocations.
+var active_log_pumps = std.atomic.Value(usize).init(0);
+
 fn startLogPump(
     allocator: std.mem.Allocator,
     stdout_pipe: std_compat.fs.File,
@@ -186,7 +191,9 @@ fn startLogPump(
         .log_path = owned_log_path,
     };
 
+    _ = active_log_pumps.fetchAdd(1, .monotonic);
     const thread = std.Thread.spawn(.{}, pumpChildOutputToLog, .{ctx}) catch |err| {
+        _ = active_log_pumps.fetchSub(1, .monotonic);
         ctx.stdout_pipe.close();
         ctx.stderr_pipe.close();
         allocator.free(ctx.log_path);
@@ -196,12 +203,23 @@ fn startLogPump(
     thread.detach();
 }
 
+/// Block (bounded) until all detached log pump threads have released their
+/// contexts. Test-only helper: leak-checking test allocators race the
+/// detached threads' cleanup otherwise.
+pub fn waitForLogPumpDrain() void {
+    var attempts: usize = 0;
+    while (active_log_pumps.load(.acquire) != 0 and attempts < 1000) : (attempts += 1) {
+        std_compat.thread.sleep(5 * std.time.ns_per_ms);
+    }
+}
+
 fn pumpChildOutputToLog(ctx: *LogPumpContext) void {
     defer {
         ctx.stdout_pipe.close();
         ctx.stderr_pipe.close();
         ctx.allocator.free(ctx.log_path);
         ctx.allocator.destroy(ctx);
+        _ = active_log_pumps.fetchSub(1, .release);
     }
 
     var log_file = std_compat.fs.createFileAbsolute(ctx.log_path, .{ .truncate = false }) catch return;
@@ -263,6 +281,9 @@ pub fn isAlive(pid: std_compat.process.Child.Id) bool {
     if (comptime builtin.os.tag == .macos) {
         return !isDarwinZombie(pid);
     }
+    if (comptime builtin.os.tag == .linux) {
+        return !isLinuxZombie(pid);
+    }
 
     return true;
 }
@@ -276,8 +297,30 @@ fn isDarwinZombie(pid: std_compat.process.Child.Id) bool {
         @ptrCast(&info),
         @sizeOf(darwin.extern_structs.ProcBsdShortInfo),
     );
-    if (size != @sizeOf(darwin.extern_structs.ProcBsdShortInfo)) return false;
+    // The kernel discards process info at exit and proc_pidinfo fails for
+    // zombies. Since kill(pid, 0) already succeeded, a failed query means
+    // the pid is a zombie awaiting reaping, not a live process.
+    if (size != @sizeOf(darwin.extern_structs.ProcBsdShortInfo)) return true;
     return info.pbsi_status == darwin.SZOMB;
+}
+
+fn isLinuxZombie(pid: std_compat.process.Child.Id) bool {
+    var path_buf: [64]u8 = undefined;
+    const path = std.fmt.bufPrint(&path_buf, "/proc/{d}/stat", .{pid}) catch return false;
+    const file = std_compat.fs.openFileAbsolute(path, .{}) catch return false;
+    defer file.close();
+
+    var stat_buf: [512]u8 = undefined;
+    const len = file.readAll(&stat_buf) catch return false;
+    return parseLinuxStatZombie(stat_buf[0..len]);
+}
+
+fn parseLinuxStatZombie(stat: []const u8) bool {
+    // /proc/<pid>/stat format: "pid (comm) state ..." — comm may contain
+    // spaces and parentheses, so locate the state field after the last ')'.
+    const close = std.mem.lastIndexOfScalar(u8, stat, ')') orelse return false;
+    const rest = std.mem.trimStart(u8, stat[close + 1 ..], " ");
+    return rest.len > 0 and rest[0] == 'Z';
 }
 
 pub fn persistedPidValue(pid: std_compat.process.Child.Id) ?u64 {
@@ -502,11 +545,23 @@ test "parseLinuxVmRss reads kilobytes as bytes" {
     ));
 }
 
+test "parseLinuxStatZombie detects zombie state field" {
+    try std.testing.expect(parseLinuxStatZombie("123 (sh) Z 1 123 123 0 -1"));
+    try std.testing.expect(!parseLinuxStatZombie("123 (sh) S 1 123 123 0 -1"));
+    try std.testing.expect(parseLinuxStatZombie("123 (we ird) name) Z 1 123"));
+    try std.testing.expect(!parseLinuxStatZombie("garbage"));
+}
+
 test "getMemoryRss reads current process where supported" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     if (comptime builtin.os.tag != .linux and builtin.os.tag != .macos) return error.SkipZigTest;
 
-    const pid: std_compat.process.Child.Id = @intCast(std.posix.getpid());
+    const raw_pid = switch (builtin.os.tag) {
+        .linux => std.os.linux.getpid(),
+        .macos => std.c.getpid(),
+        else => unreachable, // gated above
+    };
+    const pid: std_compat.process.Child.Id = @intCast(raw_pid);
     const rss = getMemoryRss(pid) orelse return error.SkipZigTest;
     try std.testing.expect(rss > 0);
 }
@@ -526,6 +581,11 @@ test "spawn with stdout_path captures stdout and stderr" {
     });
     var child = result.child;
     _ = try child.wait();
+
+    // Wait for the detached pump thread to flush and release its context;
+    // otherwise the leak-checking allocator races its cleanup.
+    waitForLogPumpDrain();
+    try std.testing.expectEqual(@as(usize, 0), active_log_pumps.load(.acquire));
 
     var attempts: usize = 0;
     while (attempts < 50) : (attempts += 1) {

@@ -221,6 +221,7 @@ test "parseRequest valid" {
     const allocator = std.testing.allocator;
     const json = "{\"repo\":\"nullhub\",\"type\":\"bug:crash\",\"message\":\"App crashes\"}";
     const result = parseRequest(allocator, json);
+    defer if (result) |r| r.deinit(allocator);
     try std.testing.expect(result != null);
     try std.testing.expect(result.?.repo == .nullhub);
     try std.testing.expect(result.?.report_type == .bug_crash);
@@ -232,6 +233,7 @@ test "parseRequest with markdown" {
     const allocator = std.testing.allocator;
     const json = "{\"repo\":\"nullclaw\",\"type\":\"feature\",\"message\":\"Want X\",\"markdown\":\"custom body\"}";
     const result = parseRequest(allocator, json);
+    defer if (result) |r| r.deinit(allocator);
     try std.testing.expect(result != null);
     try std.testing.expect(result.?.markdown != null);
     try std.testing.expectEqualStrings("custom body", result.?.markdown.?);
@@ -261,6 +263,7 @@ test "handlePreview returns valid JSON" {
     const allocator = std.testing.allocator;
     const json = "{\"repo\":\"nullhub\",\"type\":\"bug:behavior\",\"message\":\"Broken UI\"}";
     const resp = handlePreview(allocator, json);
+    defer allocator.free(resp.body);
     try std.testing.expectEqualStrings("200 OK", resp.status);
     try std.testing.expect(resp.body.len > 0);
     // Verify it's valid JSON by parsing
@@ -284,6 +287,7 @@ test "handlePreview bad request" {
 test "handleMeta returns shared report options" {
     const allocator = std.testing.allocator;
     const resp = handleMeta(allocator);
+    defer allocator.free(resp.body);
     try std.testing.expectEqualStrings("200 OK", resp.status);
 
     const parsed = try std.json.parseFromSlice(
@@ -320,6 +324,7 @@ test "handlePreview returns correct repo" {
     const allocator = std.testing.allocator;
     const json = "{\"repo\":\"nullboiler\",\"type\":\"feature\",\"message\":\"Add X\"}";
     const resp = handlePreview(allocator, json);
+    defer allocator.free(resp.body);
     try std.testing.expectEqualStrings("200 OK", resp.status);
     // Verify it contains the correct GitHub repo (NullBoiler with capital letters)
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "nullclaw/NullBoiler") != null);

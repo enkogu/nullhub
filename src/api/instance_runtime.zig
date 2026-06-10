@@ -296,7 +296,7 @@ test "resolve treats custom-path imported standalone as running when health pass
     defer allocator.free(inst_dir);
     try std_compat.fs.symLinkAbsolute(source_dir, inst_dir, .{ .is_directory = true });
 
-    const thread = try std.Thread.spawn(.{}, HealthServerCtx.run, .{.{ .server = &server }});
+    const thread = try std.Thread.spawn(.{}, HealthServerCtx.run, .{HealthServerCtx{ .server = &server }});
     defer thread.join();
 
     var manager = manager_mod.Manager.init(allocator, fixture.paths);

@@ -98,9 +98,15 @@ fn fetchLatestTagForComponent(allocator: std.mem.Allocator, component: []const u
 pub fn handleCheckUpdates(allocator: std.mem.Allocator, s: *state_mod.State) ApiResponse {
     var buf = std.array_list.Managed(u8).init(allocator);
 
-    buildUpdatesJson(allocator, &buf, s) catch return serverError();
+    buildUpdatesJson(allocator, &buf, s) catch {
+        buf.deinit();
+        return serverError();
+    };
 
-    return jsonOk(buf.items);
+    return jsonOk(buf.toOwnedSlice() catch {
+        buf.deinit();
+        return serverError();
+    });
 }
 
 fn buildUpdatesJson(allocator: std.mem.Allocator, buf: *std.array_list.Managed(u8), s: *state_mod.State) !void {
@@ -147,8 +153,14 @@ pub fn handleApplyUpdate(allocator: std.mem.Allocator, s: *state_mod.State, comp
     _ = s.getInstance(component, name) orelse return notFound();
 
     var buf = std.array_list.Managed(u8).init(allocator);
-    buildApplyJson(&buf, component, name) catch return serverError();
-    return jsonOk(buf.items);
+    buildApplyJson(&buf, component, name) catch {
+        buf.deinit();
+        return serverError();
+    };
+    return jsonOk(buf.toOwnedSlice() catch {
+        buf.deinit();
+        return serverError();
+    });
 }
 
 /// POST /api/instances/{component}/{name}/update — apply a real binary update.
@@ -187,7 +199,7 @@ pub fn handleApplyUpdateRuntime(
         up_to_date.appendSlice("\",\"version\":\"") catch return serverError();
         appendEscaped(&up_to_date, latest_tag) catch return serverError();
         up_to_date.appendSlice("\"}") catch return serverError();
-        return jsonOk(up_to_date.items);
+        return jsonOk(up_to_date.toOwnedSlice() catch return serverError());
     }
 
     const platform_key = comptime platform.detect().toString();
@@ -298,7 +310,7 @@ pub fn handleApplyUpdateRuntime(
     buf.appendSlice(if (was_running) "true" else "false") catch return serverError();
     buf.appendSlice("}") catch return serverError();
 
-    return jsonOk(buf.items);
+    return jsonOk(buf.toOwnedSlice() catch return serverError());
 }
 
 fn buildApplyJson(buf: *std.array_list.Managed(u8), component: []const u8, name: []const u8) !void {

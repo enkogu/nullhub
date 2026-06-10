@@ -181,7 +181,7 @@ test "check times out when server accepts but does not respond" {
     defer server.deinit();
 
     const port = server.listen_address.in.getPort();
-    const thread = try std.Thread.spawn(.{}, ThreadCtx.run, .{.{ .server = &server }});
+    const thread = try std.Thread.spawn(.{}, ThreadCtx.run, .{ThreadCtx{ .server = &server }});
     defer thread.join();
 
     const result = check(std.testing.allocator, "127.0.0.1", port, "/health");

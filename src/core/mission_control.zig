@@ -847,8 +847,9 @@ test "buildSnapshotView exposes failed mission and recover control" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"phase\": \"failed\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"can_recover\": true") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"replay_comparison\": null") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"artifact_role\": \"failed\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"artifact_role\": \"recovered\"") == null);
+    // Replay artifact panels (and their artifact_role markers) only appear in
+    // replay_comparison, which stays hidden until the recovered run completes.
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"artifact_role\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"trace_id\": \"trace-mission-code-red-primary\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"eval_key\": \"tool_success\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "zig build test exited with status 1") != null);

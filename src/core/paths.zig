@@ -321,25 +321,41 @@ test "ensureDirs creates all subdirectories" {
     std_compat.fs.deleteTreeAbsolute(tmp_root) catch {};
 }
 
+/// libc setenv/unsetenv for env-var round-trip tests; not exposed by std.c
+/// in Zig 0.16. Posix-only — the tests above are Windows-skipped.
+const testenv = struct {
+    extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+    extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+};
+
+/// Like getEnvVarOwned but null-terminated so the value can be handed back
+/// to setenv when restoring.
+fn getEnvVarOwnedZ(allocator: std.mem.Allocator, name: []const u8) ?[:0]u8 {
+    const raw = std_compat.process.getEnvVarOwned(allocator, name) catch return null;
+    defer allocator.free(raw);
+    return allocator.dupeZ(u8, raw) catch null;
+}
+
 test "init without custom root reads NULLHUB_HOME" {
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     const allocator = std.testing.allocator;
 
-    const previous_nullhub_home = std_compat.process.getEnvVarOwned(allocator, "NULLHUB_HOME") catch null;
+    const previous_nullhub_home = getEnvVarOwnedZ(allocator, "NULLHUB_HOME");
     defer if (previous_nullhub_home) |value| allocator.free(value);
     defer {
         if (previous_nullhub_home) |value| {
-            _ = std.c.setenv("NULLHUB_HOME", value.ptr, 1);
+            _ = testenv.setenv("NULLHUB_HOME", value.ptr, 1);
         } else {
-            _ = std.c.unsetenv("NULLHUB_HOME");
+            _ = testenv.unsetenv("NULLHUB_HOME");
         }
     }
 
     const temp_dir = try getTempDirOwned(allocator);
     defer allocator.free(temp_dir);
-    const expected_root = try std.fmt.allocPrintZ(allocator, "{s}/nullhub-home-env-test", .{temp_dir});
+    const expected_root = try std.fmt.allocPrintSentinel(allocator, "{s}/nullhub-home-env-test", .{temp_dir}, 0);
     defer allocator.free(expected_root);
 
-    if (std.c.setenv("NULLHUB_HOME", expected_root.ptr, 1) != 0) return error.Unexpected;
+    if (testenv.setenv("NULLHUB_HOME", expected_root.ptr, 1) != 0) return error.Unexpected;
 
     var p = try Paths.init(allocator, null);
     defer p.deinit(allocator);
@@ -348,18 +364,19 @@ test "init without custom root reads NULLHUB_HOME" {
 }
 
 test "init without custom root falls back to HOME" {
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
     const allocator = std.testing.allocator;
 
-    const previous_nullhub_home = std_compat.process.getEnvVarOwned(allocator, "NULLHUB_HOME") catch null;
+    const previous_nullhub_home = getEnvVarOwnedZ(allocator, "NULLHUB_HOME");
     defer if (previous_nullhub_home) |value| allocator.free(value);
     defer {
         if (previous_nullhub_home) |value| {
-            _ = std.c.setenv("NULLHUB_HOME", value.ptr, 1);
+            _ = testenv.setenv("NULLHUB_HOME", value.ptr, 1);
         } else {
-            _ = std.c.unsetenv("NULLHUB_HOME");
+            _ = testenv.unsetenv("NULLHUB_HOME");
         }
     }
-    _ = std.c.unsetenv("NULLHUB_HOME");
+    _ = testenv.unsetenv("NULLHUB_HOME");
 
     const home = getHomeDirOwned(allocator) catch return; // skip if no HOME/USERPROFILE
     defer allocator.free(home);

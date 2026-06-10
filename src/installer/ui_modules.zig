@@ -263,7 +263,7 @@ test "installExtractedUiModule flattens single top-level archive directory" {
     const dest_dir = try std.fmt.allocPrint(allocator, "{s}/dest", .{tmp_dir});
     defer allocator.free(dest_dir);
 
-    try std_compat.fs.makeDirAbsolute(nested_dir);
+    try std_compat.fs.makePathAbsolute(nested_dir);
     try std_compat.fs.makeDirAbsolute(dest_dir);
 
     const module_path = try std.fmt.allocPrint(allocator, "{s}/module.js", .{nested_dir});

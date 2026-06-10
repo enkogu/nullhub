@@ -796,7 +796,7 @@ test "loadNullBoilerConfig accepts tracker without url" {
 
     const inst_dir = try fixture.paths.instanceDir(allocator, "nullboiler", "worker-a");
     defer allocator.free(inst_dir);
-    try std.fs.makePathAbsolute(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
 
     const config_path = try fixture.paths.instanceConfig(allocator, "nullboiler", "worker-a");
     defer allocator.free(config_path);
@@ -887,7 +887,7 @@ test "linkNullBoilerToNullTickets preserves custom tracker config and replaces g
         .max_concurrent_tasks = null,
     });
 
-    const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+    const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
     defer allocator.free(config_bytes);
     try std.testing.expect(std.mem.indexOf(u8, config_bytes, "\"url\": \"http://127.0.0.1:7711\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, config_bytes, "\"api_token\": \"admin-token\"") != null);
@@ -898,7 +898,7 @@ test "linkNullBoilerToNullTickets preserves custom tracker config and replaces g
 
     const managed_workflow_path = try std.fs.path.join(allocator, &.{ workflows_dir, managed_workflow_file_name });
     defer allocator.free(managed_workflow_path);
-    const managed_bytes = try std.fs.readFileAbsolute(allocator, managed_workflow_path, 1024 * 1024);
+    const managed_bytes = try std_compat.fs.readFileAbsolute(allocator, managed_workflow_path, 1024 * 1024);
     defer allocator.free(managed_bytes);
     try std.testing.expect(std.mem.indexOf(u8, managed_bytes, "\"pipeline_id\": \"pipe-dev\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, managed_bytes, "\"reviewer\"") != null);
@@ -943,7 +943,7 @@ test "linkNullBoilerToNullTickets restores config when workflow generation fails
         .success_trigger = "complete",
         .max_concurrent_tasks = 2,
     }) catch {
-        const restored = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        const restored = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
         defer allocator.free(restored);
         try std.testing.expectEqualStrings(original_config, restored);
         return;
@@ -1010,7 +1010,7 @@ test "linkNullBoilerToNullTickets keeps stale workflow when replacement write fa
         .success_trigger = "complete",
         .max_concurrent_tasks = 2,
     }) catch {
-        const restored = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        const restored = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
         defer allocator.free(restored);
         try std.testing.expectEqualStrings(original_config, restored);
 

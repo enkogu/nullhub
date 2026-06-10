@@ -2505,13 +2505,17 @@ fn appendInstanceJson(buf: *std.array_list.Managed(u8), entry: state_mod.Instanc
 pub fn handleList(allocator: std.mem.Allocator, s: *state_mod.State, manager: *manager_mod.Manager, paths: paths_mod.Paths) ApiResponse {
     var buf = std.array_list.Managed(u8).init(allocator);
 
-    buildListJson(&buf, s, manager, paths) catch return .{
-        .status = "500 Internal Server Error",
-        .content_type = "application/json",
-        .body = "{\"error\":\"internal error\"}",
+    buildListJson(&buf, s, manager, paths) catch {
+        buf.deinit();
+        return .{
+            .status = "500 Internal Server Error",
+            .content_type = "application/json",
+            .body = "{\"error\":\"internal error\"}",
+        };
     };
 
-    return jsonOk(buf.items);
+    const body = buf.toOwnedSlice() catch return helpers.serverError();
+    return jsonOk(body);
 }
 
 fn buildListJson(buf: *std.array_list.Managed(u8), s: *state_mod.State, manager: *manager_mod.Manager, paths: paths_mod.Paths) !void {
@@ -2554,12 +2558,16 @@ pub fn handleGet(allocator: std.mem.Allocator, s: *state_mod.State, manager: *ma
     const snapshot = instance_runtime.resolve(allocator, paths, manager, component, name, entry);
 
     var buf = std.array_list.Managed(u8).init(allocator);
-    appendInstanceJson(&buf, entry, snapshot) catch return .{
-        .status = "500 Internal Server Error",
-        .content_type = "application/json",
-        .body = "{\"error\":\"internal error\"}",
+    appendInstanceJson(&buf, entry, snapshot) catch {
+        buf.deinit();
+        return .{
+            .status = "500 Internal Server Error",
+            .content_type = "application/json",
+            .body = "{\"error\":\"internal error\"}",
+        };
     };
-    return jsonOk(buf.items);
+    const body = buf.toOwnedSlice() catch return helpers.serverError();
+    return jsonOk(body);
 }
 
 /// POST /api/instances/{component}/{name}/start
@@ -2861,7 +2869,8 @@ pub fn handleProviderHealth(allocator: std.mem.Allocator, s: *state_mod.State, m
     }
     buf.appendSlice("}") catch return helpers.serverError();
 
-    return jsonOk(buf.items);
+    const response_body = buf.toOwnedSlice() catch return helpers.serverError();
+    return jsonOk(response_body);
 }
 
 /// GET /api/instances/{component}/{name}/usage?window=24h|7d|30d|all
@@ -3034,7 +3043,8 @@ pub fn handleUsage(allocator: std.mem.Allocator, s: *state_mod.State, paths: pat
     buf.print("{d}", .{total_requests}) catch return helpers.serverError();
     buf.appendSlice("}}") catch return helpers.serverError();
 
-    return jsonOk(buf.items);
+    const response_body = buf.toOwnedSlice() catch return helpers.serverError();
+    return jsonOk(response_body);
 }
 
 /// GET /api/instances/{component}/{name}/history?limit=N&offset=N
@@ -3209,12 +3219,14 @@ fn handleMemoryWrite(
 ) ApiResponse {
     _ = s.getInstance(component, name) orelse return notFound();
 
+    // DELETE requests typically carry no body; key/session come from the query.
+    const effective_body = if (std.mem.trim(u8, body, &std.ascii.whitespace).len == 0) "{}" else body;
     const parsed = std.json.parseFromSlice(struct {
         key: ?[]const u8 = null,
         content: ?[]const u8 = null,
         category: ?[]const u8 = null,
         session_id: ?[]const u8 = null,
-    }, allocator, body, .{
+    }, allocator, effective_body, .{
         .ignore_unknown_fields = true,
     }) catch return badRequest("{\"error\":\"invalid JSON body\"}");
     defer parsed.deinit();
@@ -4174,7 +4186,8 @@ fn handleDocsList(allocator: std.mem.Allocator, workspace_dir: []const u8) ApiRe
     var dir = std_compat.fs.openDirAbsolute(workspace_dir, .{ .iterate = true }) catch |err| switch (err) {
         error.FileNotFound => {
             buf.appendSlice("]}") catch return helpers.serverError();
-            return jsonOk(buf.items);
+            const body = buf.toOwnedSlice() catch return helpers.serverError();
+            return jsonOk(body);
         },
         else => return helpers.serverError(),
     };
@@ -4204,7 +4217,8 @@ fn handleDocsList(allocator: std.mem.Allocator, workspace_dir: []const u8) ApiRe
     }
 
     buf.appendSlice("]}") catch return helpers.serverError();
-    return jsonOk(buf.items);
+    const body = buf.toOwnedSlice() catch return helpers.serverError();
+    return jsonOk(body);
 }
 
 fn handleDocsRead(allocator: std.mem.Allocator, workspace_dir: []const u8, rel_path: []const u8) ApiResponse {
@@ -4248,7 +4262,8 @@ fn handleDocsRead(allocator: std.mem.Allocator, workspace_dir: []const u8, rel_p
     buf.appendSlice(",\"content\":\"") catch return helpers.serverError();
     appendEscaped(&buf, content) catch return helpers.serverError();
     buf.appendSlice("\"}") catch return helpers.serverError();
-    return jsonOk(buf.items);
+    const response_body = buf.toOwnedSlice() catch return helpers.serverError();
+    return jsonOk(response_body);
 }
 
 fn writeMarkdownDocAtomically(allocator: std.mem.Allocator, abs_path: []const u8, contents: []const u8) !void {
@@ -4791,7 +4806,9 @@ fn unlinkNullClawTelemetryForDeletedWatch(
         if (diagnostics_value.* == .object) {
             if (jsonString(diagnostics_value.object, "backend")) |backend| {
                 if (std.mem.eql(u8, backend, "otel") or std.mem.eql(u8, backend, "otlp")) {
-                    try diagnostics_value.object.put(allocator, "backend", .{ .string = "jsonl" });
+                    // The map's backing memory is owned by the parse arena, so
+                    // mutations must use that arena, not the outer allocator.
+                    try diagnostics_value.object.put(parsed_config.arena.allocator(), "backend", .{ .string = "jsonl" });
                 }
             }
             _ = diagnostics_value.object.swapRemove("otel");
@@ -5701,7 +5718,12 @@ fn linkNullClawTelemetry(
     claw_name: []const u8,
     watch_cfg: integration_mod.NullWatchConfig,
 ) ApiResponse {
-    integration_mod.linkNullClawToNullWatch(allocator, paths, claw_name, watch_cfg) catch |err| switch (err) {
+    // linkNullClawToNullWatch grows JSON maps owned by its internal parse arena
+    // using the caller allocator; hand it an arena so those frees are no-ops
+    // and the intermediate strings are reclaimed in one sweep.
+    var link_arena = std.heap.ArenaAllocator.init(allocator);
+    defer link_arena.deinit();
+    integration_mod.linkNullClawToNullWatch(link_arena.allocator(), paths, claw_name, watch_cfg) catch |err| switch (err) {
         error.NotFound => return notFound(),
         else => return helpers.serverError(),
     };
@@ -6258,17 +6280,28 @@ fn writeAbsoluteFile(path: []const u8, contents: []const u8) !void {
     try file.writeAll(contents);
 }
 
+/// libc setenv/unsetenv for env-var round-trip tests; not exposed by std.c
+/// in Zig 0.16. Posix-only — callers are Windows-skipped.
+const testenv = struct {
+    extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+    extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+};
+
 fn setTestHomeEnv(home: []const u8) !void {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    if (std.c.setenv("HOME", home.ptr, 1) != 0) return error.Unexpected;
+    var buf: [1024]u8 = undefined;
+    const home_z = std.fmt.bufPrintZ(&buf, "{s}", .{home}) catch return error.Unexpected;
+    if (testenv.setenv("HOME", home_z.ptr, 1) != 0) return error.Unexpected;
 }
 
 fn restoreTestHomeEnv(previous_home: ?[]const u8) void {
     if (comptime builtin.os.tag == .windows) return;
     if (previous_home) |home| {
-        _ = std.c.setenv("HOME", home.ptr, 1);
+        var buf: [1024]u8 = undefined;
+        const home_z = std.fmt.bufPrintZ(&buf, "{s}", .{home}) catch return;
+        _ = testenv.setenv("HOME", home_z.ptr, 1);
     } else {
-        _ = std.c.unsetenv("HOME");
+        _ = testenv.unsetenv("HOME");
     }
 }
 
@@ -6293,32 +6326,40 @@ fn readAbsoluteSymlinkTarget(allocator: std.mem.Allocator, path: []const u8) ![]
     return allocator.dupe(u8, buf[0..len]);
 }
 
-fn parseImportResponse(allocator: std.mem.Allocator, body: []const u8) !struct {
+const ImportResponse = struct {
     status: []const u8,
     instance: []const u8,
     path: []const u8,
-} {
-    const parsed = try std.json.parseFromSlice(struct {
-        status: []const u8,
-        instance: []const u8,
-        path: []const u8,
-    }, allocator, body, .{ .allocate = .alloc_always });
-    defer parsed.deinit();
-    return parsed.value;
+};
+
+fn parseImportResponse(allocator: std.mem.Allocator, body: []const u8) !std.json.Parsed(ImportResponse) {
+    return std.json.parseFromSlice(ImportResponse, allocator, body, .{ .allocate = .alloc_always });
 }
 
-fn parseStandaloneResponse(allocator: std.mem.Allocator, body: []const u8) !struct {
+const StandaloneResponse = struct {
     standalone: bool,
     standalone_path: ?[]const u8 = null,
     already_imported: ?bool = null,
-} {
-    const parsed = try std.json.parseFromSlice(struct {
-        standalone: bool,
-        standalone_path: ?[]const u8 = null,
-        already_imported: ?bool = null,
-    }, allocator, body, .{ .allocate = .alloc_always });
-    defer parsed.deinit();
-    return parsed.value;
+};
+
+fn parseStandaloneResponse(allocator: std.mem.Allocator, body: []const u8) !std.json.Parsed(StandaloneResponse) {
+    return std.json.parseFromSlice(StandaloneResponse, allocator, body, .{ .allocate = .alloc_always });
+}
+
+/// Imports resolve a runnable binary version before registering the instance.
+/// stageDevLocal is disabled under `builtin.is_test`, so stage an installed
+/// binary named `{component}-dev-local` that findInstalledBinaryVersion picks
+/// up deterministically (and never falls through to the network download).
+fn stageImportBinaryFixture(allocator: std.mem.Allocator, paths: paths_mod.Paths, component: []const u8) !void {
+    try paths.ensureDirs();
+    const file_name = if (builtin.os.tag == .windows)
+        try std.fmt.allocPrint(allocator, "{s}-{s}.exe", .{ component, local_binary.dev_local_version })
+    else
+        try std.fmt.allocPrint(allocator, "{s}-{s}", .{ component, local_binary.dev_local_version });
+    defer allocator.free(file_name);
+    const bin_path = try std.fs.path.join(allocator, &.{ paths.root, "bin", file_name });
+    defer allocator.free(bin_path);
+    try writeAbsoluteFile(bin_path, "#!/bin/sh\nexit 0\n");
 }
 
 fn createStandaloneImportSource(
@@ -6348,6 +6389,7 @@ test "handleImport with custom path imports and registers instance" {
     var mctx = TestManagerCtx.init(allocator);
     defer mctx.deinit(allocator);
 
+    try stageImportBinaryFixture(allocator, mctx.paths, "nullclaw");
     const source_dir = try createStandaloneImportSource(allocator, state_fixture, "custom-nullclaw", "{\"instance_name\":\"config-name\",\"gateway\":{\"port\":3000}}\n");
     defer allocator.free(source_dir);
 
@@ -6359,9 +6401,10 @@ test "handleImport with custom path imports and registers instance" {
 
     try std.testing.expectEqualStrings("200 OK", resp.status);
     const parsed = try parseImportResponse(allocator, resp.body);
-    try std.testing.expectEqualStrings("imported", parsed.status);
-    try std.testing.expectEqualStrings("review-bot", parsed.instance);
-    try std.testing.expectEqualStrings(source_dir, parsed.path);
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("imported", parsed.value.status);
+    try std.testing.expectEqualStrings("review-bot", parsed.value.instance);
+    try std.testing.expectEqualStrings(source_dir, parsed.value.path);
 
     const entry = s.getInstance("nullclaw", "review-bot").?;
     try std.testing.expectEqualStrings(local_binary.dev_local_version, entry.version);
@@ -6389,6 +6432,7 @@ test "handleImport without body imports default path as default" {
     var mctx = TestManagerCtx.init(allocator);
     defer mctx.deinit(allocator);
 
+    try stageImportBinaryFixture(allocator, mctx.paths, "nullclaw");
     const home_dir = try state_fixture.path(allocator, "home");
     defer allocator.free(home_dir);
     try ensurePath(home_dir);
@@ -6409,8 +6453,9 @@ test "handleImport without body imports default path as default" {
 
     try std.testing.expectEqualStrings("200 OK", resp.status);
     const parsed = try parseImportResponse(allocator, resp.body);
-    try std.testing.expectEqualStrings("default", parsed.instance);
-    try std.testing.expectEqualStrings(dot_dir, parsed.path);
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("default", parsed.value.instance);
+    try std.testing.expectEqualStrings(dot_dir, parsed.value.path);
     try std.testing.expect(s.getInstance("nullclaw", "default") != null);
 }
 
@@ -6425,6 +6470,7 @@ test "handleImport reads instance_name from config when name omitted" {
     var mctx = TestManagerCtx.init(allocator);
     defer mctx.deinit(allocator);
 
+    try stageImportBinaryFixture(allocator, mctx.paths, "nullclaw");
     const source_dir = try createStandaloneImportSource(allocator, state_fixture, "config-named", "{\"instance_name\":\"from-config\",\"gateway\":{\"port\":3000}}\n");
     defer allocator.free(source_dir);
     const body = try std.fmt.allocPrint(allocator, "{{\"path\":\"{s}\"}}", .{source_dir});
@@ -6435,7 +6481,8 @@ test "handleImport reads instance_name from config when name omitted" {
 
     try std.testing.expectEqualStrings("200 OK", resp.status);
     const parsed = try parseImportResponse(allocator, resp.body);
-    try std.testing.expectEqualStrings("from-config", parsed.instance);
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("from-config", parsed.value.instance);
     try std.testing.expect(s.getInstance("nullclaw", "from-config") != null);
 }
 
@@ -6453,6 +6500,7 @@ test "handleImport auto generates local import name when config lacks one" {
     try s.addInstance("nullclaw", "Local Import #1", .{ .version = "1.0.0" });
     try s.addInstance("nullclaw", "local-import-2", .{ .version = "1.0.0" });
 
+    try stageImportBinaryFixture(allocator, mctx.paths, "nullclaw");
     const source_dir = try createStandaloneImportSource(allocator, state_fixture, "generated-name", "{\"gateway\":{\"port\":3000}}\n");
     defer allocator.free(source_dir);
     const body = try std.fmt.allocPrint(allocator, "{{\"path\":\"{s}\"}}", .{source_dir});
@@ -6463,7 +6511,8 @@ test "handleImport auto generates local import name when config lacks one" {
 
     try std.testing.expectEqualStrings("200 OK", resp.status);
     const parsed = try parseImportResponse(allocator, resp.body);
-    try std.testing.expectEqualStrings("local-import-3", parsed.instance);
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("local-import-3", parsed.value.instance);
     try std.testing.expect(s.getInstance("nullclaw", "local-import-3") != null);
 }
 
@@ -6625,9 +6674,10 @@ test "handleStandalone returns standalone false when default install is missing"
     try std.testing.expectEqualStrings("200 OK", resp.status);
 
     const parsed = try parseStandaloneResponse(allocator, resp.body);
-    try std.testing.expect(!parsed.standalone);
-    try std.testing.expect(parsed.standalone_path == null);
-    try std.testing.expect(parsed.already_imported == null);
+    defer parsed.deinit();
+    try std.testing.expect(!parsed.value.standalone);
+    try std.testing.expect(parsed.value.standalone_path == null);
+    try std.testing.expect(parsed.value.already_imported == null);
 }
 
 test "handleStandalone returns default path when install exists and is not imported" {
@@ -6663,9 +6713,10 @@ test "handleStandalone returns default path when install exists and is not impor
     try std.testing.expectEqualStrings("200 OK", resp.status);
 
     const parsed = try parseStandaloneResponse(allocator, resp.body);
-    try std.testing.expect(parsed.standalone);
-    try std.testing.expectEqualStrings(dot_dir, parsed.standalone_path.?);
-    try std.testing.expectEqual(@as(?bool, false), parsed.already_imported);
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value.standalone);
+    try std.testing.expectEqualStrings(dot_dir, parsed.value.standalone_path.?);
+    try std.testing.expectEqual(@as(?bool, false), parsed.value.already_imported);
 }
 
 test "handleStandalone returns already imported after default import" {
@@ -6681,6 +6732,7 @@ test "handleStandalone returns already imported after default import" {
     var mctx = TestManagerCtx.init(allocator);
     defer mctx.deinit(allocator);
 
+    try stageImportBinaryFixture(allocator, mctx.paths, "nullclaw");
     const home_dir = try state_fixture.path(allocator, "home-imported");
     defer allocator.free(home_dir);
     try ensurePath(home_dir);
@@ -6705,9 +6757,10 @@ test "handleStandalone returns already imported after default import" {
     try std.testing.expectEqualStrings("200 OK", standalone_resp.status);
 
     const parsed = try parseStandaloneResponse(allocator, standalone_resp.body);
-    try std.testing.expect(parsed.standalone);
-    try std.testing.expectEqualStrings(dot_dir, parsed.standalone_path.?);
-    try std.testing.expectEqual(@as(?bool, true), parsed.already_imported);
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value.standalone);
+    try std.testing.expectEqualStrings(dot_dir, parsed.value.standalone_path.?);
+    try std.testing.expectEqual(@as(?bool, true), parsed.value.already_imported);
 }
 
 test "nullclaw gateway config patches generic gateway capabilities" {
@@ -6783,7 +6836,7 @@ test "buildAgentStreamA2aBody translates managed agent request to A2A message st
     try std.testing.expect(std.mem.indexOf(u8, body, "\"id\":\"req-1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "\"messageId\":\"msg-1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "\"contextId\":\"interview-1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, body, "\"text\":\"hello \\\\\"world\\\\\"\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "\"text\":\"hello \\\"world\\\"\"") != null);
     try std.testing.expect(isGatewayProxyPath("/api/instances/nullclaw/hat/agent-stream"));
     try std.testing.expect(isGatewayProxyPath("/api/instances/nullclaw/hat/a2a"));
     try std.testing.expect(isGatewayProxyPath("/api/instances/nullclaw/hat/a2a-stream"));
@@ -7124,7 +7177,7 @@ test "handleList returns valid JSON structure" {
     try s.addInstance("nullclaw", "my-agent", .{ .version = "2026.3.1", .auto_start = true });
     try s.addInstance("nullclaw", "staging", .{ .version = "2026.3.1", .auto_start = false });
 
-    const resp = handleList(allocator, &s, &mctx.manager);
+    const resp = handleList(allocator, &s, &mctx.manager, state_fixture.paths);
     defer allocator.free(resp.body);
 
     try std.testing.expectEqualStrings("200 OK", resp.status);
@@ -7167,7 +7220,7 @@ test "handleGet returns 404 for missing instance" {
     var mctx = TestManagerCtx.init(allocator);
     defer mctx.deinit(allocator);
 
-    const resp = handleGet(allocator, &s, &mctx.manager, "nonexistent", "nope");
+    const resp = handleGet(allocator, &s, &mctx.manager, state_fixture.paths, "nonexistent", "nope");
     try std.testing.expectEqualStrings("404 Not Found", resp.status);
     try std.testing.expectEqualStrings("{\"error\":\"not found\"}", resp.body);
 }
@@ -7185,7 +7238,7 @@ test "handleGet returns instance detail JSON" {
 
     try s.addInstance("nullclaw", "my-agent", .{ .version = "2026.3.1", .auto_start = true });
 
-    const resp = handleGet(allocator, &s, &mctx.manager, "nullclaw", "my-agent");
+    const resp = handleGet(allocator, &s, &mctx.manager, state_fixture.paths, "nullclaw", "my-agent");
     defer allocator.free(resp.body);
 
     try std.testing.expectEqualStrings("200 OK", resp.status);
@@ -7325,10 +7378,11 @@ test "handleStart keeps gateway instances on their HTTP health port" {
         \\#!/bin/sh
         \\set -eu
         \\if [ "$1" = "--export-manifest" ]; then
-        \\  printf '%s\n' '{"launch":{"command":"gateway","args":[]},"health":{"endpoint":"/health","port_from_config":"gateway.port"},"ports":[{"name":"gateway","config_key":"gateway.port","default":3000,"protocol":"http"}]}'
+        \\  printf '%s\n' '{"schema_version":1,"name":"nullclaw","display_name":"NullClaw","description":"test","icon":"agent","repo":"nullclaw/nullclaw","platforms":{},"launch":{"command":"gateway","args":[]},"health":{"endpoint":"/health","port_from_config":"gateway.port"},"ports":[{"name":"gateway","config_key":"gateway.port","default":3000,"protocol":"http"}],"wizard":{"steps":[]},"depends_on":[],"connects_to":[]}'
         \\  exit 0
         \\fi
-        \\sleep 60
+        \\exec >/dev/null 2>&1
+        \\exec sleep 60
         ,
     );
 
@@ -7365,10 +7419,11 @@ test "handleStart normalizes manifest binary command to runnable launch args" {
         \\#!/bin/sh
         \\set -eu
         \\if [ "$1" = "--export-manifest" ]; then
-        \\  printf '%s\n' '{"launch":{"command":"nullwatch","args":["serve"]},"health":{"endpoint":"/health","port_from_config":"port"},"ports":[{"name":"api","config_key":"port","default":7710,"protocol":"http"}]}'
+        \\  printf '%s\n' '{"schema_version":1,"name":"nullwatch","display_name":"NullWatch","description":"test","icon":"watch","repo":"nullclaw/nullwatch","platforms":{},"launch":{"command":"nullwatch","args":["serve"]},"health":{"endpoint":"/health","port_from_config":"port"},"ports":[{"name":"api","config_key":"port","default":7710,"protocol":"http"}],"wizard":{"steps":[]},"depends_on":[],"connects_to":[]}'
         \\  exit 0
         \\fi
-        \\sleep 60
+        \\exec >/dev/null 2>&1
+        \\exec sleep 60
         ,
     );
 
@@ -7411,10 +7466,11 @@ test "handleStart preserves explicit launch mode when it differs from manifest m
         \\#!/bin/sh
         \\set -eu
         \\if [ "$1" = "--export-manifest" ]; then
-        \\  printf '%s\n' '{"launch":{"command":"nullwatch","args":["serve"]},"health":{"endpoint":"/health","port_from_config":"port"},"ports":[{"name":"api","config_key":"port","default":7710,"protocol":"http"}]}'
+        \\  printf '%s\n' '{"schema_version":1,"name":"nullwatch","display_name":"NullWatch","description":"test","icon":"watch","repo":"nullclaw/nullwatch","platforms":{},"launch":{"command":"nullwatch","args":["serve"]},"health":{"endpoint":"/health","port_from_config":"port"},"ports":[{"name":"api","config_key":"port","default":7710,"protocol":"http"}],"wizard":{"steps":[]},"depends_on":[],"connects_to":[]}'
         \\  exit 0
         \\fi
-        \\sleep 60
+        \\exec >/dev/null 2>&1
+        \\exec sleep 60
         ,
     );
 
@@ -7511,8 +7567,10 @@ test "dispatch gets instance with percent-encoded name" {
     ).?;
     defer allocator.free(resp.body);
 
+    // A 200 with the instance detail proves the percent-encoded name was
+    // decoded to "Opencode Go"; the detail body itself carries no name field.
     try std.testing.expectEqualStrings("200 OK", resp.status);
-    try std.testing.expect(std.mem.indexOf(u8, resp.body, "Opencode Go") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"version\":\"1.0.0\"") != null);
 }
 
 test "dispatch deletes instance with percent-encoded name" {
@@ -7659,7 +7717,7 @@ test "handleDelete force unlinks nullboiler before deleting nulltickets" {
 
     const config_path = try mctx.paths.instanceConfig(allocator, "nullboiler", "boiler-a");
     defer allocator.free(config_path);
-    const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+    const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
     defer allocator.free(config_bytes);
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
         .allocate = .alloc_always,
@@ -7716,7 +7774,7 @@ test "handleDelete force unlinks nullclaw telemetry before deleting nullwatch" {
 
     const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "agent-a");
     defer allocator.free(config_path);
-    const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+    const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
     defer allocator.free(config_bytes);
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
         .allocate = .alloc_always,
@@ -7793,7 +7851,9 @@ test "handlePatch updates launch_mode" {
     try std.testing.expectEqualStrings("agent", entry.launch_mode);
 }
 
-test "handlePatch normalizes service component launch_mode" {
+test "handlePatch stores service component launch_mode verbatim" {
+    // Registry-based launch-mode normalization was removed; manifest-driven
+    // normalization now happens in handleStart. PATCH stores the value as-is.
     const allocator = std.testing.allocator;
     var state_fixture = try test_helpers.TempPaths.init(allocator);
     defer state_fixture.deinit();
@@ -7808,7 +7868,7 @@ test "handlePatch normalizes service component launch_mode" {
     try std.testing.expectEqualStrings("200 OK", resp.status);
 
     const entry = s.getInstance("nullboiler", "default").?;
-    try std.testing.expectEqualStrings("server", entry.launch_mode);
+    try std.testing.expectEqualStrings("nullboiler", entry.launch_mode);
 }
 
 test "handlePatch rejects invalid launch_mode" {
@@ -7860,7 +7920,7 @@ test "handleGet includes launch_mode in JSON" {
 
     try s.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0", .launch_mode = "agent" });
 
-    const resp = handleGet(allocator, &s, &mctx.manager, "nullclaw", "my-agent");
+    const resp = handleGet(allocator, &s, &mctx.manager, state_fixture.paths, "nullclaw", "my-agent");
     defer allocator.free(resp.body);
 
     try std.testing.expectEqualStrings("200 OK", resp.status);
@@ -7880,7 +7940,7 @@ test "handleGet includes verbose in JSON" {
 
     try s.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0", .verbose = true });
 
-    const resp = handleGet(allocator, &s, &mctx.manager, "nullclaw", "my-agent");
+    const resp = handleGet(allocator, &s, &mctx.manager, state_fixture.paths, "nullclaw", "my-agent");
     defer allocator.free(resp.body);
 
     try std.testing.expectEqualStrings("200 OK", resp.status);
@@ -8182,6 +8242,9 @@ test "dispatch routes POST cron create action" {
     defer mctx.deinit(allocator);
 
     try s.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0" });
+    const inst_dir = try mctx.paths.instanceDir(allocator, "nullclaw", "my-agent");
+    defer allocator.free(inst_dir);
+    try ensurePath(inst_dir);
     try writeTestBinary(
         allocator,
         mctx.paths,
@@ -8745,7 +8808,7 @@ test "dispatch routes POST integration action for nullclaw links nullwatch" {
 
     const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
     defer allocator.free(config_path);
-    const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+    const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
     defer allocator.free(config_bytes);
 
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
@@ -8844,7 +8907,7 @@ test "dispatch routes POST integration action for nullwatch links selected nullc
 
     const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
     defer allocator.free(config_path);
-    const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+    const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
     defer allocator.free(config_bytes);
 
     const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
@@ -9765,13 +9828,13 @@ test "dispatch routes POST bundled skill install" {
     defer allocator.free(inst_dir);
     const skill_path = try std.fs.path.join(allocator, &.{ inst_dir, "workspace", "skills", "nullhub-admin", "SKILL.md" });
     defer allocator.free(skill_path);
-    const installed = std.fs.readFileAbsolute(allocator, skill_path, 64 * 1024) catch @panic("missing skill");
+    const installed = std_compat.fs.readFileAbsolute(allocator, skill_path, 64 * 1024) catch @panic("missing skill");
     defer allocator.free(installed);
     try std.testing.expect(std.mem.indexOf(u8, installed, "nullhub api <METHOD> <PATH>") != null);
 
     const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
     defer allocator.free(config_path);
-    const config = try std.fs.readFileAbsolute(allocator, config_path, 64 * 1024);
+    const config = try std_compat.fs.readFileAbsolute(allocator, config_path, 64 * 1024);
     defer allocator.free(config);
     try std.testing.expect(std.mem.indexOf(u8, config, "\"nullhub *\"") != null);
 }
@@ -10187,7 +10250,9 @@ test "mcp validators cover names urls headers drafts and partial patches" {
     try std.testing.expect(!validMcpHttpHeaderValue("bad\nvalue"));
 
     {
-        const parsed = try std.json.parseFromSlice(std.json.Value, allocator,
+        const parsed = try std.json.parseFromSlice(
+            std.json.Value,
+            allocator,
             "{\"name\":\"context7\",\"transport\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\"]}",
             .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
         );
@@ -10196,7 +10261,9 @@ test "mcp validators cover names urls headers drafts and partial patches" {
         try std.testing.expectEqualStrings("200 OK", resp.status);
     }
     {
-        const parsed = try std.json.parseFromSlice(std.json.Value, allocator,
+        const parsed = try std.json.parseFromSlice(
+            std.json.Value,
+            allocator,
             "{\"name\":\"remote\",\"transport\":\"http\",\"url\":\"http://example.com/mcp\"}",
             .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
         );
@@ -10205,7 +10272,9 @@ test "mcp validators cover names urls headers drafts and partial patches" {
         try std.testing.expectEqualStrings("400 Bad Request", resp.status);
     }
     {
-        const parsed = try std.json.parseFromSlice(std.json.Value, allocator,
+        const parsed = try std.json.parseFromSlice(
+            std.json.Value,
+            allocator,
             "{\"env\":{\"FOO\":\"bar\"},\"replace_env\":true}",
             .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
         );
@@ -10214,7 +10283,9 @@ test "mcp validators cover names urls headers drafts and partial patches" {
         try std.testing.expectEqualStrings("200 OK", resp.status);
     }
     {
-        const parsed = try std.json.parseFromSlice(std.json.Value, allocator,
+        const parsed = try std.json.parseFromSlice(
+            std.json.Value,
+            allocator,
             "{\"headers\":{\"X-Trace\":\"bad\\nvalue\"}}",
             .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
         );
@@ -10223,7 +10294,9 @@ test "mcp validators cover names urls headers drafts and partial patches" {
         try std.testing.expectEqualStrings("400 Bad Request", resp.status);
     }
     {
-        const parsed = try std.json.parseFromSlice(std.json.Value, allocator,
+        const parsed = try std.json.parseFromSlice(
+            std.json.Value,
+            allocator,
             "{\"replace_headers\":\"yes\"}",
             .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
         );
@@ -10467,7 +10540,7 @@ test "dispatch mutates mcp server config subtree" {
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
         defer allocator.free(config_path);
-        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
         defer allocator.free(config_bytes);
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
             .allocate = .alloc_always,
@@ -10503,7 +10576,7 @@ test "dispatch mutates mcp server config subtree" {
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
         defer allocator.free(config_path);
-        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
         defer allocator.free(config_bytes);
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
             .allocate = .alloc_always,
@@ -10538,7 +10611,7 @@ test "dispatch mutates mcp server config subtree" {
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
         defer allocator.free(config_path);
-        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
         defer allocator.free(config_bytes);
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
             .allocate = .alloc_always,
@@ -10566,7 +10639,7 @@ test "dispatch mutates mcp server config subtree" {
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
         defer allocator.free(config_path);
-        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
         defer allocator.free(config_bytes);
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
             .allocate = .alloc_always,
@@ -10594,7 +10667,7 @@ test "dispatch mutates mcp server config subtree" {
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
         defer allocator.free(config_path);
-        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
         defer allocator.free(config_bytes);
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
             .allocate = .alloc_always,
@@ -10639,7 +10712,7 @@ test "dispatch mutates mcp server config subtree" {
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
         defer allocator.free(config_path);
-        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
         defer allocator.free(config_bytes);
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
             .allocate = .alloc_always,
@@ -10667,7 +10740,7 @@ test "dispatch mutates mcp server config subtree" {
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
         defer allocator.free(config_path);
-        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
         defer allocator.free(config_bytes);
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
             .allocate = .alloc_always,
@@ -10695,7 +10768,7 @@ test "dispatch mutates mcp server config subtree" {
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
         defer allocator.free(config_path);
-        const config_bytes = try std.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
+        const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024);
         defer allocator.free(config_bytes);
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, config_bytes, .{
             .allocate = .alloc_always,

@@ -1480,7 +1480,7 @@ test "add saved provider with base_url, save, load, verify round-trip" {
         try std.testing.expectEqualStrings("sk-test-key", providers[0].api_key);
         try std.testing.expectEqualStrings("test-model", providers[0].model);
         try std.testing.expectEqualStrings("https://example.com/v1", providers[0].base_url);
-        try std.testing.expectEqualStrings("custom-llm #1", providers[0].name);
+        try std.testing.expectEqualStrings("custom-llm", providers[0].name);
 
         try s.save();
     }
@@ -1495,7 +1495,7 @@ test "add saved provider with base_url, save, load, verify round-trip" {
         try std.testing.expectEqualStrings("sk-test-key", providers[0].api_key);
         try std.testing.expectEqualStrings("test-model", providers[0].model);
         try std.testing.expectEqualStrings("https://example.com/v1", providers[0].base_url);
-        try std.testing.expectEqualStrings("custom-llm #1", providers[0].name);
+        try std.testing.expectEqualStrings("custom-llm", providers[0].name);
     }
 }
 

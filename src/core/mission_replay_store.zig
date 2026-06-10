@@ -207,10 +207,15 @@ fn recordFromArtifactJson(allocator: std.mem.Allocator, id: []const u8, artifact
 }
 
 fn parseValidatedReplayArtifact(allocator: std.mem.Allocator, artifact_json: []const u8) !std.json.Parsed(mission_core.ReplayArtifact) {
-    var parsed = try std.json.parseFromSlice(mission_core.ReplayArtifact, allocator, artifact_json, .{
+    var parsed = std.json.parseFromSlice(mission_core.ReplayArtifact, allocator, artifact_json, .{
         .allocate = .alloc_always,
         .ignore_unknown_fields = false,
-    });
+    }) catch |err| switch (err) {
+        // Corrupted persisted artifacts must surface as InvalidReplayArtifact
+        // so callers can distinguish them from infrastructure failures.
+        error.OutOfMemory => return error.OutOfMemory,
+        else => return error.InvalidReplayArtifact,
+    };
     errdefer parsed.deinit();
     try validateReplayArtifact(parsed.value);
     return parsed;

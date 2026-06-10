@@ -515,7 +515,7 @@ pub fn handleProbeModels(allocator: std.mem.Allocator, target: []const u8) ![]co
 /// Body: {"base_url":"...","api_key":"..."}; api_key may be empty for local endpoints.
 pub fn handleProbeModelsBody(allocator: std.mem.Allocator, body: []const u8) ![]const u8 {
     const parsed = std.json.parseFromSlice(struct {
-        base_url: []const u8,
+        base_url: []const u8 = "",
         api_key: []const u8 = "",
     }, allocator, body, .{
         .allocate = .alloc_always,

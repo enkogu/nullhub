@@ -128,7 +128,7 @@ fn readTailLinesJson(
     var buf = std.array_list.Managed(u8).init(allocator);
     errdefer buf.deinit();
     try buildLinesJson(&buf, contents, max_lines);
-    return buf.items;
+    return buf.toOwnedSlice();
 }
 
 fn readSourceContents(
@@ -266,37 +266,29 @@ pub fn handleStream(
     defer allocator.free(lines_json);
 
     var body = std.array_list.Managed(u8).init(allocator);
-    body.appendSlice("retry: 3000\n") catch return .{
-        .status = "500 Internal Server Error",
-        .content_type = "text/event-stream",
-        .body = "event: error\ndata: {\"error\":\"stream_build_failed\"}\n\n",
-    };
-    body.appendSlice("event: connected\ndata: {}\n\n") catch return .{
-        .status = "500 Internal Server Error",
-        .content_type = "text/event-stream",
-        .body = "event: error\ndata: {\"error\":\"stream_build_failed\"}\n\n",
-    };
-    body.appendSlice("event: snapshot\ndata: ") catch return .{
-        .status = "500 Internal Server Error",
-        .content_type = "text/event-stream",
-        .body = "event: error\ndata: {\"error\":\"stream_build_failed\"}\n\n",
-    };
-    body.appendSlice(lines_json) catch return .{
-        .status = "500 Internal Server Error",
-        .content_type = "text/event-stream",
-        .body = "event: error\ndata: {\"error\":\"stream_build_failed\"}\n\n",
-    };
-    body.appendSlice("\n\nevent: end\ndata: {}\n\n") catch return .{
-        .status = "500 Internal Server Error",
-        .content_type = "text/event-stream",
-        .body = "event: error\ndata: {\"error\":\"stream_build_failed\"}\n\n",
+    const body_slice = buildStreamBody(&body, lines_json) catch {
+        body.deinit();
+        return .{
+            .status = "500 Internal Server Error",
+            .content_type = "text/event-stream",
+            .body = "event: error\ndata: {\"error\":\"stream_build_failed\"}\n\n",
+        };
     };
 
     return .{
         .status = "200 OK",
         .content_type = "text/event-stream",
-        .body = body.items,
+        .body = body_slice,
     };
+}
+
+fn buildStreamBody(body: *std.array_list.Managed(u8), lines_json: []const u8) ![]u8 {
+    try body.appendSlice("retry: 3000\n");
+    try body.appendSlice("event: connected\ndata: {}\n\n");
+    try body.appendSlice("event: snapshot\ndata: ");
+    try body.appendSlice(lines_json);
+    try body.appendSlice("\n\nevent: end\ndata: {}\n\n");
+    return body.toOwnedSlice();
 }
 
 // ─── Tests ───────────────────────────────────────────────────────────────────

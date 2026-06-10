@@ -667,27 +667,31 @@ fn injectPortFields(
     defer parsed.deinit();
     if (parsed.value != .object) return error.InvalidJson;
 
+    // The parsed value (and its ObjectMaps) is owned by the parse arena, so
+    // all mutations must allocate from that arena: growing a map through
+    // another allocator would free arena-owned memory it does not own.
+    const arena_allocator = parsed.arena.allocator();
     var root = &parsed.value.object;
     if (shouldWritePortField(root.get("port"), port, overwrite)) {
-        try root.put(allocator, "port", .{ .integer = @as(i64, port) });
+        try root.put(arena_allocator, "port", .{ .integer = @as(i64, port) });
     }
     if (shouldWritePortField(root.get("gateway_port"), port, overwrite)) {
-        try root.put(allocator, "gateway_port", .{ .integer = @as(i64, port) });
+        try root.put(arena_allocator, "gateway_port", .{ .integer = @as(i64, port) });
     }
     if (root.getPtr("gateway")) |gateway_value| {
         if (gateway_value.* == .object) {
             if (shouldWritePortField(gateway_value.object.get("port"), port, overwrite)) {
-                try gateway_value.object.put(allocator, "port", .{ .integer = @as(i64, port) });
+                try gateway_value.object.put(arena_allocator, "port", .{ .integer = @as(i64, port) });
             }
         } else if (overwrite) {
             var gateway_obj: std.json.ObjectMap = .empty;
-            try gateway_obj.put(allocator, "port", .{ .integer = @as(i64, port) });
+            try gateway_obj.put(arena_allocator, "port", .{ .integer = @as(i64, port) });
             gateway_value.* = .{ .object = gateway_obj };
         }
     } else {
         var gateway_obj: std.json.ObjectMap = .empty;
-        try gateway_obj.put(allocator, "port", .{ .integer = @as(i64, port) });
-        try root.put(allocator, "gateway", .{ .object = gateway_obj });
+        try gateway_obj.put(arena_allocator, "port", .{ .integer = @as(i64, port) });
+        try root.put(arena_allocator, "gateway", .{ .object = gateway_obj });
     }
 
     return std.json.Stringify.valueAlloc(allocator, parsed.value, .{});

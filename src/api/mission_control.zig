@@ -348,8 +348,14 @@ test "handle returns clear status codes for unknown paths and methods" {
 
 test "handle returns replay artifact" {
     var store = RuntimeStore{};
-    const reset = handleForTest(std.testing.allocator, "POST", "/api/mission-control/reset", &store);
-    defer std.testing.allocator.free(reset.body);
+    // The replay comparison (artifact_role failed/recovered) is only emitted
+    // once the mission has recovered and reached the completed phase.
+    store.runtime = .{
+        .launched = true,
+        .started_at_ms = std_compat.time.milliTimestamp() - 20_000,
+        .recovered = true,
+        .recovery_started_at_ms = std_compat.time.milliTimestamp() - 12_000,
+    };
 
     const replay_resp = handleForTest(std.testing.allocator, "GET", "/api/mission-control/replay", &store);
     defer std.testing.allocator.free(replay_resp.body);

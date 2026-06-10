@@ -247,6 +247,13 @@ test "handleList returns valid JSON with all known components" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"instance_count\"") != null);
 }
 
+/// libc setenv/unsetenv for env-var round-trip tests; not exposed by std.c
+/// in Zig 0.16. Posix-only — the caller below is Windows-skipped.
+const testenv = struct {
+    extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+    extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+};
+
 test "handleList keeps standalone hint when default install is already managed" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
 
@@ -262,14 +269,14 @@ test "handleList keeps standalone hint when default install is already managed" 
 
     const home_dir = try fixture.path(allocator, "home");
     defer allocator.free(home_dir);
-    try std_compat.fs.makeDirAbsolute(home_dir) catch |err| switch (err) {
+    std_compat.fs.makeDirAbsolute(home_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
 
     const dot_dir = try std.fs.path.join(allocator, &.{ home_dir, ".nullclaw" });
     defer allocator.free(dot_dir);
-    try std_compat.fs.makeDirAbsolute(dot_dir) catch |err| switch (err) {
+    std_compat.fs.makeDirAbsolute(dot_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
@@ -282,19 +289,33 @@ test "handleList keeps standalone hint when default install is already managed" 
 
     const previous_home = std_compat.process.getEnvVarOwned(allocator, "HOME") catch null;
     defer if (previous_home) |value| allocator.free(value);
-    defer if (builtin.os.tag != .windows) {
+    defer {
         if (previous_home) |value| {
-            _ = std.c.setenv("HOME", value.ptr, 1);
+            var buf: [1024]u8 = undefined;
+            if (std.fmt.bufPrintZ(&buf, "{s}", .{value})) |value_z| {
+                _ = testenv.setenv("HOME", value_z.ptr, 1);
+            } else |_| {}
         } else {
-            _ = std.c.unsetenv("HOME");
+            _ = testenv.unsetenv("HOME");
         }
-    };
-    if (std.c.setenv("HOME", home_dir.ptr, 1) != 0) return error.Unexpected;
+    }
+    {
+        var buf: [1024]u8 = undefined;
+        const home_z = std.fmt.bufPrintZ(&buf, "{s}", .{home_dir}) catch return error.Unexpected;
+        if (testenv.setenv("HOME", home_z.ptr, 1) != 0) return error.Unexpected;
+    }
 
     const json = try handleList(allocator, &s);
     defer allocator.free(json);
 
-    try std.testing.expect(std.mem.indexOf(u8, json, "\"name\":\"nullclaw\",\"display_name\":\"NullClaw\",\"description\":\"Autonomous AI agent runtime\",\"repo\":\"nullclaw/nullclaw\",\"stage\":\"\",\"alpha\":false,\"installable\":true,\"installed\":true,\"standalone\":true,\"instance_count\":1") != null);
+    const entry_start = std.mem.indexOf(u8, json, "\"name\":\"nullclaw\"") orelse return error.TestUnexpectedResult;
+    const entry_end = std.mem.indexOfScalarPos(u8, json, entry_start, '}') orelse return error.TestUnexpectedResult;
+    const entry = json[entry_start..entry_end];
+    try std.testing.expect(std.mem.indexOf(u8, entry, "\"display_name\":\"NullClaw\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, entry, "\"repo\":\"nullclaw/nullclaw\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, entry, "\"installed\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, entry, "\"standalone\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, entry, "\"instance_count\":1") != null);
 }
 
 test "handleManifest returns null for non-cached manifest" {

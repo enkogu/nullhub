@@ -240,7 +240,7 @@ const ParsedAutonomyConfig = struct {
 };
 
 fn parseAutonomyConfig(allocator: std.mem.Allocator, config_path: []const u8) !std.json.Parsed(ParsedAutonomyConfig) {
-    const bytes = try std.fs.readFileAbsolute(allocator, config_path, 64 * 1024);
+    const bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 64 * 1024);
     defer allocator.free(bytes);
     return try std.json.parseFromSlice(ParsedAutonomyConfig, allocator, bytes, .{
         .allocate = .alloc_always,
@@ -260,7 +260,7 @@ test "installBundledSkill writes embedded skill to workspace" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const cwd_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const cwd_path = try std_compat.fs.Dir.wrap(tmp.dir).realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
 
     const disposition = try installBundledSkill(allocator, cwd_path, "nullhub-admin");
@@ -269,7 +269,7 @@ test "installBundledSkill writes embedded skill to workspace" {
     const skill_path = try std.fs.path.join(allocator, &.{ cwd_path, "skills", "nullhub-admin", "SKILL.md" });
     defer allocator.free(skill_path);
 
-    const content = try std.fs.readFileAbsolute(allocator, skill_path, 64 * 1024);
+    const content = try std_compat.fs.readFileAbsolute(allocator, skill_path, 64 * 1024);
     defer allocator.free(content);
     try std.testing.expect(std.mem.indexOf(u8, content, "nullhub routes --json") != null);
 }
@@ -279,7 +279,7 @@ test "syncBundledSkillRuntime preserves supervised level and adds nullhub comman
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const cwd_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const cwd_path = try std_compat.fs.Dir.wrap(tmp.dir).realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
 
     const config_path = try std.fs.path.join(allocator, &.{ cwd_path, "config.json" });
@@ -305,7 +305,7 @@ test "syncBundledSkillRuntime preserves full level without narrowing access" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const cwd_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const cwd_path = try std_compat.fs.Dir.wrap(tmp.dir).realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
 
     const config_path = try std.fs.path.join(allocator, &.{ cwd_path, "config.json" });
@@ -329,7 +329,7 @@ test "installAlwaysBundledSkills installs skill and syncs runtime access" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const cwd_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const cwd_path = try std_compat.fs.Dir.wrap(tmp.dir).realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
 
     const workspace_dir = try std.fs.path.join(allocator, &.{ cwd_path, "workspace" });
@@ -346,11 +346,11 @@ test "installAlwaysBundledSkills installs skill and syncs runtime access" {
 
     const skill_path = try std.fs.path.join(allocator, &.{ workspace_dir, "skills", "nullhub-admin", "SKILL.md" });
     defer allocator.free(skill_path);
-    const skill_content = try std.fs.readFileAbsolute(allocator, skill_path, 64 * 1024);
+    const skill_content = try std_compat.fs.readFileAbsolute(allocator, skill_path, 64 * 1024);
     defer allocator.free(skill_content);
     try std.testing.expect(std.mem.indexOf(u8, skill_content, "nullhub api <METHOD> <PATH>") != null);
 
-    const rendered = try std.fs.readFileAbsolute(allocator, config_path, 64 * 1024);
+    const rendered = try std_compat.fs.readFileAbsolute(allocator, config_path, 64 * 1024);
     defer allocator.free(rendered);
     try std.testing.expect(std.mem.indexOf(u8, rendered, "\"nullhub *\"") != null);
 }
@@ -360,7 +360,7 @@ test "syncBundledSkillRuntime creates autonomy block when missing" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
-    const cwd_path = try tmp.dir.realpathAlloc(allocator, ".");
+    const cwd_path = try std_compat.fs.Dir.wrap(tmp.dir).realpathAlloc(allocator, ".");
     defer allocator.free(cwd_path);
 
     const config_path = try std.fs.path.join(allocator, &.{ cwd_path, "config.json" });

@@ -734,6 +734,7 @@ fn findOrFetchComponentBinaryForVersion(
 }
 
 fn fetchLatestComponentBinary(allocator: std.mem.Allocator, component: []const u8, paths: paths_mod.Paths) ?[]const u8 {
+    if (builtin.is_test) return null;
     const known = registry.findKnownComponent(component) orelse return null;
     var release = registry.fetchLatestRelease(allocator, known.repo) catch return null;
     defer release.deinit();
@@ -1415,7 +1416,7 @@ test "handleGetWizard returns null for unknown component" {
     try std.testing.expect(result == null);
 }
 
-test "handleGetWizard returns null when no binary found" {
+test "handleGetWizard returns error payload when no binary found" {
     const allocator = std.testing.allocator;
     var fixture = try test_helpers.TempPaths.init(allocator);
     defer fixture.deinit();
@@ -1424,8 +1425,11 @@ test "handleGetWizard returns null when no binary found" {
     var state = state_mod.State.init(allocator, state_path);
     defer state.deinit();
     // nullclaw is a known component but there's no binary in test dirs
+    // (binary discovery and release fetches are disabled under is_test).
     const result = handleGetWizard(allocator, "nullclaw", "/api/wizard/nullclaw", fixture.paths, &state);
-    try std.testing.expect(result == null);
+    defer if (result) |json| allocator.free(json);
+    try std.testing.expect(result != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.?, "no compatible version found") != null);
 }
 
 test "augmentWizardManifest adds complete nullboiler tracker setup" {
@@ -1442,7 +1446,7 @@ test "augmentWizardManifest adds complete nullboiler tracker setup" {
 
     const inst_dir = try fixture.paths.instanceDir(allocator, "nulltickets", "tracker-a");
     defer allocator.free(inst_dir);
-    try std.fs.makePathAbsolute(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
     const config_path = try fixture.paths.instanceConfig(allocator, "nulltickets", "tracker-a");
     defer allocator.free(config_path);
     {
@@ -1498,7 +1502,7 @@ test "augmentWizardManifest inserts nullboiler tracker selector before tracker s
 
     const inst_dir = try fixture.paths.instanceDir(allocator, "nulltickets", "tracker-a");
     defer allocator.free(inst_dir);
-    try std.fs.makePathAbsolute(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
     const config_path = try fixture.paths.instanceConfig(allocator, "nulltickets", "tracker-a");
     defer allocator.free(config_path);
     {
@@ -1563,7 +1567,7 @@ test "augmentWizardManifest picks next port for additional nulltickets instance"
 
     const inst_dir = try fixture.paths.instanceDir(allocator, "nulltickets", "tracker-a");
     defer allocator.free(inst_dir);
-    try std.fs.makePathAbsolute(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
     const config_path = try fixture.paths.instanceConfig(allocator, "nulltickets", "tracker-a");
     defer allocator.free(config_path);
     {
@@ -1618,7 +1622,7 @@ test "augmentWizardManifest picks next port for additional nullboiler instance" 
 
     const inst_dir = try fixture.paths.instanceDir(allocator, "nullboiler", "worker-a");
     defer allocator.free(inst_dir);
-    try std.fs.makePathAbsolute(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
     const config_path = try fixture.paths.instanceConfig(allocator, "nullboiler", "worker-a");
     defer allocator.free(config_path);
     {
@@ -1673,7 +1677,7 @@ test "augmentWizardManifest picks next port for additional nullwatch instance" {
 
     const inst_dir = try fixture.paths.instanceDir(allocator, "nullwatch", "watch-a");
     defer allocator.free(inst_dir);
-    try std.fs.makePathAbsolute(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
     const config_path = try fixture.paths.instanceConfig(allocator, "nullwatch", "watch-a");
     defer allocator.free(config_path);
     {
@@ -1722,7 +1726,7 @@ test "prepareWizardBody injects tracker settings for nullboiler" {
 
     const inst_dir = fixture.paths.instanceDir(allocator, "nulltickets", "tracker-a") catch @panic("instanceDir");
     defer allocator.free(inst_dir);
-    std.fs.makePathAbsolute(inst_dir) catch @panic("makePathAbsolute");
+    std_compat.fs.makePathAbsolute(inst_dir) catch @panic("makePathAbsolute");
 
     const config_path = fixture.paths.instanceConfig(allocator, "nulltickets", "tracker-a") catch @panic("instanceConfig");
     defer allocator.free(config_path);
@@ -1792,7 +1796,7 @@ test "prepareWizardBody defaults empty nullboiler tracker settings" {
 
     const inst_dir = fixture.paths.instanceDir(allocator, "nulltickets", "tracker-a") catch @panic("instanceDir");
     defer allocator.free(inst_dir);
-    std.fs.makePathAbsolute(inst_dir) catch @panic("makePathAbsolute");
+    std_compat.fs.makePathAbsolute(inst_dir) catch @panic("makePathAbsolute");
 
     const config_path = fixture.paths.instanceConfig(allocator, "nulltickets", "tracker-a") catch @panic("instanceConfig");
     defer allocator.free(config_path);
@@ -1830,7 +1834,7 @@ test "prepareWizardBody removes stale token when selected nulltickets has no tok
 
     const inst_dir = fixture.paths.instanceDir(allocator, "nulltickets", "tracker-a") catch @panic("instanceDir");
     defer allocator.free(inst_dir);
-    std.fs.makePathAbsolute(inst_dir) catch @panic("makePathAbsolute");
+    std_compat.fs.makePathAbsolute(inst_dir) catch @panic("makePathAbsolute");
 
     const config_path = fixture.paths.instanceConfig(allocator, "nulltickets", "tracker-a") catch @panic("instanceConfig");
     defer allocator.free(config_path);
@@ -1924,7 +1928,7 @@ test "handlePostWizard returns null for unknown component" {
     try std.testing.expect(result == null);
 }
 
-test "handlePostWizard returns error for known component without binary" {
+test "handlePostWizard surfaces orchestrator install failure as error JSON" {
     const allocator = std.testing.allocator;
     var fixture = try test_helpers.TempPaths.init(allocator);
     defer fixture.deinit();
@@ -1935,12 +1939,18 @@ test "handlePostWizard returns error for known component without binary" {
     var mgr = manager_mod.Manager.init(allocator, fixture.paths);
     defer mgr.deinit();
 
+    // Pre-create the instance directory so orchestrator.install fails
+    // deterministically (InstanceExists) before reaching any release fetch.
+    const inst_dir = try fixture.paths.instanceDir(allocator, "nullclaw", "my-agent");
+    defer allocator.free(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
+
     const body = "{\"instance_name\":\"my-agent\",\"version\":\"latest\"}";
     const json = handlePostWizard(allocator, "nullclaw", body, fixture.paths, &state, &mgr);
-    // In test environment, orchestrator.install will fail, so we get an error JSON
     try std.testing.expect(json != null);
     defer allocator.free(json.?);
     try std.testing.expect(std.mem.indexOf(u8, json.?, "\"error\":\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json.?, "already exists") != null);
 }
 
 test "isValidateProvidersPath detects validate-providers suffix" {
