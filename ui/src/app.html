@@ -14,9 +14,28 @@
     <meta name="theme-color" content="#ffffff" />
     <meta name="msapplication-TileColor" content="#ffffff" />
     <meta name="msapplication-config" content="/browserconfig.xml" />
+    <script>
+      (function () {
+        var host = window.location.hostname;
+        if (host === 'localhost') return;
+        if (host === 'nullhub.localhost' || host === 'nullhub.local' || host === '127.0.0.1') {
+          var port = window.location.port ? ':' + window.location.port : '';
+          window.location.replace(
+            window.location.protocol +
+              '//localhost' +
+              port +
+              window.location.pathname +
+              window.location.search +
+              window.location.hash
+          );
+        }
+      })();
+    </script>
     %sveltekit.head%
   </head>
-  <body data-sveltekit-prerender="false" class="theme-light effects-disabled">
+  <!-- preload-code="eager" fetches every visible link's route chunk at startup,
+       so sidebar navigation never waits on the network (or a busy backend). -->
+  <body data-sveltekit-prerender="false" data-sveltekit-preload-code="eager" class="theme-light effects-disabled">
     <script>
       try {
         var theme = localStorage.getItem('nullhub-theme');

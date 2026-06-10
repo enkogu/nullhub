@@ -2,4 +2,4 @@
   import LoopsWorkspace from "$lib/components/loops/LoopsWorkspace.svelte";
 </script>
 
-<LoopsWorkspace />
+<LoopsWorkspace initialTab="gallery" />

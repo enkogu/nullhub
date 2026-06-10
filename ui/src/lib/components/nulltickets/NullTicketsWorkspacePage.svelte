@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
+  import { pollWhileVisible } from "$lib/poll";
   import {
     getSelectedTicketsInstance,
     setSelectedTicketsInstance,
@@ -31,7 +32,7 @@
   let error = $state<string | null>(null);
   let loading = $state(true);
   let selectedInstance = $state("");
-  let interval: ReturnType<typeof setInterval> | null = null;
+  let stopPolling: (() => void) | null = null;
   let statusLoading = false;
 
   const panelViews = $derived(
@@ -84,11 +85,11 @@
   onMount(() => {
     selectedInstance = getSelectedTicketsInstance();
     void refreshStatus(true);
-    interval = setInterval(() => void refreshStatus(false), 5000);
+    stopPolling = pollWhileVisible(() => refreshStatus(false), 5000);
   });
 
   onDestroy(() => {
-    if (interval) clearInterval(interval);
+    stopPolling?.();
   });
 </script>
 

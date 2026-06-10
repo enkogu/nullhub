@@ -2,6 +2,7 @@
   import { page } from "$app/stores";
   import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
+  import { pollWhileVisible } from "$lib/poll";
   import { nullboilerUiRoutes } from "$lib/nullboiler/routes";
   import { nullticketsUiRoutes } from "$lib/nulltickets/routes";
   import { canStartInstanceStatus, canStopInstanceStatus } from "$lib/nullstack/instanceStatus";
@@ -23,7 +24,7 @@
   let status = $state<any>(null);
   let error = $state<string | null>(null);
   let loading = $state(true);
-  let interval: ReturnType<typeof setInterval>;
+  let stopPolling: (() => void) | null = null;
 
   let componentInstances = $derived((status?.instances?.[component] || {}) as Record<string, any>);
   let instanceEntries = $derived(
@@ -133,10 +134,10 @@
 
   onMount(() => {
     void refresh();
-    interval = setInterval(refresh, 5000);
+    stopPolling = pollWhileVisible(refresh, 5000);
   });
 
-  onDestroy(() => clearInterval(interval));
+  onDestroy(() => stopPolling?.());
 </script>
 
 <div class="component-page">

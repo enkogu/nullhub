@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
+  import { pollWhileVisible } from '$lib/poll';
   import { nullBoilerApi } from '$lib/api/client';
   import { nullboilerUiRoutes } from '$lib/nullboiler/routes';
   import GraphViewer from '$lib/components/nullboiler/GraphViewer.svelte';
@@ -25,7 +26,7 @@
   let nodeStatus = $state<Record<string, string>>({});
   let previousState = $state<any>(null);
   let runStream: RunStreamHandle | null = null;
-  let pollInterval: ReturnType<typeof setInterval>;
+  let stopPolling: (() => void) | null = null;
 
   async function loadRun() {
     try {
@@ -85,11 +86,11 @@
   onMount(() => {
     void loadRun();
     connectStream();
-    pollInterval = setInterval(loadRun, 3000);
+    stopPolling = pollWhileVisible(loadRun, 3000);
   });
 
   onDestroy(() => {
-    clearInterval(pollInterval);
+    stopPolling?.();
     runStream?.close();
   });
 

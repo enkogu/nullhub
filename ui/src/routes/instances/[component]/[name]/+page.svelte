@@ -2,9 +2,10 @@
   import { page } from "$app/stores";
   import { goto } from "$app/navigation";
   import { onMount } from "svelte";
+  import { pollWhileVisible } from "$lib/poll";
   import LogViewer from "$lib/components/LogViewer.svelte";
   import ConfigEditor from "$lib/components/ConfigEditor.svelte";
-  import ChatPanel from "$lib/components/ChatPanel.svelte";
+  import NullClawChatSurface from "$lib/components/NullClawChatSurface.svelte";
   import InstanceHistoryPanel from "$lib/components/InstanceHistoryPanel.svelte";
   import InstanceHooksPanel from "$lib/components/InstanceHooksPanel.svelte";
   import InstanceMemoryPanel from "$lib/components/InstanceMemoryPanel.svelte";
@@ -45,7 +46,6 @@
   let name = $derived($page.params.name);
   let instance = $state<any>(null);
   let config = $state<any>(null);
-  let uiModules = $state<Record<string, string>>({});
   let activeTab = $state("overview");
   let bootstrapChatAutoOpenedFor = $state("");
   let bootstrapNoticeHidden = $state(false);
@@ -94,7 +94,6 @@
 
   let modelName = $derived(extractModel(config));
   let webPort = $derived(extractWebPort(config));
-  let webAuthToken = $derived(extractWebAuthToken(config));
   let providerStatus = $derived(extractProviderStatus(config));
   let providerHealthCurrent = $derived(
     providerHealth &&
@@ -121,14 +120,8 @@
       providerHealthLoading,
     ),
   );
-  let chatModuleName = $derived(
-    uiModules["nullclaw-chat-ui"] ? "nullclaw-chat-ui" : "",
-  );
-  let chatModuleVersion = $derived(uiModules["nullclaw-chat-ui"] || "");
   let chatReady = $derived(
     instance?.status === "running" &&
-      chatModuleName !== "" &&
-      webPort != null &&
       providerStatus.configured,
   );
   let onboardingPending = $derived(
@@ -342,18 +335,6 @@
       /* ignore */
     }
     return null;
-  }
-
-  function extractWebAuthToken(cfg: any): string {
-    if (!cfg) return "";
-    try {
-      const account = cfg.channels?.web?.accounts?.default || {};
-      if (typeof account.auth_token === "string") return account.auth_token;
-      const inlineToken = cfg.channels?.web?.auth_token;
-      return typeof inlineToken === "string" ? inlineToken : "";
-    } catch {
-      return "";
-    }
   }
 
   function formatUptime(seconds: number | undefined): string {
@@ -872,16 +853,12 @@
     const req = ++refreshRequestSeq;
     const prevStatus = instance?.status;
     try {
-      const [status, uiModuleResult] = await Promise.all([
-        api.getStatus().catch(() => null),
-        api.getUiModules().catch(() => null),
-      ]);
+      const status = await api.getStatus().catch(() => null);
       if (req !== refreshRequestSeq) return;
       const instances = status?.instances || {};
       if (instances[component] && instances[component][name]) {
         instance = instances[component][name];
       }
-      if (uiModuleResult) uiModules = uiModuleResult.modules || {};
 
       // Re-fetch provider health when the instance just became running (stale probe from boot)
       const justBecameRunning = instance?.status === "running" && prevStatus !== "running";
@@ -1032,9 +1009,9 @@
     applyHashTab();
     window.addEventListener("hashchange", applyHashTab);
 
-    const interval = setInterval(refresh, 5000);
+    const stopPolling = pollWhileVisible(refresh, 5000);
     return () => {
-      clearInterval(interval);
+      stopPolling();
       window.removeEventListener("hashchange", applyHashTab);
     };
   });
@@ -2048,9 +2025,9 @@
             </div>
           {/if}
         </div>
-      {:else if !webPort}
+      {:else if instance?.status !== "running"}
         <div class="chat-unavailable">
-          Web channel not configured for this instance.
+          Agent is not running.
         </div>
       {:else}
         <div class="chat-stack">
@@ -2081,15 +2058,13 @@
             </details>
           {/if}
           {#key instanceRouteKey}
-            <ChatPanel
-              port={webPort}
-              moduleName={chatModuleName}
-              moduleVersion={chatModuleVersion}
-              instanceKey={instanceRouteKey}
-              onboardingPending={onboardingPending}
-              starterMessage={onboardingStarterMessage}
-              onboardingMarker={onboardingMarker}
-              authToken={webAuthToken}
+            <NullClawChatSurface
+              {component}
+              {name}
+              active={activeTab === "chat"}
+              mode="page"
+              autoStartMessage={onboardingPending ? onboardingStarterMessage : ""}
+              autoStartMarker={onboardingMarker}
             />
           {/key}
         </div>

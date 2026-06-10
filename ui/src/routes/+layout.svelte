@@ -4,17 +4,22 @@
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import AppSidebar from '$lib/components/app-sidebar.svelte';
+  import GlobalAgentChatDrawer from '$lib/components/GlobalAgentChatDrawer.svelte';
   import * as Breadcrumb from '$lib/components/ui/breadcrumb/index.js';
+  import { Button } from '$lib/components/ui/button';
   import { Separator } from '$lib/components/ui/separator/index.js';
   import * as Sidebar from '$lib/components/ui/sidebar/index.js';
   import { headerToolbar } from '$lib/headerToolbar';
   import { redirectToPreferredOrigin } from '$lib/nullhubAccess';
+  import PanelRightCloseIcon from '@lucide/svelte/icons/panel-right-close';
+  import PanelRightOpenIcon from '@lucide/svelte/icons/panel-right-open';
 
   let { children } = $props();
+  let agentChatOpen = $state(false);
 
   const routeTitles: { test: (path: string) => boolean; title: string; section?: string }[] = [
     { test: (path) => path === '/', title: 'Work' },
-    { test: (path) => path === '/dashboard', title: 'Dashboard' },
+    { test: (path) => path === '/dashboard', title: 'Loops', section: 'Loops' },
     { test: (path) => path === '/mission-control', title: 'Mission Control' },
     { test: (path) => path === '/work', title: 'Board', section: 'Work' },
     { test: (path) => path.startsWith('/work/tasks'), title: 'Tasks', section: 'Work' },
@@ -23,6 +28,10 @@
     { test: (path) => path.startsWith('/work/planner'), title: 'Planner', section: 'Work' },
     { test: (path) => path.startsWith('/work/dependencies'), title: 'Dependencies', section: 'Work' },
     { test: (path) => path.startsWith('/task-flows'), title: 'Processes', section: 'Work' },
+    { test: (path) => path.startsWith('/loops/marketplace'), title: 'Marketplace', section: 'Loops' },
+    { test: (path) => path.startsWith('/loops/library'), title: 'Gallery', section: 'Loops' },
+    { test: (path) => path.startsWith('/loops/runs'), title: 'Loop Runs', section: 'Loops' },
+    { test: (path) => path.startsWith('/loops'), title: 'Loops', section: 'Loops' },
     { test: (path) => path.startsWith('/automations/workflows'), title: 'Workflows', section: 'Automations' },
     { test: (path) => path.startsWith('/automations/runs'), title: 'Runs', section: 'Automations' },
     { test: (path) => path.startsWith('/automations'), title: 'Automations', section: 'Automations' },
@@ -92,6 +101,7 @@
 
   let crumbs = $derived(routeCrumbs($page.url.pathname));
   let visibleCrumbs = $derived($headerToolbar?.crumbLabel ? [...crumbs, { label: $headerToolbar.crumbLabel }] : crumbs);
+  let isLogoutRoute = $derived($page.url.pathname === '/logout');
 
   onMount(() => {
     void redirectToPreferredOrigin(window.location);
@@ -99,82 +109,117 @@
 </script>
 
 <div class="shadcn-app">
-  <Sidebar.Provider class="app-shell">
-    <AppSidebar />
-    <Sidebar.Inset>
-      <header
-        class="app-header flex h-16 shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
-      >
-        <div class="header-content">
-          <div class="header-breadcrumb">
-            <Sidebar.Trigger class="-ms-1" />
-            <Separator orientation="vertical" class="me-2 data-[orientation=vertical]:h-4" />
-            <Breadcrumb.Root>
-              <Breadcrumb.List>
-                {#each visibleCrumbs as crumb, index (index)}
-                  <Breadcrumb.Item class={index === 0 && visibleCrumbs.length > 1 ? 'hidden md:block' : ''}>
-                    {#if crumb.href && index < visibleCrumbs.length - 1}
-                      <Breadcrumb.Link href={crumb.href}>{crumb.label}</Breadcrumb.Link>
-                    {:else}
-                      <Breadcrumb.Page>{crumb.label}</Breadcrumb.Page>
+  {#if isLogoutRoute}
+    <main class="auth-blank" aria-label="Signing out">
+      {@render children()}
+    </main>
+  {:else}
+    <Sidebar.Provider class="app-shell">
+      <AppSidebar />
+      <Sidebar.Inset>
+        <header
+          class="app-header flex h-16 shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
+        >
+          <div class="header-content">
+            <div class="header-breadcrumb">
+              <Sidebar.Trigger class="-ms-1" />
+              <Separator orientation="vertical" class="me-2 data-[orientation=vertical]:h-4" />
+              <Breadcrumb.Root>
+                <Breadcrumb.List>
+                  {#each visibleCrumbs as crumb, index (index)}
+                    <Breadcrumb.Item class={index === 0 && visibleCrumbs.length > 1 ? 'hidden md:block' : ''}>
+                      {#if crumb.href && index < visibleCrumbs.length - 1}
+                        <Breadcrumb.Link href={crumb.href}>{crumb.label}</Breadcrumb.Link>
+                      {:else}
+                        <Breadcrumb.Page>{crumb.label}</Breadcrumb.Page>
+                      {/if}
+                    </Breadcrumb.Item>
+                    {#if index < visibleCrumbs.length - 1}
+                      <Breadcrumb.Separator class={index === 0 ? 'hidden md:block' : ''} />
                     {/if}
-                  </Breadcrumb.Item>
-                  {#if index < visibleCrumbs.length - 1}
-                    <Breadcrumb.Separator class={index === 0 ? 'hidden md:block' : ''} />
-                  {/if}
-                {/each}
-              </Breadcrumb.List>
-            </Breadcrumb.Root>
-          </div>
-          {#if $headerToolbar}
-            <div class="route-toolbar" aria-label="Page actions">
-              {#if $headerToolbar.path}
-                <input
-                  aria-label="Document path"
-                  class:invalid={$headerToolbar.path.invalid}
-                  value={$headerToolbar.path.value}
-                  placeholder={$headerToolbar.path.placeholder}
-                  oninput={(event) => $headerToolbar?.path?.onInput((event.currentTarget as HTMLInputElement).value)}
-                />
-              {/if}
-              <div class="route-actions">
-                {#each $headerToolbar.actions as action (action.id)}
-                  <button
-                    type="button"
-                    class:active={action.active}
-                    class:danger={action.danger}
-                    class:primary={action.primary}
-                    disabled={action.disabled}
-                    onclick={() => action.onClick()}
-                  >
-                    {action.label}
-                  </button>
-                {/each}
-              </div>
-              {#if $headerToolbar.status}
-                <span class:dirty={$headerToolbar.status.tone === 'dirty'} class:saving={$headerToolbar.status.tone === 'saving'} class:error={$headerToolbar.status.tone === 'error'} class="route-status">
-                  {$headerToolbar.status.label}
-                </span>
-              {/if}
+                  {/each}
+                </Breadcrumb.List>
+              </Breadcrumb.Root>
             </div>
-          {/if}
-        </div>
-      </header>
-      <main class="real-content">
-        {@render children()}
-      </main>
-    </Sidebar.Inset>
-  </Sidebar.Provider>
+            {#if $headerToolbar}
+              <div class="route-toolbar" aria-label="Page actions">
+                {#if $headerToolbar.path}
+                  <input
+                    aria-label="Document path"
+                    class:invalid={$headerToolbar.path.invalid}
+                    value={$headerToolbar.path.value}
+                    placeholder={$headerToolbar.path.placeholder}
+                    oninput={(event) => $headerToolbar?.path?.onInput((event.currentTarget as HTMLInputElement).value)}
+                  />
+                {/if}
+                <div class="route-actions">
+                  {#each $headerToolbar.actions as action (action.id)}
+                    <button
+                      type="button"
+                      class:active={action.active}
+                      class:danger={action.danger}
+                      class:primary={action.primary}
+                      disabled={action.disabled}
+                      onclick={() => action.onClick()}
+                    >
+                      {action.label}
+                    </button>
+                  {/each}
+                </div>
+                {#if $headerToolbar.status}
+                  <span class:dirty={$headerToolbar.status.tone === 'dirty'} class:saving={$headerToolbar.status.tone === 'saving'} class:error={$headerToolbar.status.tone === 'error'} class="route-status">
+                    {$headerToolbar.status.label}
+                  </span>
+                {/if}
+              </div>
+            {/if}
+            <div class="header-actions">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
+                class="agent-chat-header-toggle"
+                onclick={() => (agentChatOpen = !agentChatOpen)}
+                aria-label={agentChatOpen ? 'Collapse agent chat' : 'Open agent chat'}
+                aria-pressed={agentChatOpen}
+                title={agentChatOpen ? 'Collapse agent chat' : 'Open agent chat'}
+              >
+                {#if agentChatOpen}
+                  <PanelRightCloseIcon />
+                {:else}
+                  <PanelRightOpenIcon />
+                {/if}
+              </Button>
+            </div>
+          </div>
+        </header>
+        <main class="real-content">
+          {@render children()}
+        </main>
+      </Sidebar.Inset>
+    </Sidebar.Provider>
+    <GlobalAgentChatDrawer bind:open={agentChatOpen} />
+  {/if}
 </div>
 
 <style>
   .shadcn-app {
     height: 100dvh;
     overflow: hidden;
-    padding: 0;
+    padding: 0 var(--agent-chat-layout-offset, 0px) 0 0;
     background: var(--shadcn-background);
     color: var(--shadcn-foreground);
     font-family: var(--shadcn-font-sans);
+    transition: padding-right 220ms cubic-bezier(0.2, 0, 0, 1);
+  }
+
+  :global(html.agent-chat-open) .shadcn-app {
+    --agent-chat-layout-offset: var(--agent-chat-rail-width);
+  }
+
+  .auth-blank {
+    min-height: 100dvh;
+    background: var(--shadcn-background);
   }
 
   .real-content {
@@ -250,6 +295,18 @@
     gap: 0.5rem;
     flex: 1;
     min-width: 0;
+  }
+
+  .header-actions {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex: 0 0 auto;
+    margin-left: auto;
+  }
+
+  :global(.agent-chat-header-toggle svg) {
+    stroke-width: 1.85;
   }
 
   .route-toolbar input {
@@ -356,9 +413,13 @@
     text-transform: none !important;
   }
 
-  @media (max-width: 768px) {
+  @media (max-width: 900px) {
+    :global(html.agent-chat-open) .shadcn-app {
+      --agent-chat-layout-offset: 0px;
+    }
+
     .shadcn-app {
-      padding: 0;
+      padding-right: 0;
     }
 
     .app-header {

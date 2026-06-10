@@ -2,10 +2,11 @@
   import { onMount } from "svelte";
   import { browser } from "$app/environment";
   import { api } from "$lib/api/client";
+  import { readLocalSessionUser } from "$lib/sessionState";
 
   let hubOk = $state(true);
-  let userEmail = $state("Signed in");
-  let userInitial = $state("U");
+  let userEmail = $state("Local session");
+  let userInitial = $state("N");
   let accountMenuOpen = $state(false);
   let statusPollDelay = 750;
 
@@ -13,16 +14,12 @@
     if (!browser) return;
 
     try {
-      const stored = JSON.parse(localStorage.getItem("pocketbase_auth") || "{}");
-      const user = stored.record || stored.model || {};
-      const email = typeof user.email === "string" ? user.email.trim() : "";
-      const name = typeof user.name === "string" ? user.name.trim() : "";
-      const label = email || name || "Signed in";
-      userEmail = label;
-      userInitial = (email || name || "U").trim().charAt(0).toUpperCase();
+      const user = readLocalSessionUser();
+      userEmail = user.name;
+      userInitial = user.initial;
     } catch {
-      userEmail = "Signed in";
-      userInitial = "U";
+      userEmail = "Local session";
+      userInitial = "N";
     }
   }
 
@@ -92,7 +89,7 @@
             <span class="avatar large" aria-hidden="true">{userInitial}</span>
             <span>{userEmail}</span>
           </div>
-          <a class="sign-out" href="/logout" role="menuitem" data-sveltekit-reload>Sign out</a>
+          <a class="sign-out" href="/logout" data-sveltekit-reload role="menuitem">Sign out</a>
         </div>
       {/if}
     </div>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { nullBoilerApi } from '$lib/api/client';
+  import { pollWhileVisible } from '$lib/poll';
   import { nullboilerUiRoutes } from '$lib/nullboiler/routes';
   import BoilerInstanceSelector from '$lib/components/nullboiler/BoilerInstanceSelector.svelte';
   import { Button } from '$lib/components/ui/button';
@@ -94,12 +95,12 @@
     }
   }
 
-  let interval: ReturnType<typeof setInterval>;
+  let stopPolling: (() => void) | null = null;
   onMount(() => {
     void loadRuns();
-    interval = setInterval(loadRuns, 5000);
+    stopPolling = pollWhileVisible(loadRuns, 5000);
   });
-  onDestroy(() => clearInterval(interval));
+  onDestroy(() => stopPolling?.());
 
   function formatDuration(run: any): string {
     if (!run.created_at) return '-';

@@ -1,11 +1,12 @@
 const PUBLIC_ALIAS_HOST = "nullhub.local";
-const CANONICAL_LOCAL_HOST = "nullhub.localhost";
+const CANONICAL_LOCAL_HOST = "localhost";
+const LEGACY_LOCAL_ALIAS_HOST = "nullhub.localhost";
 const FALLBACK_LOCAL_HOST = "127.0.0.1";
 const LOOPBACK_HOSTS = new Set([
   PUBLIC_ALIAS_HOST,
   CANONICAL_LOCAL_HOST,
+  LEGACY_LOCAL_ALIAS_HOST,
   FALLBACK_LOCAL_HOST,
-  "localhost",
 ]);
 
 export function buildNullHubAccessUrls(port: string | number, protocol = "http:") {
@@ -17,20 +18,22 @@ export function buildNullHubAccessUrls(port: string | number, protocol = "http:"
     canonicalUrl: `${prefix}${CANONICAL_LOCAL_HOST}:${portValue}`,
     fallbackUrl: `${prefix}${FALLBACK_LOCAL_HOST}:${portValue}`,
     browserOpenUrl: `${prefix}${CANONICAL_LOCAL_HOST}:${portValue}`,
-    directUrl: `${prefix}${FALLBACK_LOCAL_HOST}:${portValue}`,
+    directUrl: `${prefix}${CANONICAL_LOCAL_HOST}:${portValue}`,
   };
 }
 
 export async function redirectToPreferredOrigin(location: Location): Promise<void> {
   if (!LOOPBACK_HOSTS.has(location.hostname)) return;
 
-  // If already on the direct fallback (127.0.0.1), no redirect needed.
-  // Skips the nullhub.localhost DNS probe which hangs on Windows before
-  // timing out, causing a blank screen until DevTools is opened.
-  if (location.hostname === FALLBACK_LOCAL_HOST) return;
-
   const urls = buildNullHubAccessUrls(resolvePort(location), location.protocol);
   const currentOrigin = location.origin;
+  if (currentOrigin === urls.browserOpenUrl) return;
+
+  if (location.hostname !== CANONICAL_LOCAL_HOST) {
+    location.replace(`${urls.browserOpenUrl}${location.pathname}${location.search}${location.hash}`);
+    return;
+  }
+
   const candidates = [urls.browserOpenUrl, urls.fallbackUrl];
 
   for (const candidate of candidates) {

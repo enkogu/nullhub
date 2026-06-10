@@ -2,6 +2,7 @@
   import { page } from '$app/stores';
   import { onDestroy, onMount } from 'svelte';
   import { api, nullWatchApi } from '$lib/api/client';
+  import { pollWhileVisible } from '$lib/poll';
   import {
     UniversalEntityView,
     createViewSet,
@@ -23,7 +24,7 @@
   let loading = $state(true);
   let loadingRun = $state(false);
   let error = $state<string | null>(null);
-  let pollInterval: ReturnType<typeof setInterval> | null = null;
+  let stopPolling: (() => void) | null = null;
   let overviewTimer: ReturnType<typeof setTimeout> | null = null;
 
   type WatchOption = {
@@ -195,12 +196,12 @@
 
   onMount(() => {
     overviewTimer = setTimeout(() => void loadOverview(), 350);
-    pollInterval = setInterval(loadOverview, 5000);
+    stopPolling = pollWhileVisible(loadOverview, 5000);
   });
 
   onDestroy(() => {
     if (overviewTimer) clearTimeout(overviewTimer);
-    if (pollInterval) clearInterval(pollInterval);
+    stopPolling?.();
   });
 
   function formatDuration(ms: number | undefined | null): string {

@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { api } from "$lib/api/client";
   import type { LogSource } from "$lib/api/client";
+  import { pollWhileVisible } from "$lib/poll";
   import { Button } from "$lib/components/ui/button";
   import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
   import Trash2Icon from "@lucide/svelte/icons/trash-2";
@@ -32,8 +33,7 @@
 
   onMount(() => {
     void fetchLogs();
-    const interval = setInterval(fetchLogs, 3000);
-    return () => clearInterval(interval);
+    return pollWhileVisible(fetchLogs, 3000);
   });
 
   $effect(() => {

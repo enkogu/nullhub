@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
+  import { pollWhileVisible } from "$lib/poll";
   import { canStartInstanceStatus, canStopInstanceStatus } from "$lib/nullstack/instanceStatus";
   import { instanceRoute } from "$lib/nullstack/path";
   import {
@@ -14,7 +15,7 @@
   let status = $state<any>(null);
   let error = $state<string | null>(null);
   let loading = $state(true);
-  let interval: ReturnType<typeof setInterval>;
+  let stopPolling: (() => void) | null = null;
 
   const instanceColumns: EntityColumn[] = [
     { id: "component", label: "Component", type: "select", width: "minmax(130px,.45fr)" },
@@ -90,10 +91,10 @@
 
   onMount(() => {
     void refresh();
-    interval = setInterval(refresh, 5000);
+    stopPolling = pollWhileVisible(refresh, 5000);
   });
 
-  onDestroy(() => clearInterval(interval));
+  onDestroy(() => stopPolling?.());
 </script>
 
 <div class="dashboard">

@@ -9,6 +9,7 @@
 	import LogOutIcon from "@lucide/svelte/icons/log-out";
 	import PackagePlusIcon from "@lucide/svelte/icons/package-plus";
 	import RadioIcon from "@lucide/svelte/icons/radio";
+	import RepeatIcon from "@lucide/svelte/icons/repeat";
 	import Settings2Icon from "@lucide/svelte/icons/settings-2";
 	import WorkflowIcon from "@lucide/svelte/icons/workflow";
 </script>
@@ -19,6 +20,8 @@
 	import { onMount } from "svelte";
 	import * as Sidebar from "$lib/components/ui/sidebar/index.js";
 	import { api } from "$lib/api/client";
+	import { pollWhileVisible } from "$lib/poll";
+	import { readLocalSessionUser } from "$lib/sessionState";
 	import type { ComponentProps } from "svelte";
 
 	type NavItem = {
@@ -45,9 +48,15 @@
 			items: [
 				{ title: "Board", url: "/work", icon: LayoutDashboardIcon, match: "exact" },
 				{ title: "Tasks", url: "/work/tasks", icon: ListChecksIcon, match: "prefix" },
-				{ title: "Processes", url: "/work/processes", icon: WorkflowIcon, match: "prefix" },
 				{ title: "Planner", url: "/work/planner", icon: WorkflowIcon, match: "prefix" },
 				{ title: "Dependencies", url: "/work/dependencies", icon: BoxesIcon, match: "prefix" },
+			],
+		},
+		{
+			label: "Loops",
+			items: [
+				{ title: "Loops", url: "/loops", icon: RepeatIcon, match: "exact" },
+				{ title: "Loop Runs", url: "/loops/runs", icon: ListChecksIcon, match: "prefix" },
 			],
 		},
 		{
@@ -117,7 +126,7 @@
 	let statusLoading = false;
 	let user = $state<UserInfo>({
 		name: "NullHub",
-		email: "Signed in",
+		email: "Local session",
 		initial: "N",
 	});
 	let currentPath = $derived($page.url.pathname);
@@ -133,18 +142,9 @@
 		if (!browser) return;
 
 		try {
-			const stored = JSON.parse(localStorage.getItem("pocketbase_auth") || "{}");
-			const record = stored.record || stored.model || {};
-			const email = typeof record.email === "string" ? record.email.trim() : "";
-			const name = typeof record.name === "string" ? record.name.trim() : "";
-			const label = name || email || "Signed in";
-			user = {
-				name: label,
-				email: email || "Local session",
-				initial: (name || email || "N").charAt(0).toUpperCase(),
-			};
+			user = readLocalSessionUser();
 		} catch {
-			user = { name: "NullHub", email: "Signed in", initial: "N" };
+			user = { name: "Local session", email: "Workspace access", initial: "N" };
 		}
 	}
 
@@ -165,10 +165,10 @@
 	onMount(() => {
 		readCurrentUser();
 		const statusTimer = setTimeout(() => void loadStatus(), 500);
-		const interval = setInterval(loadStatus, 5000);
+		const stopPolling = pollWhileVisible(loadStatus, 5000);
 		return () => {
 			clearTimeout(statusTimer);
-			clearInterval(interval);
+			stopPolling();
 		};
 	});
 </script>
@@ -251,7 +251,7 @@
 			<Sidebar.MenuItem>
 				<Sidebar.MenuButton tooltipContent="Sign out">
 					{#snippet child({ props })}
-						<a href="/logout" {...props} data-sveltekit-reload>
+						<a href="/logout" data-sveltekit-reload {...props}>
 							<LogOutIcon />
 							<span>Sign out</span>
 						</a>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
+  import { pollWhileVisible } from "$lib/poll";
   import {
     UniversalEntityView,
     createViewSet,
@@ -12,7 +13,7 @@
   let status = $state<any>(null);
   let error = $state<string | null>(null);
   let loading = $state(false);
-  let interval: ReturnType<typeof setInterval>;
+  let stopPolling: (() => void) | null = null;
 
   const agentColumns: EntityColumn[] = [
     { id: "status", label: "Status", type: "status", width: "minmax(120px,.42fr)" },
@@ -86,10 +87,10 @@
 
   onMount(() => {
     void refresh();
-    interval = setInterval(refresh, 5000);
+    stopPolling = pollWhileVisible(refresh, 5000);
   });
 
-  onDestroy(() => clearInterval(interval));
+  onDestroy(() => stopPolling?.());
 </script>
 
 <div class="page">

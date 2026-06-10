@@ -2,13 +2,14 @@
   import { onMount, onDestroy } from "svelte";
   import InstanceCard from "$lib/components/InstanceCard.svelte";
   import { api } from "$lib/api/client";
+  import { pollWhileVisible } from "$lib/poll";
   import { PageHeader } from "$lib/components/ui/page-header";
   import { Card } from "$lib/components/ui/card";
   import { Button } from "$lib/components/ui/button";
 
   let status = $state<any>(null);
   let error = $state<string | null>(null);
-  let interval: ReturnType<typeof setInterval>;
+  let stopPolling: (() => void) | null = null;
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function refresh() {
@@ -22,12 +23,12 @@
 
   onMount(() => {
     refreshTimer = setTimeout(() => void refresh(), 350);
-    interval = setInterval(refresh, 5000);
+    stopPolling = pollWhileVisible(refresh, 5000);
   });
 
   onDestroy(() => {
     if (refreshTimer) clearTimeout(refreshTimer);
-    clearInterval(interval);
+    stopPolling?.();
   });
 </script>
 

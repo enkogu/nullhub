@@ -35,12 +35,71 @@ function invalidateGetCaches() {
   recentGets.clear();
 }
 
+// Circuit breaker: when the backend is down, polling pages would otherwise
+// stack up slow timed-out requests and exhaust the browser's per-origin
+// connection pool, freezing navigation. After a few consecutive transport
+// failures, GETs fail fast for a cooldown window instead.
+const BREAKER_THRESHOLD = 3;
+const BREAKER_COOLDOWN_MS = 5_000;
+const BREAKER_MAX_COOLDOWN_MS = 30_000;
+let breakerConsecutiveFailures = 0;
+let breakerOpenUntil = 0;
+let breakerCooldownMs = BREAKER_COOLDOWN_MS;
+let breakerHalfOpenProbe = false;
+
+function isTransportFailure(error: ApiRequestError): boolean {
+  const status = error.status ?? 0;
+  return status === 0 || status === 502 || status === 503 || status === 504;
+}
+
+function noteRequestSuccess() {
+  breakerConsecutiveFailures = 0;
+  breakerOpenUntil = 0;
+  breakerCooldownMs = BREAKER_COOLDOWN_MS;
+  breakerHalfOpenProbe = false;
+}
+
+function noteRequestFailure(error: ApiRequestError) {
+  breakerHalfOpenProbe = false;
+  if (!isTransportFailure(error)) return;
+  breakerConsecutiveFailures += 1;
+  if (breakerConsecutiveFailures >= BREAKER_THRESHOLD) {
+    breakerOpenUntil = performance.now() + breakerCooldownMs;
+    breakerCooldownMs = Math.min(breakerCooldownMs * 2, BREAKER_MAX_COOLDOWN_MS);
+  }
+}
+
+/// Returns true when a GET should be rejected immediately. After the cooldown
+/// elapses, exactly one caller is let through as a half-open probe; everyone
+/// else keeps failing fast until that probe settles.
+function breakerBlocksGet(): boolean {
+  if (breakerConsecutiveFailures < BREAKER_THRESHOLD) return false;
+  if (performance.now() < breakerOpenUntil) return true;
+  if (breakerHalfOpenProbe) return true;
+  breakerHalfOpenProbe = true;
+  return false;
+}
+
+function breakerError(): ApiRequestError {
+  const error = new Error('NullHub backend unreachable; retrying shortly.') as ApiRequestError;
+  error.status = 0;
+  error.body = { circuitOpen: true };
+  return error;
+}
+
 function prefersDirectApiBase(): boolean {
   if (typeof window === 'undefined') return true;
   if (import.meta.env.DEV) return true;
   const port = window.location.port;
   const host = window.location.hostname;
-  return port === '19800' || host === 'nullhub.localhost' || host === 'nullhub.local';
+  return (
+    port === '19800' ||
+    host === '127.0.0.1' ||
+    host === 'localhost' ||
+    host === '::1' ||
+    host === 'nullhub.localhost' ||
+    host === 'nullhub.local'
+  );
 }
 
 function apiBases(): string[] {
@@ -149,6 +208,28 @@ export type CronJobUpdateRequest = {
   enabled?: boolean;
   session_target?: string;
 };
+export type AgentInvokeRequest = {
+  message: string;
+  session_key?: string;
+  provider?: string;
+  model?: string;
+  temperature?: string;
+  agent?: string;
+};
+export type AgentInvokeResponse = {
+  session?: string;
+  session_key?: string;
+  response?: string;
+  turn_count?: number;
+  [key: string]: unknown;
+};
+export type AgentSessionSummary = {
+  session_key: string;
+  created_at?: string;
+  last_active?: string;
+  turn_count?: number;
+  turn_running?: boolean;
+};
 type InstanceStartOptions = {
   launch_mode?: string;
   verbose?: boolean;
@@ -177,6 +258,7 @@ type ApiRequestInit = RequestInit & {
 };
 
 const ADMIN_READ_TIMEOUT_MS = 10_000;
+const HISTORY_READ_TIMEOUT_MS = 60_000;
 const ADMIN_MUTATION_TIMEOUT_MS = 120_000;
 const ADMIN_INSTALL_TIMEOUT_MS = 600_000;
 const mojibakeResponsePattern = /[ÐÑÃÂâðŸ�]|\\u00(?:c3|c2|d0|d1|f0|f1)/i;
@@ -184,7 +266,7 @@ const mojibakeResponsePattern = /[ÐÑÃÂâðŸ�]|\\u00(?:c3|c2|d0|d1|f0|f1)/
 function requestTimeoutMs(options?: ApiRequestInit): number {
   if (options?.timeoutMs && options.timeoutMs > 0) return options.timeoutMs;
   const method = (options?.method || 'GET').toUpperCase();
-  return method === 'GET' ? 15000 : 60000;
+  return method === 'GET' ? 10000 : 60000;
 }
 
 function normalizeApiJson<T>(rawText: string, value: T): T {
@@ -261,6 +343,12 @@ async function request<T>(path: string, options?: ApiRequestInit): Promise<T> {
     if (pending) return pending as Promise<T>;
   }
 
+  // Mutations always go through (they are user-initiated and double as
+  // recovery probes); reads fail fast while the breaker is open.
+  if (method === 'GET' && breakerBlocksGet()) {
+    throw breakerError();
+  }
+
   const doRequest = async () => {
     const bases = apiBases();
     let lastError: ApiRequestError | null = null;
@@ -268,14 +356,23 @@ async function request<T>(path: string, options?: ApiRequestInit): Promise<T> {
       try {
         const result = await requestFromBase<T>(base, path, options);
         resolvedBase = base;
+        noteRequestSuccess();
         return result;
       } catch (error) {
         lastError = error as ApiRequestError;
         if (base === bases[bases.length - 1]) break;
-        if (lastError.status && lastError.status !== 404 && lastError.status !== 200) break;
+        // Only fall back to the alternate base prefix when this prefix is
+        // wrong for the deployment: 404/405 (unknown route) or HTTP 200 with
+        // a non-JSON document (another app answered). Transport failures
+        // (status 0/timeouts) mean the backend itself is down — retrying it
+        // through another prefix would just double the wait.
+        const status = lastError.status ?? 0;
+        if (status !== 404 && status !== 405 && status !== 200) break;
       }
     }
-    throw lastError || new Error('API request failed');
+    const finalError = lastError ?? (new Error('API request failed') as ApiRequestError);
+    noteRequestFailure(finalError);
+    throw finalError;
   };
 
   if (!canDedupeGet) {
@@ -408,7 +505,7 @@ export const api = {
     }),
   getConfig: (c: string, n: string) => request<any>(instanceApiPath(c, n, '/config')),
   getProviderHealth: (c: string, n: string) =>
-    request<any>(instanceApiPath(c, n, '/provider-health')),
+    request<any>(instanceApiPath(c, n, '/provider-health'), { timeoutMs: 30000 }),
   getUsage: (c: string, n: string, window: '24h' | '7d' | '30d' | 'all' = '24h') =>
     request<any>(withQuery(instanceApiPath(c, n, '/usage'), { window })),
   getHistory: (c: string, n: string, params?: { sessionId?: string; limit?: number; offset?: number }) =>
@@ -418,7 +515,30 @@ export const api = {
         limit: params?.limit,
         offset: params?.offset,
       }),
+      { timeoutMs: HISTORY_READ_TIMEOUT_MS },
     ),
+  invokeAgent: (
+    c: string,
+    n: string,
+    payload: AgentInvokeRequest,
+    options?: { signal?: AbortSignal; timeoutMs?: number },
+  ) =>
+    request<AgentInvokeResponse>(instanceApiPath(c, n, '/agent'), {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      signal: options?.signal,
+      timeoutMs: options?.timeoutMs ?? ADMIN_MUTATION_TIMEOUT_MS,
+    }),
+  getAgentSessions: (c: string, n: string, sessionId?: string) =>
+    request<{ sessions?: AgentSessionSummary[]; total?: number } | AgentSessionSummary>(
+      withQuery(instanceApiPath(c, n, '/agent-sessions'), { session_id: sessionId }),
+      { timeoutMs: ADMIN_READ_TIMEOUT_MS },
+    ),
+  deleteAgentSession: (c: string, n: string, sessionId: string) =>
+    request<any>(withQuery(instanceApiPath(c, n, '/agent-sessions'), { session_id: sessionId }), {
+      method: 'DELETE',
+      timeoutMs: ADMIN_MUTATION_TIMEOUT_MS,
+    }),
   getOnboarding: (c: string, n: string) =>
     request<any>(instanceApiPath(c, n, '/onboarding')),
   listDocs: (c: string, n: string) =>
