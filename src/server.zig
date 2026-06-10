@@ -24,6 +24,7 @@ const instance_runtime = @import("api/instance_runtime.zig");
 const wizard_api = @import("api/wizard.zig");
 const providers_api = @import("api/providers.zig");
 const channels_api = @import("api/channels.zig");
+const events_api = @import("api/events.zig");
 const spaces_api = @import("api/spaces.zig");
 const usage_api = @import("api/usage.zig");
 const report_api = @import("api/report.zig");
@@ -134,6 +135,7 @@ pub const Server = struct {
         };
 
         orchestrator.syncLocalUiModules(allocator, paths);
+        emitHubLifecycleStarted(state, std_compat.time.milliTimestamp());
 
         return .{
             .allocator = allocator,
@@ -1606,6 +1608,19 @@ pub const Server = struct {
             }
         }
 
+        // Events API — /api/events?space={id}
+        if (events_api.isEventsPath(target)) {
+            if (std.mem.eql(u8, method, "GET")) {
+                const resp = events_api.handleList(allocator, self.state, target);
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            if (std.mem.eql(u8, method, "POST")) {
+                const resp = events_api.handleCreate(allocator, self.state, target, body, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+
         // Providers API — /api/providers[/{id}[/validate]]
         if (providers_api.isProvidersPath(target)) {
             if (std.mem.eql(u8, target, "/api/providers") or std.mem.startsWith(u8, target, "/api/providers?")) {
@@ -1920,6 +1935,16 @@ pub const Server = struct {
         };
     }
 };
+
+fn emitHubLifecycleStarted(state: *state_mod.State, now_ms: i64) void {
+    events_api.appendLifecycleStarted(state, now_ms) catch |err| {
+        std.log.warn("failed to append hub lifecycle event: {s}", .{@errorName(err)});
+        return;
+    };
+    state.save() catch |err| {
+        std.log.warn("failed to persist hub lifecycle event: {s}", .{@errorName(err)});
+    };
+}
 
 fn missionWorkflowEvidenceResolver(ptr: *anyopaque, allocator: std.mem.Allocator, refs: mission_core.WorkflowEvidenceRefs) mission_core.WorkflowEvidence {
     const server: *Server = @ptrCast(@alignCast(ptr));
@@ -3109,6 +3134,74 @@ test "route POST /api/components/refresh returns 200" {
     try std.testing.expectEqualStrings("200 OK", resp.status);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"ok\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"component_count\":4") != null);
+}
+
+test "route POST and GET /api/events are space scoped and cursor paged" {
+    var ctx = TestContext.init(std.testing.allocator);
+    defer ctx.deinit(std.testing.allocator);
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/events?space=ops",
+            "{\"type\":\"work.started\",\"source\":\"test\",\"subject_type\":\"run\",\"subject_id\":\"run-1\",\"title\":\"Run started\",\"payload\":{\"ok\":true},\"created_at_ms\":1000}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":1") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"space_id\":\"ops\"") != null);
+    }
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/events?space=ops",
+            "{\"type\":\"work.finished\",\"source\":\"test\",\"subject_type\":\"run\",\"subject_id\":\"run-1\",\"title\":\"Run finished\",\"severity\":\"success\",\"created_at_ms\":1001}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":2") != null);
+    }
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/events?space=lab",
+            "{\"type\":\"work.started\",\"source\":\"test\",\"title\":\"Lab run\",\"created_at_ms\":1002}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "GET", "/api/events?space=ops&limit=1", "");
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":2") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":1") == null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"has_more\":true") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"next_cursor\":\"2\"") != null);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "GET", "/api/events?space=ops&cursor=2&type=work.started", "");
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":1") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":3") == null);
+    }
+}
+
+test "route /api/events requires query space" {
+    var ctx = TestContext.init(std.testing.allocator);
+    defer ctx.deinit(std.testing.allocator);
+
+    const resp = ctx.route(std.testing.allocator, "GET", "/api/events", "");
+    try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    try std.testing.expectEqualStrings("{\"error\":\"space query is required\"}", resp.body);
 }
 
 test "extractHeader finds Content-Length" {

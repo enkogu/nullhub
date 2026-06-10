@@ -461,6 +461,14 @@ test "integration harness serves health and core api routes" {
     }
 
     {
+        const resp = try server.fetch(.{ .path = "/api/events?space=default&type=hub.lifecycle.started" });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"hub.lifecycle.started\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"source\":\"nullhub\"") != null);
+    }
+
+    {
         const resp = try server.fetch(.{ .path = "/api/nonexistent" });
         defer resp.deinit(std.testing.allocator);
         try std.testing.expectEqual(std.http.Status.not_found, resp.status);
@@ -513,6 +521,67 @@ test "integration harness covers spaces CRUD and scoped instance list" {
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "lab-boiler") == null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "nullboiler") == null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"space_id\":\"ops\"") != null);
+    }
+}
+
+test "integration harness covers event append filters and cursor pagination" {
+    var server = try IntegrationServer.start(std.testing.allocator);
+    defer server.deinit();
+
+    {
+        const resp = try server.fetch(.{
+            .path = "/api/events?space=ops",
+            .method = .POST,
+            .body = "{\"type\":\"work.started\",\"source\":\"test\",\"subject_type\":\"run\",\"subject_id\":\"run-1\",\"title\":\"Run started\",\"payload\":{\"ok\":true},\"created_at_ms\":1000}",
+        });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.created, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"space_id\":\"ops\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"payload\":{\"ok\":true}") != null);
+    }
+
+    {
+        const resp = try server.fetch(.{
+            .path = "/api/events?space=ops",
+            .method = .POST,
+            .body = "{\"type\":\"work.finished\",\"source\":\"test\",\"subject_type\":\"run\",\"subject_id\":\"run-1\",\"title\":\"Run finished\",\"severity\":\"success\",\"created_at_ms\":1001}",
+        });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.created, resp.status);
+    }
+
+    {
+        const resp = try server.fetch(.{
+            .path = "/api/events?space=lab",
+            .method = .POST,
+            .body = "{\"type\":\"work.started\",\"source\":\"test\",\"title\":\"Lab run\",\"created_at_ms\":1002}",
+        });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.created, resp.status);
+    }
+
+    {
+        const resp = try server.fetch(.{ .path = "/api/events?space=ops&limit=1" });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"work.finished\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"work.started\"") == null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"has_more\":true") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"next_cursor\":\"3\"") != null);
+    }
+
+    {
+        const resp = try server.fetch(.{ .path = "/api/events?space=ops&cursor=3&type=work.started" });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":2") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":4") == null);
+    }
+
+    {
+        const resp = try server.fetch(.{ .path = "/api/events" });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.bad_request, resp.status);
     }
 }
 
