@@ -124,6 +124,10 @@ pub const Server = struct {
         var paths = try paths_mod.Paths.init(allocator, null);
         errdefer paths.deinit(allocator);
 
+        return try initWithPaths(allocator, host, port, paths, manager, mutex);
+    }
+
+    fn initWithPaths(allocator: std.mem.Allocator, host: []const u8, port: u16, paths: paths_mod.Paths, manager: *manager_mod.Manager, mutex: *std_compat.sync.Mutex) !Server {
         const state_path = try paths.state(allocator);
         defer allocator.free(state_path);
 
@@ -3655,12 +3659,20 @@ test "route POST update supports percent-encoded instance names" {
 }
 
 test "Server init sets fields" {
-    var paths = try paths_mod.Paths.init(std.testing.allocator, null);
-    defer paths.deinit(std.testing.allocator);
-    var mgr = manager_mod.Manager.init(std.testing.allocator, paths);
+    const allocator = std.testing.allocator;
+
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+
+    var manager_paths = try paths_mod.Paths.init(allocator, fixture.root);
+    defer manager_paths.deinit(allocator);
+    var mgr = manager_mod.Manager.init(allocator, manager_paths);
     defer mgr.deinit();
+
+    var server_paths = try paths_mod.Paths.init(allocator, fixture.root);
+    errdefer server_paths.deinit(allocator);
     var mutex: std_compat.sync.Mutex = .{};
-    var s = try Server.init(std.testing.allocator, "127.0.0.1", access.default_port, &mgr, &mutex);
+    var s = try Server.initWithPaths(allocator, "127.0.0.1", access.default_port, server_paths, &mgr, &mutex);
     defer s.deinit();
     try std.testing.expectEqualStrings("127.0.0.1", s.host);
     try std.testing.expectEqual(access.default_port, s.port);
