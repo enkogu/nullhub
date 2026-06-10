@@ -51,7 +51,7 @@
   let editorOpen = $state(false);
   let editorMode = $state<EditorMode>("create");
   let originalName = $state("");
-  let draft = $state<McpServerDraft>(createEmptyMcpDraft());
+  let draft = $state<McpServerDraft>(createEmptyMcpDraft() as McpServerDraft);
   let envText = $state("");
   let headerText = $state("");
   let argsText = $state("");
@@ -74,7 +74,7 @@
 
   function hydrateEditor(server?: McpServerSummary) {
     const next = hydrateMcpEditorState(server);
-    draft = next.draft;
+    draft = next.draft as McpServerDraft;
     argsText = next.argsText;
     envText = next.envText;
     headerText = next.headerText;

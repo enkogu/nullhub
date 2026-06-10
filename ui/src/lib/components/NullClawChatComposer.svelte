@@ -98,7 +98,7 @@
       bind:ref={textarea}
       bind:value={draft}
       class="chat-composer-textarea"
-      rows="1"
+      rows={1}
       {placeholder}
       {disabled}
       spellcheck="true"

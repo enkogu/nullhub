@@ -30,6 +30,9 @@ jobs:
       test_command: bash tests/test_backend.sh
       pre_build_command: |
         npm --prefix ui ci --no-audit --no-fund
+        npm --prefix ui run test:mcp
+        npm --prefix ui run test:mission-control
+        npm --prefix ui run check
         npm --prefix ui run build
       build_args: -Dbuild-ui=false
       # E2E runs only on the native Linux target.

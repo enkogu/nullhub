@@ -85,7 +85,7 @@
           : [{ label: 'Agents' }];
       }
       const componentLabel = decodeSegment(component);
-      const crumbs = [
+      const crumbs: { label: string; href?: string }[] = [
         { label: 'Instances', href: '/' },
         { label: componentLabel || 'Component', href: component ? `/instances/${component}` : undefined },
       ];

@@ -488,7 +488,9 @@
                 label: saving ? 'Saving' : 'Save',
                 primary: canSave,
                 disabled: !canSave,
-                onClick: saveDraft,
+                onClick: async () => {
+                  await saveDraft();
+                },
               },
             ]
           : []),

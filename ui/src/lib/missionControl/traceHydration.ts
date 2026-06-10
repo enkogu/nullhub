@@ -133,7 +133,9 @@ export async function hydrateMissionTracePanels(
   return Object.fromEntries(entries.map((entry) => [entry.runId, entry]));
 }
 
-export function isAvailableTrace(trace: TraceHydration | null | undefined): trace is TraceHydration {
+export function isAvailableTrace(
+  trace: TraceHydration | null | undefined,
+): trace is TraceHydration & { status: 'available' } {
   return trace?.status === 'available';
 }
 

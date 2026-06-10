@@ -42,8 +42,8 @@
   import BotIcon from "@lucide/svelte/icons/bot";
   import RadioIcon from "@lucide/svelte/icons/radio";
 
-  let component = $derived($page.params.component);
-  let name = $derived($page.params.name);
+  let component = $derived($page.params.component ?? "");
+  let name = $derived($page.params.name ?? "");
   let instance = $state<any>(null);
   let config = $state<any>(null);
   let activeTab = $state("overview");
@@ -1744,7 +1744,7 @@
                   </Label>
                   <Label class="integration-field wide">
                     <span>Description</span>
-                    <Textarea bind:value={ticketTaskDescription} rows="3" />
+                    <Textarea bind:value={ticketTaskDescription} rows={3} />
                   </Label>
                   <Button
                     variant="outline"

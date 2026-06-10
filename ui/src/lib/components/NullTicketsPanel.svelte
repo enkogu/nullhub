@@ -359,7 +359,14 @@
     calendar: { dateField: "created" },
   });
   const pipelineActions: EntityViewAction[] = [
-    { id: "select", label: "Select", variant: "default", run: (record) => (selectedPipelineId = pipelineRecordId(record)) },
+    {
+      id: "select",
+      label: "Select",
+      variant: "default",
+      run: (record) => {
+        selectedPipelineId = pipelineRecordId(record);
+      },
+    },
   ];
   const pipelineRecords = $derived(
     pipelines.map((pipeline) => {
@@ -393,7 +400,14 @@
     tree: { parentField: "status" },
   });
   const queueActions: EntityViewAction[] = [
-    { id: "use-role", label: "Use Role", variant: "default", run: (record) => (claimRole = String(record.fields?.role || "coder")) },
+    {
+      id: "use-role",
+      label: "Use Role",
+      variant: "default",
+      run: (record) => {
+        claimRole = String(record.fields?.role || "coder");
+      },
+    },
   ];
   const queueRecords = $derived(
     queueRoles.map((role) => {
