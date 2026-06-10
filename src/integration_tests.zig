@@ -87,6 +87,9 @@ const IntegrationServer = struct {
         defer allocator.free(exe_path);
 
         try server.env_map.?.put("HOME", home_dir);
+        const nullhub_root = try server.nullhubRoot();
+        defer allocator.free(nullhub_root);
+        try server.env_map.?.put("NULLHUB_HOME", nullhub_root);
 
         const argv = try allocator.dupe([]const u8, &.{ exe_path, "serve", "--port", port_text, "--no-open" });
         defer allocator.free(argv);
@@ -465,6 +468,36 @@ test "integration harness serves health and core api routes" {
         defer resp.deinit(std.testing.allocator);
         try std.testing.expectEqual(std.http.Status.not_found, resp.status);
     }
+}
+
+test "second nullhub serve fails fast with already-running error" {
+    var server = try IntegrationServer.start(std.testing.allocator);
+    defer server.deinit();
+
+    const exe_path = try std_compat.process.getEnvVarOwned(std.testing.allocator, "NULLHUB_INTEGRATION_BIN");
+    defer std.testing.allocator.free(exe_path);
+    const port_text = try std.fmt.allocPrint(std.testing.allocator, "{d}", .{server.port});
+    defer std.testing.allocator.free(port_text);
+
+    const result = try std_compat.process.Child.run(.{
+        .allocator = std.testing.allocator,
+        .argv = &.{ exe_path, "serve", "--port", port_text, "--no-open" },
+        .env_map = &server.env_map.?,
+        .max_output_bytes = 16 * 1024,
+    });
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    switch (result.term) {
+        .exited => |code| try std.testing.expect(code != 0),
+        else => return error.TestUnexpectedResult,
+    }
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "already running") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result.stderr, "Stop the running instance first") != null);
+
+    const resp = try server.fetch(.{ .path = "/health" });
+    defer resp.deinit(std.testing.allocator);
+    try std.testing.expectEqual(std.http.Status.ok, resp.status);
 }
 
 test "integration harness covers spaces CRUD and scoped instance list" {
