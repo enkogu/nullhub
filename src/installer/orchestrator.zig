@@ -153,6 +153,8 @@ pub fn install(
     }
 
     if (resolved_bin_path == null or resolved_version == null) {
+        if (builtin.is_test) return error.FetchFailed;
+
         const release_result = if (std.mem.eql(u8, opts.version, "latest"))
             registry.fetchLatestRelease(allocator, comp.repo)
         else
@@ -1408,7 +1410,8 @@ test "install returns FetchFailed for known component (no network)" {
         .version = "latest",
         .answers_json = "{}",
     }, fixture.paths, &s, &mgr);
-    // In test env, GitHub fetch will fail
+    // Regression: install tests must not hit GitHub. A live fetch can succeed
+    // and turn this no-network failure-path test into a flaky full install.
     try std.testing.expectError(error.FetchFailed, result);
 }
 
@@ -1599,6 +1602,29 @@ test "injectPortFields fills missing port fields" {
     });
     defer parsed.deinit();
 
+    try std.testing.expectEqual(@as(i64, 3002), parsed.value.object.get("port").?.integer);
+    try std.testing.expectEqual(@as(i64, 3002), parsed.value.object.get("gateway_port").?.integer);
+    try std.testing.expectEqual(@as(i64, 3002), parsed.value.object.get("gateway").?.object.get("port").?.integer);
+}
+
+test "injectPortFields grows parsed object maps without allocator corruption" {
+    const allocator = std.testing.allocator;
+    const rendered = try injectPortFields(
+        allocator,
+        "{\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"gateway\":{\"a\":1,\"b\":2,\"c\":3,\"d\":4}}",
+        3002,
+        false,
+    );
+    defer allocator.free(rendered);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, rendered, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    // Regression: parsed ObjectMaps are owned by parseFromSlice's internal
+    // arena; injectPortFields must not grow them with the caller allocator.
     try std.testing.expectEqual(@as(i64, 3002), parsed.value.object.get("port").?.integer);
     try std.testing.expectEqual(@as(i64, 3002), parsed.value.object.get("gateway_port").?.integer);
     try std.testing.expectEqual(@as(i64, 3002), parsed.value.object.get("gateway").?.object.get("port").?.integer);
