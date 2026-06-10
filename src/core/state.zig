@@ -34,6 +34,35 @@ pub const SpaceUpdate = struct {
     stage: ?[]const u8 = null,
 };
 
+pub const Event = struct {
+    id: u64,
+    space_id: []const u8,
+    event_type: []const u8,
+    source: []const u8,
+    subject_type: []const u8 = "",
+    subject_id: []const u8 = "",
+    title: []const u8,
+    summary: []const u8 = "",
+    severity: []const u8 = "info",
+    evidence_ref: []const u8 = "",
+    payload_json: []const u8 = "{}",
+    created_at_ms: i64,
+};
+
+pub const EventInput = struct {
+    space_id: []const u8,
+    event_type: []const u8,
+    source: []const u8 = "nullhub",
+    subject_type: []const u8 = "",
+    subject_id: []const u8 = "",
+    title: []const u8,
+    summary: []const u8 = "",
+    severity: []const u8 = "info",
+    evidence_ref: []const u8 = "",
+    payload_json: []const u8 = "{}",
+    created_at_ms: i64,
+};
+
 pub const SavedProvider = struct {
     id: u32,
     name: []const u8,
@@ -157,6 +186,7 @@ fn channelLabel(channel_type: []const u8) []const u8 {
 const JsonState = struct {
     instances: std.json.ArrayHashMap(std.json.ArrayHashMap(InstanceEntry)),
     spaces: []const Space = &.{},
+    events: []const Event = &.{},
     saved_providers: []const SavedProvider = &.{},
     saved_channels: []const SavedChannel = &.{},
 };
@@ -277,6 +307,57 @@ fn freeSpaceStrings(allocator: std.mem.Allocator, space: Space) void {
     allocator.free(space.stage);
 }
 
+fn duplicateEvent(allocator: std.mem.Allocator, event: Event) !Event {
+    const owned_space_id = try allocator.dupe(u8, event.space_id);
+    errdefer allocator.free(owned_space_id);
+    const owned_event_type = try allocator.dupe(u8, event.event_type);
+    errdefer allocator.free(owned_event_type);
+    const owned_source = try allocator.dupe(u8, event.source);
+    errdefer allocator.free(owned_source);
+    const owned_subject_type = try allocator.dupe(u8, event.subject_type);
+    errdefer allocator.free(owned_subject_type);
+    const owned_subject_id = try allocator.dupe(u8, event.subject_id);
+    errdefer allocator.free(owned_subject_id);
+    const owned_title = try allocator.dupe(u8, event.title);
+    errdefer allocator.free(owned_title);
+    const owned_summary = try allocator.dupe(u8, event.summary);
+    errdefer allocator.free(owned_summary);
+    const owned_severity = try allocator.dupe(u8, event.severity);
+    errdefer allocator.free(owned_severity);
+    const owned_evidence_ref = try allocator.dupe(u8, event.evidence_ref);
+    errdefer allocator.free(owned_evidence_ref);
+    const owned_payload_json = try allocator.dupe(u8, event.payload_json);
+    errdefer allocator.free(owned_payload_json);
+
+    return .{
+        .id = event.id,
+        .space_id = owned_space_id,
+        .event_type = owned_event_type,
+        .source = owned_source,
+        .subject_type = owned_subject_type,
+        .subject_id = owned_subject_id,
+        .title = owned_title,
+        .summary = owned_summary,
+        .severity = owned_severity,
+        .evidence_ref = owned_evidence_ref,
+        .payload_json = owned_payload_json,
+        .created_at_ms = event.created_at_ms,
+    };
+}
+
+fn freeEventStrings(allocator: std.mem.Allocator, event: Event) void {
+    allocator.free(event.space_id);
+    allocator.free(event.event_type);
+    allocator.free(event.source);
+    allocator.free(event.subject_type);
+    allocator.free(event.subject_id);
+    allocator.free(event.title);
+    allocator.free(event.summary);
+    allocator.free(event.severity);
+    allocator.free(event.evidence_ref);
+    allocator.free(event.payload_json);
+}
+
 // ─── State ───────────────────────────────────────────────────────────────────
 
 pub const State = struct {
@@ -284,6 +365,7 @@ pub const State = struct {
     /// instances[component][name] = InstanceEntry
     instances: ComponentMap,
     spaces: std.array_list.Managed(Space),
+    events: std.array_list.Managed(Event),
     saved_providers: std.array_list.Managed(SavedProvider),
     saved_channels: std.array_list.Managed(SavedChannel),
     path: []const u8,
@@ -294,6 +376,7 @@ pub const State = struct {
             .allocator = allocator,
             .instances = ComponentMap.init(allocator),
             .spaces = std.array_list.Managed(Space).init(allocator),
+            .events = std.array_list.Managed(Event).init(allocator),
             .saved_providers = std.array_list.Managed(SavedProvider).init(allocator),
             .saved_channels = std.array_list.Managed(SavedChannel).init(allocator),
             .path = allocator.dupe(u8, path) catch @panic("OOM"),
@@ -328,6 +411,11 @@ pub const State = struct {
             freeSpaceStrings(self.allocator, space);
         }
         self.spaces.deinit();
+
+        for (self.events.items) |event| {
+            freeEventStrings(self.allocator, event);
+        }
+        self.events.deinit();
 
         for (self.saved_channels.items) |sc| {
             self.freeSavedChannelStrings(sc);
@@ -407,6 +495,12 @@ pub const State = struct {
             const owned_space = try duplicateSpace(allocator, space);
             errdefer freeSpaceStrings(allocator, owned_space);
             try state.spaces.append(owned_space);
+        }
+
+        for (parsed.value.events) |event| {
+            const owned_event = try duplicateEvent(allocator, event);
+            errdefer freeEventStrings(allocator, owned_event);
+            try state.events.append(owned_event);
         }
 
         for (parsed.value.saved_providers) |sp| {
@@ -505,6 +599,7 @@ pub const State = struct {
         const json_state = JsonState{
             .instances = json_outer,
             .spaces = self.spaces.items,
+            .events = self.events.items,
             .saved_providers = self.saved_providers.items,
             .saved_channels = self.saved_channels.items,
         };
@@ -690,6 +785,33 @@ pub const State = struct {
             }
         }
         return false;
+    }
+
+    // ─── Event Log ─────────────────────────────────────────────────────
+
+    pub fn eventsList(self: *State) []const Event {
+        return self.events.items;
+    }
+
+    pub fn addEvent(self: *State, input: EventInput) !Event {
+        const event = Event{
+            .id = self.nextEventId(),
+            .space_id = input.space_id,
+            .event_type = input.event_type,
+            .source = input.source,
+            .subject_type = input.subject_type,
+            .subject_id = input.subject_id,
+            .title = input.title,
+            .summary = input.summary,
+            .severity = input.severity,
+            .evidence_ref = input.evidence_ref,
+            .payload_json = if (input.payload_json.len > 0) input.payload_json else "{}",
+            .created_at_ms = input.created_at_ms,
+        };
+        const owned_event = try duplicateEvent(self.allocator, event);
+        errdefer freeEventStrings(self.allocator, owned_event);
+        try self.events.append(owned_event);
+        return self.events.items[self.events.items.len - 1];
     }
 
     pub fn savedProviders(self: *State) []const SavedProvider {
@@ -1020,6 +1142,14 @@ pub const State = struct {
         return max_id + 1;
     }
 
+    fn nextEventId(self: *State) u64 {
+        var max_id: u64 = 0;
+        for (self.events.items) |event| {
+            if (event.id > max_id) max_id = event.id;
+        }
+        return max_id + 1;
+    }
+
     fn generateChannelName(self: *State, channel_type: []const u8) ![]const u8 {
         const label = channelLabel(channel_type);
         var count: u32 = 0;
@@ -1125,6 +1255,55 @@ test "space ids persist on instances providers and channels" {
         try std.testing.expectEqualStrings("ops", s.savedChannels()[0].space_id);
         try std.testing.expect(s.spaceMatches("", "default"));
         try std.testing.expect(!s.spaceMatches("", "ops"));
+    }
+}
+
+test "events append and persist in id order" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    const path = try fixture.path(allocator, "state.json");
+    defer allocator.free(path);
+
+    {
+        var s = State.init(allocator, path);
+        defer s.deinit();
+
+        const first = try s.addEvent(.{
+            .space_id = "ops",
+            .event_type = "hub.lifecycle.started",
+            .source = "nullhub",
+            .title = "Hub started",
+            .payload_json = "{\"version\":\"test\"}",
+            .created_at_ms = 1000,
+        });
+        try std.testing.expectEqual(@as(u64, 1), first.id);
+
+        const second = try s.addEvent(.{
+            .space_id = "ops",
+            .event_type = "work.evidence.created",
+            .source = "test",
+            .subject_type = "run",
+            .subject_id = "run-1",
+            .title = "Evidence attached",
+            .severity = "success",
+            .created_at_ms = 1001,
+        });
+        try std.testing.expectEqual(@as(u64, 2), second.id);
+        try s.save();
+    }
+
+    {
+        var s = try State.load(allocator, path);
+        defer s.deinit();
+
+        const events = s.eventsList();
+        try std.testing.expectEqual(@as(usize, 2), events.len);
+        try std.testing.expectEqual(@as(u64, 1), events[0].id);
+        try std.testing.expectEqual(@as(u64, 2), events[1].id);
+        try std.testing.expectEqualStrings("ops", events[0].space_id);
+        try std.testing.expectEqualStrings("hub.lifecycle.started", events[0].event_type);
+        try std.testing.expectEqualStrings("{\"version\":\"test\"}", events[0].payload_json);
     }
 }
 

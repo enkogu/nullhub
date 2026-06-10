@@ -118,6 +118,62 @@ const space_query = ParamSpec{
     .description = "Selected Space id used to scope product data list responses.",
 };
 
+const required_event_space_query = ParamSpec{
+    .name = "space",
+    .location = "query",
+    .required = true,
+    .description = "Selected Space id. Event reads and writes are always space-scoped.",
+};
+
+const event_type_query = ParamSpec{
+    .name = "type",
+    .location = "query",
+    .required = false,
+    .description = "Exact event type filter, such as work.started or hub.lifecycle.started.",
+};
+
+const event_source_query = ParamSpec{
+    .name = "source",
+    .location = "query",
+    .required = false,
+    .description = "Exact event source filter, such as nullhub, api, or dispatcher.",
+};
+
+const event_subject_type_query = ParamSpec{
+    .name = "subject_type",
+    .location = "query",
+    .required = false,
+    .description = "Exact subject type filter, such as run, order, or hub.",
+};
+
+const event_subject_id_query = ParamSpec{
+    .name = "subject_id",
+    .location = "query",
+    .required = false,
+    .description = "Exact subject identifier filter.",
+};
+
+const event_severity_query = ParamSpec{
+    .name = "severity",
+    .location = "query",
+    .required = false,
+    .description = "Exact event severity filter.",
+};
+
+const event_limit_query = ParamSpec{
+    .name = "limit",
+    .location = "query",
+    .required = false,
+    .description = "Maximum number of events to return, clamped to 1..100.",
+};
+
+const event_cursor_query = ParamSpec{
+    .name = "cursor",
+    .location = "query",
+    .required = false,
+    .description = "Opaque id cursor from the previous page. Returns older events with ids below the cursor.",
+};
+
 const lines_query = ParamSpec{
     .name = "lines",
     .location = "query",
@@ -284,6 +340,7 @@ const wizard_component_params = [_]ParamSpec{wizard_component_param};
 const usage_query_params = [_]ParamSpec{window_query};
 const reveal_query_params = [_]ParamSpec{reveal_query};
 const space_query_params = [_]ParamSpec{space_query};
+const event_query_params = [_]ParamSpec{ required_event_space_query, event_type_query, event_source_query, event_subject_type_query, event_subject_id_query, event_severity_query, event_limit_query, event_cursor_query };
 const reveal_space_query_params = [_]ParamSpec{ reveal_query, space_query };
 const logs_query_params = [_]ParamSpec{ lines_query, log_source_query };
 const history_query_params = [_]ParamSpec{ history_session_query, history_limit_query, history_offset_query };
@@ -311,6 +368,17 @@ const route_examples_spaces = [_]ExampleSpec{
     .{
         .command = "nullhub api POST /api/spaces --body '{\"id\":\"ops\",\"name\":\"Operations\",\"kind\":\"team\",\"stage\":\"active\"}'",
         .description = "Create a Space with an explicit stable id.",
+    },
+};
+
+const route_examples_events = [_]ExampleSpec{
+    .{
+        .command = "nullhub api GET '/api/events?space=ops&limit=25' --pretty",
+        .description = "List newest activity and evidence events for a Space.",
+    },
+    .{
+        .command = "nullhub api POST '/api/events?space=ops' --body '{\"type\":\"work.started\",\"source\":\"dispatcher\",\"subject_type\":\"run\",\"subject_id\":\"run-1\",\"title\":\"Run started\"}'",
+        .description = "Append an event to a Space event log.",
     },
 };
 
@@ -679,6 +747,29 @@ const routes = [_]RouteSpec{
         .path_params = space_id_params[0..],
         .body = "Partial Space update payload.",
         .response = "Updated Space record.",
+    },
+    .{
+        .id = "events.list",
+        .method = "GET",
+        .path_template = "/api/events",
+        .category = "events",
+        .summary = "List append-only activity and evidence events for one Space.",
+        .auth_mode = "optional_bearer",
+        .query_params = event_query_params[0..],
+        .response = "Newest-first event list with has_more and next_cursor.",
+        .examples = route_examples_events[0..1],
+    },
+    .{
+        .id = "events.create",
+        .method = "POST",
+        .path_template = "/api/events",
+        .category = "events",
+        .summary = "Append a new activity or evidence event to one Space.",
+        .auth_mode = "optional_bearer",
+        .query_params = event_query_params[0..1],
+        .body = "Event payload with type, optional source, subject fields, title, summary, severity, evidence_ref, created_at_ms, and payload.",
+        .response = "Created event record.",
+        .examples = route_examples_events[1..],
     },
     .{
         .id = "providers.list",
