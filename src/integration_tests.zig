@@ -204,6 +204,20 @@ fn reservePort() !u16 {
     return listener.listen_address.in.getPort();
 }
 
+fn abruptlyCloseStatusRequest(server: *IntegrationServer) !void {
+    const addr = try std_compat.net.Address.resolveIp("127.0.0.1", server.port);
+    const stream = try std_compat.net.tcpConnectToAddress(addr);
+    errdefer stream.close();
+
+    try stream.writeAll(
+        "GET /api/status HTTP/1.1\r\n" ++
+            "Host: 127.0.0.1\r\n" ++
+            "Connection: close\r\n" ++
+            "\r\n",
+    );
+    stream.close();
+}
+
 const StateInstanceEntry = struct {
     version: []const u8,
     auto_start: bool = false,
@@ -465,6 +479,20 @@ test "integration harness serves health and core api routes" {
         defer resp.deinit(std.testing.allocator);
         try std.testing.expectEqual(std.http.Status.not_found, resp.status);
     }
+}
+
+test "server survives abrupt client disconnect without SIGPIPE death" {
+    var server = try IntegrationServer.start(std.testing.allocator);
+    defer server.deinit();
+
+    var attempt: usize = 0;
+    while (attempt < 5) : (attempt += 1) {
+        try abruptlyCloseStatusRequest(&server);
+    }
+
+    const resp = try server.fetch(.{ .path = "/health" });
+    defer resp.deinit(std.testing.allocator);
+    try std.testing.expectEqual(std.http.Status.ok, resp.status);
 }
 
 test "integration harness covers spaces CRUD and scoped instance list" {
