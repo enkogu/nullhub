@@ -1,3 +1,5 @@
+@import "tailwindcss";
+@import "tw-animate-css";
 @import '@fontsource/inter/400.css';
 @import '@fontsource/inter/500.css';
 @import '@fontsource/inter/600.css';
@@ -7,159 +9,57 @@
    CSS @import blocks rendering until the external stylesheet loads, which causes
    a black screen on Windows when Google Fonts is slow or stalls. */
 
-body.theme-matrix {
-  /* Matrix Green */
-  --bg: #030a05;
-  --bg-surface: rgba(0, 20, 5, 0.7);
-  --bg-hover: rgba(0, 40, 10, 0.8);
-  --fg: #00ff41;
-  --fg-dim: #00aa2a;
-  --accent: #00ff41;
-  --accent-dim: #008822;
-  --error: #ff2a2a;
-  --warning: #ffaa00;
-  --border: rgba(0, 255, 65, 0.3);
-  --border-glow: rgba(0, 255, 65, 0.5);
-  --text-glow: 0 0 5px rgba(0, 255, 65, 0.4);
-  --font-sans: var(--prin7r-font-sans, -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Arial, sans-serif);
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
-}
+@custom-variant dark (&:is(.dark *));
 
-body.theme-dracula {
-  --bg: #282a36;
-  --bg-surface: rgba(40, 42, 54, 0.85);
-  --bg-hover: rgba(68, 71, 90, 0.8);
-  --fg: #f8f8f2;
-  --fg-dim: #bbbbbb;
-  --accent: #bd93f9;
-  --accent-dim: #ff79c6;
-  --error: #ff5555;
-  --warning: #f1fa8c;
-  --border: rgba(189, 147, 249, 0.4);
-  --border-glow: rgba(189, 147, 249, 0.6);
-  --text-glow: 0 0 5px rgba(189, 147, 249, 0.3);
-}
-
-body.theme-synthwave {
-  --bg: #1a0b2e;
-  --bg-surface: rgba(26, 11, 46, 0.85);
-  --bg-hover: rgba(54, 23, 94, 0.8);
-  --fg: #00ffff;
-  --fg-dim: #36c5c5;
-  --accent: #ff00ff;
-  --accent-dim: #b500b5;
-  --error: #ff3366;
-  --warning: #f7e018;
-  --border: rgba(255, 0, 255, 0.4);
-  --border-glow: rgba(255, 0, 255, 0.6);
-  --text-glow: 0 0 6px rgba(255, 0, 255, 0.5);
-}
-
-body.theme-amber {
-  --bg: #1c0f00;
-  --bg-surface: rgba(28, 15, 0, 0.85);
-  --bg-hover: rgba(66, 32, 0, 0.8);
-  --fg: #ffb000;
-  --fg-dim: #cc8d00;
-  --accent: #ffb000;
-  --accent-dim: #b37b00;
-  --error: #ff4400;
-  --warning: #ffea00;
-  --border: rgba(255, 176, 0, 0.35);
-  --border-glow: rgba(255, 176, 0, 0.55);
-  --text-glow: 0 0 5px rgba(255, 176, 0, 0.4);
-}
-
-:root,
-body.theme-light {
-  --prin7r-font-standard: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
-  --prin7r-font-sans: var(--prin7r-font-standard);
-  --prin7r-font-mono-standard: "SF Mono", SFMono-Regular, ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  --bg: #ffffff;
-  --bg-surface: rgba(255, 255, 255, 0.92);
-  --bg-hover: rgba(249, 115, 22, 0.08);
-  --fg: #111111;
-  --fg-dim: #5f6368;
-  --accent: #f97316;
-  --accent-dim: #c2410c;
-  --error: #dc2626;
-  --warning: #b45309;
-  --border: rgba(17, 17, 17, 0.12);
-  --border-glow: rgba(249, 115, 22, 0.2);
-  --text-glow: none;
-}
-
-html.theme-8bit-lobster-light,
-body.theme-8bit-lobster-light {
-  /* Bright lobster palette on a light CRT paper base */
-  --bg: #f8eee7;
-  --bg-surface: rgba(255, 247, 242, 0.88);
-  --bg-hover: rgba(255, 227, 220, 0.95);
-  --fg: #341313;
-  --fg-dim: #8e5454;
-  --accent: #ff3333;
-  --accent-dim: #cc0000;
-  --error: #ff0000;
-  --success: #4caf50;
-  --warning: #c57a00;
-  --fx-accent: #4caf50;
-  --fx-accent-glow: rgba(76, 175, 80, 0.45);
-  --border: rgba(255, 51, 51, 0.28);
-  --border-glow: rgba(255, 51, 51, 0.35);
-  --text-glow: 0 0 4px rgba(255, 51, 51, 0.18);
-  --font-mono: 'VT323', 'JetBrains Mono', 'Fira Code', monospace;
-  --ui-font-size: 19px;
-  --ui-line-height: 1.55;
-  --radius: 0px;
-  --radius-sm: 0px;
-}
-
-html.theme-8bit-lobster,
-body.theme-8bit-lobster {
-  /* Really blocky, vivid, dark pixel theme */
-  --bg: #0d0505;
-  --bg-surface: rgba(30, 0, 0, 0.85);
-  --bg-hover: rgba(60, 5, 5, 0.9);
-  --fg: #ffefef;
-  --fg-dim: #e4a2a2;
-  --accent: #ff3333;
-  --accent-dim: #cc0000;
-  --error: #ff0000;
-  --success: #4caf50;
-  --warning: #ffaa00;
-  --fx-accent: #4caf50;
-  --fx-accent-glow: rgba(76, 175, 80, 0.7);
-  --border: rgba(255, 51, 51, 0.5);
-  --border-glow: rgba(255, 51, 51, 0.8);
-  --text-glow: 0 0 6px rgba(255, 51, 51, 0.5);
-  --font-mono: 'VT323', 'JetBrains Mono', 'Fira Code', monospace;
-  --ui-font-size: 19px;
-  --ui-line-height: 1.55;
-  --radius: 0px;
-  --radius-sm: 0px;
-}
-
-:root,
-html,
-body {
-  --success: var(--accent);
-  --text-muted: var(--fg-dim);
-  --text-primary: var(--fg);
-  --bg-secondary: var(--bg-surface);
-  --bg-tertiary: var(--bg-hover);
-  --fx-accent: var(--accent);
-  --fx-accent-glow: var(--border-glow);
-  --font-sans: var(--prin7r-font-sans);
-  --ui-font-size: 15px;
-  --ui-line-height: 1.6;
-  --radius: 4px;
-  --radius-sm: 2px;
+/* Token map: shadcn.css owns OKLCH values; this is the only Tailwind @theme source. */
+@theme inline {
+  --font-sans: var(--shadcn-font-sans);
+  --radius-sm: calc(var(--shadcn-radius) - 4px);
+  --radius-md: calc(var(--shadcn-radius) - 2px);
+  --radius-lg: var(--shadcn-radius);
+  --radius-xl: calc(var(--shadcn-radius) + 4px);
+  --color-background: var(--shadcn-background);
+  --color-foreground: var(--shadcn-foreground);
+  --color-card: var(--shadcn-card);
+  --color-card-foreground: var(--shadcn-card-foreground);
+  --color-popover: var(--shadcn-popover);
+  --color-popover-foreground: var(--shadcn-popover-foreground);
+  --color-primary: var(--shadcn-primary);
+  --color-primary-foreground: var(--shadcn-primary-foreground);
+  --color-secondary: var(--shadcn-secondary);
+  --color-secondary-foreground: var(--shadcn-secondary-foreground);
+  --color-muted: var(--shadcn-muted);
+  --color-muted-foreground: var(--shadcn-muted-foreground);
+  --color-accent: var(--shadcn-accent);
+  --color-accent-foreground: var(--shadcn-accent-foreground);
+  --color-destructive: var(--shadcn-destructive);
+  --color-destructive-foreground: var(--shadcn-destructive-foreground);
+  --color-border: var(--shadcn-border);
+  --color-input: var(--shadcn-input);
+  --color-ring: var(--shadcn-ring);
+  --color-sidebar: var(--shadcn-sidebar);
+  --color-sidebar-foreground: var(--shadcn-sidebar-foreground);
+  --color-sidebar-primary: var(--shadcn-sidebar-primary);
+  --color-sidebar-primary-foreground: var(--shadcn-sidebar-primary-foreground);
+  --color-sidebar-accent: var(--shadcn-sidebar-accent);
+  --color-sidebar-accent-foreground: var(--shadcn-sidebar-accent-foreground);
+  --color-sidebar-border: var(--shadcn-sidebar-border);
+  --color-sidebar-ring: var(--shadcn-sidebar-ring);
+  --color-ok: var(--status-ok);
+  --color-ok-foreground: var(--status-ok-foreground);
+  --color-watch: var(--status-watch);
+  --color-watch-foreground: var(--status-watch-foreground);
+  --color-risk: var(--status-risk);
+  --color-risk-foreground: var(--status-risk-foreground);
+  --color-status-muted: var(--status-muted);
+  --color-status-muted-foreground: var(--status-muted-foreground);
 }
 
 :root,
 html,
 body,
 body.theme-light,
+body.theme-dark,
 body.theme-matrix,
 body.theme-dracula,
 body.theme-synthwave,
@@ -168,25 +68,39 @@ html.theme-8bit-lobster-light,
 body.theme-8bit-lobster-light,
 html.theme-8bit-lobster,
 body.theme-8bit-lobster {
-  --bg: #ffffff;
-  --bg-surface: #ffffff;
-  --bg-hover: #ffffff;
-  --fg: #000000;
-  --fg-dim: #777777;
-  --accent: #000000;
-  --accent-dim: #777777;
-  --error: #b91c1c;
-  --warning: #777777;
-  --success: #166534;
-  --border: #777777;
-  --border-glow: #777777;
+  --status-ok: var(--shadcn-status-ok);
+  --status-ok-foreground: var(--shadcn-status-ok-foreground);
+  --status-watch: var(--shadcn-status-watch);
+  --status-watch-foreground: var(--shadcn-status-watch-foreground);
+  --status-risk: var(--shadcn-status-risk);
+  --status-risk-foreground: var(--shadcn-status-risk-foreground);
+  --status-muted: var(--shadcn-status-muted);
+  --status-muted-foreground: var(--shadcn-status-muted-foreground);
+  --bg: var(--shadcn-background);
+  --bg-surface: var(--shadcn-card);
+  --bg-hover: var(--shadcn-accent);
+  --fg: var(--shadcn-foreground);
+  --fg-dim: var(--shadcn-muted-foreground);
+  --accent: var(--shadcn-primary);
+  --accent-dim: var(--shadcn-muted-foreground);
+  --error: var(--status-risk);
+  --warning: var(--status-watch);
+  --success: var(--status-ok);
+  --border: var(--shadcn-border);
+  --border-glow: color-mix(in oklch, var(--shadcn-ring) 45%, transparent);
   --text-glow: none;
-  --text-muted: #777777;
-  --text-primary: #000000;
-  --bg-secondary: #ffffff;
-  --bg-tertiary: #ffffff;
-  --fx-accent: #000000;
-  --fx-accent-glow: #777777;
+  --text-muted: var(--shadcn-muted-foreground);
+  --text-primary: var(--shadcn-foreground);
+  --bg-secondary: var(--shadcn-muted);
+  --bg-tertiary: var(--shadcn-accent);
+  --fx-accent: var(--status-ok);
+  --fx-accent-glow: color-mix(in oklch, var(--status-ok) 45%, transparent);
+  --font-sans: var(--prin7r-font-sans);
+  --font-mono: var(--prin7r-font-mono-standard);
+  --ui-font-size: 15px;
+  --ui-line-height: 1.6;
+  --radius: var(--shadcn-radius);
+  --radius-sm: calc(var(--shadcn-radius) - 4px);
 }
 
 *:not(.prototype-content *):not(.shadcn-app *),
