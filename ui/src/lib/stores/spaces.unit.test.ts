@@ -1,6 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
-import type { Space, SpacesApi } from '$lib/api/spaces';
-import { SELECTED_SPACE_STORAGE_KEY, SpacesStore } from '$lib/stores/spaces.svelte';
+import { SELECTED_SPACE_STORAGE_KEY, type Space, type SpacesApi } from '$lib/api/spaces';
+import { SpacesStore } from '$lib/stores/spaces.svelte';
 
 function createMemoryStorage(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial));

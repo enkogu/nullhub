@@ -1,7 +1,7 @@
 import { createNullBoilerApi } from '$lib/api/nullboiler';
 import { createMissionControlApi } from '$lib/api/missionControl';
 import { createNullTicketsApi, createNullTicketsStoreApi } from '$lib/api/nulltickets';
-import { createSpacesApi } from '$lib/api/spaces';
+import { SPACE_QUERY_PARAM, createSpacesApi, selectedSpaceFromEnvironment } from '$lib/api/spaces';
 import { componentApiPath, encodePathSegment, instanceApiPath } from '$lib/nullstack/path';
 import { normalizeMojibakeText, normalizeMojibakeValue } from '$lib/textEncoding';
 
@@ -264,6 +264,7 @@ export type ApiRequestError = Error & {
 };
 type ApiRequestInit = RequestInit & {
   timeoutMs?: number;
+  spaceScoped?: boolean;
 };
 
 const ADMIN_READ_TIMEOUT_MS = 10_000;
@@ -282,6 +283,40 @@ function normalizeApiJson<T>(rawText: string, value: T): T {
   return mojibakeResponsePattern.test(rawText) ? normalizeMojibakeValue(value) : value;
 }
 
+const SPACE_SCOPED_GET_PATHS = [
+  /^\/instances(?:[/?#]|$)/,
+  /^\/providers(?:[/?#]|$)/,
+  /^\/channels(?:[/?#]|$)/,
+  /^\/components\/[^/]+\/instances(?:[/?#]|$)/,
+  /^\/components\/[^/]+\/instances\/[^/]+(?:[/?#]|$)/,
+  /^\/nullboiler(?:[/?#]|$)/,
+  /^\/nulltickets(?:[/?#]|$)/,
+  /^\/mission-control(?:[/?#]|$)/,
+];
+
+function parseApiPath(path: string): URL {
+  return new URL(path, 'http://nullhub.local');
+}
+
+function isSpaceScopedGetPath(path: string): boolean {
+  const pathname = parseApiPath(path).pathname;
+  return SPACE_SCOPED_GET_PATHS.some((pattern) => pattern.test(pathname));
+}
+
+function withSelectedSpace(path: string): string {
+  const selectedSpaceId = selectedSpaceFromEnvironment();
+  if (!selectedSpaceId) return path;
+  const url = parseApiPath(path);
+  if (url.searchParams.has(SPACE_QUERY_PARAM)) return path;
+  url.searchParams.set(SPACE_QUERY_PARAM, selectedSpaceId);
+  return `${url.pathname}${url.search}${url.hash}`;
+}
+
+function scopeRequestPath(path: string, method: string, options?: ApiRequestInit): string {
+  if (!options?.spaceScoped && (method !== 'GET' || !isSpaceScopedGetPath(path))) return path;
+  return withSelectedSpace(path);
+}
+
 async function requestFromBase<T>(base: string, path: string, options?: ApiRequestInit): Promise<T> {
   const timeoutMs = requestTimeoutMs(options);
   const controller = new AbortController();
@@ -291,7 +326,7 @@ async function requestFromBase<T>(base: string, path: string, options?: ApiReque
 
   let res: Response;
   try {
-    const { timeoutMs: _timeoutMs, signal: _signal, ...fetchOptions } = options || {};
+    const { timeoutMs: _timeoutMs, signal: _signal, spaceScoped: _spaceScoped, ...fetchOptions } = options || {};
     res = await fetch(`${base}${path}`, {
       headers: { 'Content-Type': 'application/json' },
       ...fetchOptions,
@@ -339,7 +374,8 @@ async function requestFromBase<T>(base: string, path: string, options?: ApiReque
 async function request<T>(path: string, options?: ApiRequestInit): Promise<T> {
   const method = (options?.method || 'GET').toUpperCase();
   const canDedupeGet = method === 'GET' && !options?.signal;
-  const cacheKey = canDedupeGet ? path : '';
+  const scopedPath = scopeRequestPath(path, method, options);
+  const cacheKey = canDedupeGet ? scopedPath : '';
   if (canDedupeGet) {
     pruneRecentGets();
     const cached = recentGets.get(cacheKey);
@@ -363,7 +399,7 @@ async function request<T>(path: string, options?: ApiRequestInit): Promise<T> {
     let lastError: ApiRequestError | null = null;
     for (const base of bases) {
       try {
-        const result = await requestFromBase<T>(base, path, options);
+        const result = await requestFromBase<T>(base, scopedPath, options);
         resolvedBase = base;
         noteRequestSuccess();
         return result;
@@ -409,6 +445,7 @@ export const nullTicketsApi = createNullTicketsApi((c, n, payload) =>
   request<any>(instanceApiPath(c, n, '/tickets'), {
     method: 'POST',
     body: JSON.stringify(payload),
+    spaceScoped: (payload.method || 'GET').toUpperCase() === 'GET',
   }),
 );
 

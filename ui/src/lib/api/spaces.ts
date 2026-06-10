@@ -1,6 +1,8 @@
 import { encodePathSegment } from '$lib/nullstack/path';
 
 export const SPACE_QUERY_PARAM = 'space';
+export const SELECTED_SPACE_STORAGE_KEY = 'nullhub:selected-space';
+export const ALL_SPACES_STORAGE_VALUE = '__all__';
 
 export type Space = {
   id: string;
@@ -31,6 +33,12 @@ type RequestFn = <T>(path: string, options?: RequestInit) => Promise<T>;
 type QueryValue = string | number | boolean | null | undefined;
 type QueryParams = Record<string, QueryValue>;
 type WithQueryFn = (path: string, params: QueryParams) => string;
+type SpaceSelectionStorage = Pick<Storage, 'getItem'>;
+type SpaceSelectionLocation = Pick<Location, 'href'>;
+type SpaceSelectionContext = {
+  storage?: SpaceSelectionStorage | null;
+  location?: SpaceSelectionLocation | null;
+};
 
 type SpacesListResponse = {
   spaces?: unknown;
@@ -38,6 +46,34 @@ type SpacesListResponse = {
 
 export function selectedSpaceQuery(spaceId: SpaceSelection | undefined): QueryParams {
   return { [SPACE_QUERY_PARAM]: spaceId || undefined };
+}
+
+function browserStorage(): SpaceSelectionStorage | null {
+  return typeof localStorage === 'undefined' ? null : localStorage;
+}
+
+function browserLocation(): SpaceSelectionLocation | null {
+  return typeof window === 'undefined' ? null : window.location;
+}
+
+export function selectedSpaceFromLocation(location: SpaceSelectionLocation | null): SpaceSelection | undefined {
+  if (!location?.href) return undefined;
+  const params = new URL(location.href).searchParams;
+  if (!params.has(SPACE_QUERY_PARAM)) return undefined;
+  const value = params.get(SPACE_QUERY_PARAM)?.trim() ?? '';
+  return value || null;
+}
+
+export function selectedSpaceFromStorage(storage: SpaceSelectionStorage | null): SpaceSelection | undefined {
+  const value = storage?.getItem(SELECTED_SPACE_STORAGE_KEY)?.trim();
+  if (!value) return undefined;
+  return value === ALL_SPACES_STORAGE_VALUE ? null : value;
+}
+
+export function selectedSpaceFromEnvironment(context: SpaceSelectionContext = {}): SpaceSelection | undefined {
+  const location = context.location === undefined ? browserLocation() : context.location;
+  const storage = context.storage === undefined ? browserStorage() : context.storage;
+  return selectedSpaceFromLocation(location) ?? selectedSpaceFromStorage(storage);
 }
 
 export function withSelectedSpaceQuery(

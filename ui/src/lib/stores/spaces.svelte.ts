@@ -1,8 +1,16 @@
 import { spacesApi } from '$lib/api/client';
-import { selectedSpaceQuery, type Space, type SpaceCreateInput, type SpacesApi, type SpaceSelection, type SpaceUpdateInput } from '$lib/api/spaces';
-
-export const SELECTED_SPACE_STORAGE_KEY = 'nullhub:selected-space';
-const ALL_SPACES_STORAGE_VALUE = '__all__';
+import {
+  ALL_SPACES_STORAGE_VALUE,
+  SELECTED_SPACE_STORAGE_KEY,
+  selectedSpaceFromLocation,
+  selectedSpaceFromStorage,
+  selectedSpaceQuery,
+  type Space,
+  type SpaceCreateInput,
+  type SpacesApi,
+  type SpaceSelection,
+  type SpaceUpdateInput,
+} from '$lib/api/spaces';
 
 type SpaceStoreStatus = 'idle' | 'loading' | 'ready' | 'error';
 type SpaceStoreStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -32,20 +40,6 @@ function browserLocation(): SpaceStoreLocation | null {
 
 function browserHistory(): SpaceStoreHistory | null {
   return typeof history === 'undefined' ? null : history;
-}
-
-function readUrlSelection(location: SpaceStoreLocation | null): SpaceSelection | undefined {
-  if (!location?.href) return undefined;
-  const params = new URL(location.href).searchParams;
-  if (!params.has('space')) return undefined;
-  const value = params.get('space')?.trim() ?? '';
-  return value || null;
-}
-
-function readPersistedSelection(storage: SpaceStoreStorage | null): SpaceSelection | undefined {
-  const value = storage?.getItem(SELECTED_SPACE_STORAGE_KEY)?.trim();
-  if (!value) return undefined;
-  return value === ALL_SPACES_STORAGE_VALUE ? null : value;
 }
 
 function persistSelection(storage: SpaceStoreStorage | null, selectedSpaceId: SpaceSelection) {
@@ -88,7 +82,8 @@ export class SpacesStore {
     this.storage = options.storage === undefined ? browserStorage() : options.storage;
     this.location = options.location === undefined ? browserLocation() : options.location;
     this.history = options.history === undefined ? browserHistory() : options.history;
-    this.selectedSpaceId = readUrlSelection(this.location) ?? readPersistedSelection(this.storage) ?? null;
+    this.selectedSpaceId =
+      selectedSpaceFromLocation(this.location) ?? selectedSpaceFromStorage(this.storage) ?? null;
   }
 
   async load(): Promise<Space[]> {
