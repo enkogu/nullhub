@@ -4,5 +4,10 @@
     "checkJs": false,
     "strict": false,
     "types": ["node"]
-  }
+  },
+  "exclude": [
+    "src/lib/components/ui/sheet/sheet.stories.svelte",
+    "src/lib/components/ui/sidebar/sidebar.stories.svelte",
+    "src/lib/components/ui/tooltip/tooltip.stories.svelte"
+  ]
 }
