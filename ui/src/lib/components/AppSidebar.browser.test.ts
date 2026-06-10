@@ -34,3 +34,15 @@ test("renders the inbox badge slot and keeps System collapsed", async () => {
 	expect(systemTrigger).not.toBeNull();
 	expect(systemTrigger?.getAttribute("aria-expanded")).toBe("false");
 });
+
+test("marks System active without expanding it", async () => {
+	const screen = await render(AppSidebarFixture, {
+		activePath: "/settings",
+	});
+
+	const system = sidebarItem(screen.container, "system");
+
+	await expect.element(system).toBeVisible();
+	expect(system.getAttribute("data-active")).toBe("true");
+	expect(system.getAttribute("aria-expanded")).toBe("false");
+});

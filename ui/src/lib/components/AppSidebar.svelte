@@ -382,6 +382,7 @@
 										{...props}
 										isActive={isActive(systemItem)}
 										tooltipContent="System"
+										data-app-sidebar-item="system"
 										data-app-sidebar-system-trigger
 									>
 										<Settings2Icon />
