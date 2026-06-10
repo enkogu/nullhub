@@ -32,6 +32,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const app_version = b.option([]const u8, "version", "Version string embedded in the binary") orelse "dev";
+    const git_commit = b.option([]const u8, "git-commit", "Git commit stamp embedded in the binary") orelse detectGitCommit(b);
     const embed_ui = b.option(bool, "embed-ui", "Embed the Svelte UI into the binary") orelse true;
     const build_ui = b.option(bool, "build-ui", "Build the UI before embedding it") orelse embed_ui;
 
@@ -42,6 +43,7 @@ pub fn build(b: *std.Build) void {
 
     var build_options = b.addOptions();
     build_options.addOption([]const u8, "version", app_version);
+    build_options.addOption([]const u8, "git_commit", git_commit);
     const build_options_module = build_options.createModule();
     const ui_assets_module = createUiAssetsModule(b, embed_ui);
     const compat_module = b.createModule(.{
@@ -75,8 +77,11 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run nullhub");
     run_step.dependOn(&run_cmd.step);
 
+    // The unit-test root must be src/root.zig: that is where the `test`
+    // aggregation block referencing every module lives. Pointing it at
+    // main.zig silently runs zero tests.
     const test_module = b.createModule(.{
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
@@ -85,8 +90,11 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("ui_assets", ui_assets_module);
     test_module.addImport("compat", compat_module);
 
+    const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match any filter") orelse &.{};
+
     const exe_unit_tests = b.addTest(.{
         .root_module = test_module,
+        .filters = test_filters,
     });
     const run_tests = b.addRunArtifact(exe_unit_tests);
     const test_step = b.step("test", "Run unit tests");
@@ -162,6 +170,19 @@ fn runCommandOrPanic(b: *std.Build, argv: []const []const u8) void {
 
 fn npmCommand() []const u8 {
     return if (builtin.os.tag == .windows) "npm.cmd" else "npm";
+}
+
+/// Best-effort git stamp (`abc123def456` or `abc123def456-dirty`) so two
+/// builds are distinguishable at runtime. Falls back to "unknown" outside a
+/// git checkout or without git installed.
+fn detectGitCommit(b: *std.Build) []const u8 {
+    var code: u8 = undefined;
+    const sha_raw = b.runAllowFail(&.{ "git", "rev-parse", "--short=12", "HEAD" }, &code, .ignore) catch return "unknown";
+    const sha = std.mem.trim(u8, sha_raw, " \t\r\n");
+    if (sha.len == 0) return "unknown";
+    const status_raw = b.runAllowFail(&.{ "git", "status", "--porcelain" }, &code, .ignore) catch return sha;
+    if (std.mem.trim(u8, status_raw, " \t\r\n").len == 0) return sha;
+    return b.fmt("{s}-dirty", .{sha});
 }
 
 fn pathExists(path: []const u8) bool {

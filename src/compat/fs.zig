@@ -344,10 +344,18 @@ pub const Dir = struct {
     pub fn makePath(self: Dir, sub_path: []const u8) !void {
         if (sub_path.len == 0) return;
         if (path.isAbsolute(sub_path)) {
-            makeDirAbsolute(sub_path) catch |err| switch (err) {
-                error.PathAlreadyExists => return,
-                else => |e| return e,
-            };
+            // Create every missing component; makeDirAbsolute only creates
+            // the leaf and fails with FileNotFound when parents are absent.
+            var end: usize = std.fs.path.diskDesignator(sub_path).len;
+            while (end < sub_path.len and path.isSep(sub_path[end])) : (end += 1) {}
+            while (end < sub_path.len) {
+                while (end < sub_path.len and !path.isSep(sub_path[end])) : (end += 1) {}
+                makeDirAbsolute(sub_path[0..end]) catch |err| switch (err) {
+                    error.PathAlreadyExists => {},
+                    else => |e| return e,
+                };
+                while (end < sub_path.len and path.isSep(sub_path[end])) : (end += 1) {}
+            }
             return;
         }
 
@@ -401,6 +409,16 @@ pub fn accessAbsolute(absolute_path: []const u8, options: Dir.AccessOptions) std
 
 pub fn createFileAbsolute(absolute_path: []const u8, options: Dir.CreateFileOptions) std.Io.File.OpenError!File {
     return File.wrap(try std.Io.Dir.createFileAbsolute(shared.io(), absolute_path, options));
+}
+
+pub fn readFileAbsolute(allocator: Allocator, absolute_path: []const u8, max_bytes: usize) ![]u8 {
+    const file = try openFileAbsolute(absolute_path, .{});
+    defer file.close();
+    return file.readToEndAlloc(allocator, max_bytes);
+}
+
+pub fn makePathAbsolute(absolute_path: []const u8) !void {
+    try cwd().makePath(absolute_path);
 }
 
 pub fn copyFileAbsolute(source_path: []const u8, dest_path: []const u8, options: Dir.CopyFileOptions) std.Io.Dir.CopyFileError!void {
