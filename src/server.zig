@@ -121,19 +121,26 @@ pub const Server = struct {
     active_connections: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     pub fn init(allocator: std.mem.Allocator, host: []const u8, port: u16, manager: *manager_mod.Manager, mutex: *std_compat.sync.Mutex) !Server {
-        var paths = try paths_mod.Paths.init(allocator, null);
-        errdefer paths.deinit(allocator);
+        const paths = try paths_mod.Paths.init(allocator, null);
+        return initWithPaths(allocator, host, port, paths, manager, mutex);
+    }
 
-        const state_path = try paths.state(allocator);
+    fn initWithPaths(allocator: std.mem.Allocator, host: []const u8, port: u16, paths: paths_mod.Paths, manager: *manager_mod.Manager, mutex: *std_compat.sync.Mutex) !Server {
+        var owned_paths = paths;
+        errdefer owned_paths.deinit(allocator);
+
+        const state_path = try owned_paths.state(allocator);
         defer allocator.free(state_path);
 
         const state = try allocator.create(state_mod.State);
+        errdefer allocator.destroy(state);
         state.* = state_mod.State.load(allocator, state_path) catch |err| blk: {
             std.log.err("state.json load failed ({s}): starting with empty state — YOUR DATA MAY BE AT RISK", .{@errorName(err)});
             break :blk state_mod.State.init(allocator, state_path);
         };
+        errdefer state.deinit();
 
-        orchestrator.syncLocalUiModules(allocator, paths);
+        orchestrator.syncLocalUiModules(allocator, owned_paths);
 
         return .{
             .allocator = allocator,
@@ -141,7 +148,7 @@ pub const Server = struct {
             .port = port,
             .access_options = .{},
             .state = state,
-            .paths = paths,
+            .paths = owned_paths,
             .manager = manager,
             .mutex = mutex,
             .start_time = std_compat.time.timestamp(),
@@ -3654,17 +3661,27 @@ test "route POST update supports percent-encoded instance names" {
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "Opencode Go") != null);
 }
 
-test "Server init sets fields" {
-    var paths = try paths_mod.Paths.init(std.testing.allocator, null);
-    defer paths.deinit(std.testing.allocator);
-    var mgr = manager_mod.Manager.init(std.testing.allocator, paths);
+test "Server init with explicit paths isolates state from HOME" {
+    const allocator = std.testing.allocator;
+
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+
+    var manager_paths = try paths_mod.Paths.init(allocator, fixture.root);
+    defer manager_paths.deinit(allocator);
+    var mgr = manager_mod.Manager.init(allocator, manager_paths);
     defer mgr.deinit();
+
+    const server_paths = try paths_mod.Paths.init(allocator, fixture.root);
     var mutex: std_compat.sync.Mutex = .{};
-    var s = try Server.init(std.testing.allocator, "127.0.0.1", access.default_port, &mgr, &mutex);
+    var s = try Server.initWithPaths(allocator, "127.0.0.1", access.default_port, server_paths, &mgr, &mutex);
     defer s.deinit();
+
     try std.testing.expectEqualStrings("127.0.0.1", s.host);
     try std.testing.expectEqual(access.default_port, s.port);
     try std.testing.expect(s.start_time > 0);
+    try std.testing.expectEqualStrings(fixture.root, s.paths.root);
+    try std.testing.expect(std.mem.startsWith(u8, s.state.path, fixture.root));
 }
 
 test "contentType returns correct MIME type for .html" {
