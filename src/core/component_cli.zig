@@ -190,6 +190,8 @@ fn runCapturedWithTimeout(
 
     const stdout_file = child.stdout orelse return error.CommandFailed;
     const stderr_file = child.stderr orelse return error.CommandFailed;
+    child.stdout = null;
+    child.stderr = null;
     const stdout_thread = try std.Thread.spawn(.{}, readPipeToEnd, .{ stdout_file, allocator, max_output_bytes, &stdout_result });
     const stderr_thread = try std.Thread.spawn(.{}, readPipeToEnd, .{ stderr_file, allocator, max_output_bytes, &stderr_result });
     const wait_thread = try std.Thread.spawn(.{}, waitForChild, .{ &child, &wait_result });
@@ -291,6 +293,27 @@ test "home env var includes managed components" {
     try std.testing.expectEqualStrings("NULLTICKETS_HOME", homeEnvVarForComponent("nulltickets").?);
     try std.testing.expectEqualStrings("NULLWATCH_HOME", homeEnvVarForComponent("nullwatch").?);
     try std.testing.expect(homeEnvVarForComponent("unknown") == null);
+}
+
+test "runWithComponentHomeLimitedTimeout captures fast command output" {
+    if (builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const result = try runWithComponentHomeLimitedTimeout(
+        std.testing.allocator,
+        "",
+        "/bin/sh",
+        &.{ "-c", "printf '{\"ok\":true}\\n'; printf 'note\\n' >&2" },
+        null,
+        null,
+        1024,
+        10_000,
+    );
+    defer std.testing.allocator.free(result.stdout);
+    defer std.testing.allocator.free(result.stderr);
+
+    try std.testing.expect(result.success);
+    try std.testing.expectEqualStrings("{\"ok\":true}\n", result.stdout);
+    try std.testing.expectEqualStrings("note\n", result.stderr);
 }
 
 test "runWithComponentHomeLimitedTimeout terminates slow commands" {

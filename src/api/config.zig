@@ -4,7 +4,6 @@ const fs_compat = @import("../fs_compat.zig");
 const paths_mod = @import("../core/paths.zig");
 const state_mod = @import("../core/state.zig");
 const helpers = @import("helpers.zig");
-const managed_cli = @import("managed_cli.zig");
 const query = @import("query.zig");
 const test_helpers = @import("../test_helpers.zig");
 
@@ -40,7 +39,7 @@ pub fn handleGet(allocator: std.mem.Allocator, p: paths_mod.Paths, component: []
         .body = contents,
     };
 
-    errdefer allocator.free(contents);
+    defer allocator.free(contents);
 
     const parsed = std.json.parseFromSlice(std.json.Value, allocator, contents, .{
         .allocate = .alloc_always,
@@ -66,15 +65,20 @@ pub fn handleGet(allocator: std.mem.Allocator, p: paths_mod.Paths, component: []
     defer allocator.free(value_json);
 
     var buf = std.array_list.Managed(u8).init(allocator);
-    errdefer buf.deinit();
-    buf.appendSlice("{\"path\":\"") catch return helpers.serverError();
-    helpers.appendEscaped(&buf, path_value) catch return helpers.serverError();
-    buf.appendSlice("\",\"value\":") catch return helpers.serverError();
-    buf.appendSlice(value_json) catch return helpers.serverError();
-    buf.appendSlice("}") catch return helpers.serverError();
+    const body = buildPathValueJson(&buf, path_value, value_json) catch {
+        buf.deinit();
+        return helpers.serverError();
+    };
+    return .{ .status = "200 OK", .content_type = "application/json", .body = body };
+}
 
-    allocator.free(contents);
-    return .{ .status = "200 OK", .content_type = "application/json", .body = buf.items };
+fn buildPathValueJson(buf: *std.array_list.Managed(u8), path_value: []const u8, value_json: []const u8) ![]u8 {
+    try buf.appendSlice("{\"path\":\"");
+    try helpers.appendEscaped(buf, path_value);
+    try buf.appendSlice("\",\"value\":");
+    try buf.appendSlice(value_json);
+    try buf.appendSlice("}");
+    return buf.toOwnedSlice();
 }
 
 pub fn handleGetManaged(
@@ -85,19 +89,7 @@ pub fn handleGetManaged(
     name: []const u8,
     target: []const u8,
 ) ApiResponse {
-    const path = query.valueAlloc(allocator, target, "path") catch return helpers.serverError();
-    defer if (path) |value| allocator.free(value);
-
-    if (managed_cli.supports(component)) {
-        return if (path) |value|
-            managed_cli.runJsonAdvanced(allocator, s, p, component, name, &.{ "config", "get", value, "--json" }, .{
-                .not_found_error_codes = &.{ "config_not_found", "config_path_not_found" },
-            })
-        else
-            managed_cli.runJsonAdvanced(allocator, s, p, component, name, &.{ "config", "show", "--json" }, .{
-                .not_found_error_codes = &.{"config_not_found"},
-            });
-    }
+    _ = s;
     return handleGet(allocator, p, component, name, target);
 }
 
@@ -246,23 +238,6 @@ fn lookupJsonPath(root: std.json.Value, dot_path: []const u8) ?std.json.Value {
 
 // ─── Tests ───────────────────────────────────────────────────────────────────
 
-fn writeManagedTestBinary(
-    allocator: std.mem.Allocator,
-    p: paths_mod.Paths,
-    component: []const u8,
-    version: []const u8,
-    script: []const u8,
-) !void {
-    try p.ensureDirs();
-    const bin_path = try p.binary(allocator, component, version);
-    defer allocator.free(bin_path);
-
-    const file = try std_compat.fs.createFileAbsolute(bin_path, .{ .truncate = true });
-    defer file.close();
-    try file.writeAll(script);
-    if (comptime std_compat.fs.has_executable_bit) try file.chmod(0o755);
-}
-
 test "parseConfigPath: valid path" {
     const p = parseConfigPath("/api/instances/nullclaw/my-agent/config").?;
     try std.testing.expectEqualStrings("nullclaw", p.component);
@@ -362,9 +337,7 @@ test "handleGet returns a single dotted-path value when path query is present" {
     try std.testing.expectEqualStrings("{\"path\":\"gateway.port\",\"value\":8080}", get_resp.body);
 }
 
-test "handleGetManaged prefers nullclaw CLI JSON when available" {
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
-
+test "handleGetManaged reads managed nullclaw config file" {
     const allocator = std.testing.allocator;
     var fixture = try test_helpers.TempPaths.init(allocator);
     defer fixture.deinit();
@@ -374,20 +347,8 @@ test "handleGetManaged prefers nullclaw CLI JSON when available" {
     defer s.deinit();
 
     try s.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0" });
-    try writeManagedTestBinary(
-        allocator,
-        fixture.paths,
-        "nullclaw",
-        "1.0.0",
-        \\#!/bin/sh
-        \\set -eu
-        \\if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "gateway.port" ] && [ "$4" = "--json" ]; then
-        \\  printf '%s\n' '{"path":"gateway.port","value":43123}'
-        \\  exit 0
-        \\fi
-        \\exit 64
-        ,
-    );
+    const put_resp = handlePut(allocator, fixture.paths, "nullclaw", "my-agent", "{\"gateway\":{\"port\":43123}}");
+    try std.testing.expectEqualStrings("200 OK", put_resp.status);
 
     const resp = handleGetManaged(
         allocator,
@@ -402,9 +363,7 @@ test "handleGetManaged prefers nullclaw CLI JSON when available" {
     try std.testing.expectEqualStrings("{\"path\":\"gateway.port\",\"value\":43123}", resp.body);
 }
 
-test "handleGetManaged maps managed nullclaw config misses to 404" {
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
-
+test "handleGetManaged maps managed config path misses to 404" {
     const allocator = std.testing.allocator;
     var fixture = try test_helpers.TempPaths.init(allocator);
     defer fixture.deinit();
@@ -414,20 +373,8 @@ test "handleGetManaged maps managed nullclaw config misses to 404" {
     defer s.deinit();
 
     try s.addInstance("nullclaw", "my-agent", .{ .version = "1.0.1" });
-    try writeManagedTestBinary(
-        allocator,
-        fixture.paths,
-        "nullclaw",
-        "1.0.1",
-        \\#!/bin/sh
-        \\set -eu
-        \\if [ "$1" = "config" ] && [ "$2" = "get" ] && [ "$3" = "missing.path" ] && [ "$4" = "--json" ]; then
-        \\  printf '%s\n' '{"error":"config_path_not_found","message":"Config path not found"}'
-        \\  exit 1
-        \\fi
-        \\exit 64
-        ,
-    );
+    const put_resp = handlePut(allocator, fixture.paths, "nullclaw", "my-agent", "{\"gateway\":{\"port\":43123}}");
+    try std.testing.expectEqualStrings("200 OK", put_resp.status);
 
     const resp = handleGetManaged(
         allocator,
@@ -437,14 +384,12 @@ test "handleGetManaged maps managed nullclaw config misses to 404" {
         "my-agent",
         "/api/instances/nullclaw/my-agent/config?path=missing.path",
     );
-    defer allocator.free(resp.body);
+    // 404 body is a static string literal; nothing to free.
     try std.testing.expectEqualStrings("404 Not Found", resp.status);
-    try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"error\":\"config_path_not_found\"") != null);
+    try std.testing.expectEqualStrings("{\"error\":\"config path not found\"}", resp.body);
 }
 
-test "handleGetManaged rejects malformed managed CLI JSON" {
-    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
-
+test "handleGetManaged rejects malformed managed config file JSON" {
     const allocator = std.testing.allocator;
     var fixture = try test_helpers.TempPaths.init(allocator);
     defer fixture.deinit();
@@ -454,32 +399,31 @@ test "handleGetManaged rejects malformed managed CLI JSON" {
     defer s.deinit();
 
     try s.addInstance("nullclaw", "my-agent", .{ .version = "1.0.2" });
-    try writeManagedTestBinary(
-        allocator,
-        fixture.paths,
-        "nullclaw",
-        "1.0.2",
-        \\#!/bin/sh
-        \\set -eu
-        \\if [ "$1" = "config" ] && [ "$2" = "show" ] && [ "$3" = "--json" ]; then
-        \\  printf '%s\n' '"broken":true}'
-        \\  exit 0
-        \\fi
-        \\exit 64
-        ,
-    );
+    const put_resp = handlePut(allocator, fixture.paths, "nullclaw", "my-agent", "{\"broken\":true");
+    try std.testing.expectEqualStrings("400 Bad Request", put_resp.status);
 
+    const config_path = try fixture.paths.instanceConfig(allocator, "nullclaw", "my-agent");
+    defer allocator.free(config_path);
+    const dir_path = try fixture.paths.instanceDir(allocator, "nullclaw", "my-agent");
+    defer allocator.free(dir_path);
+    try fs_compat.makePath(dir_path);
+    const file = try std_compat.fs.createFileAbsolute(config_path, .{});
+    defer file.close();
+    try file.writeAll("{\"broken\":true");
+
+    // A dotted-path lookup forces the handler to parse the config file, which
+    // rejects the malformed JSON. (A raw GET returns the file body verbatim.)
     const resp = handleGetManaged(
         allocator,
         &s,
         fixture.paths,
         "nullclaw",
         "my-agent",
-        "/api/instances/nullclaw/my-agent/config",
+        "/api/instances/nullclaw/my-agent/config?path=gateway.port",
     );
-    defer allocator.free(resp.body);
-    try std.testing.expectEqualStrings("502 Bad Gateway", resp.status);
-    try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"error\":\"invalid_cli_response\"") != null);
+    // 400 body is a static string literal; nothing to free.
+    try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    try std.testing.expectEqualStrings("{\"error\":\"invalid config JSON\"}", resp.body);
 }
 
 test "handlePatch writes config (same as PUT for now)" {

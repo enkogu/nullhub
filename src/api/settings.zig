@@ -256,7 +256,7 @@ test "handleGetSettings returns valid JSON with defaults" {
     try std.testing.expect(parsed.value.access.local_alias_chain);
     try std.testing.expect(!parsed.value.access.public_alias_active);
     try std.testing.expectEqualStrings("none", parsed.value.access.public_alias_provider);
-    try std.testing.expectEqualStrings("http://nullhub.localhost:19800", parsed.value.access.browser_open_url);
+    try std.testing.expectEqualStrings("http://localhost:19800", parsed.value.access.browser_open_url);
     try std.testing.expectEqualStrings("http://nullhub.local:19800", parsed.value.access.public_alias_url.?);
 }
 
