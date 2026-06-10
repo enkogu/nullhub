@@ -184,6 +184,7 @@ const StateInstanceEntry = struct {
     auto_start: bool = false,
     launch_mode: []const u8 = "gateway",
     verbose: bool = false,
+    space_id: []const u8 = "",
 };
 
 fn seedManagedInstance(server: *IntegrationServer, component: []const u8, name: []const u8) !void {
@@ -209,6 +210,47 @@ fn seedManagedInstance(server: *IntegrationServer, component: []const u8, name: 
 
     const state_json = try std.json.Stringify.valueAlloc(server.allocator, .{
         .instances = instances,
+        .spaces = &.{},
+        .saved_providers = &.{},
+        .saved_channels = &.{},
+    }, .{ .whitespace = .indent_2 });
+    defer server.allocator.free(state_json);
+
+    const file = try std_compat.fs.createFileAbsolute(state_path, .{ .truncate = true });
+    defer file.close();
+    try file.writeAll(state_json);
+}
+
+fn seedScopedInstances(server: *IntegrationServer) !void {
+    const root = try server.nullhubRoot();
+    defer server.allocator.free(root);
+    try std_compat.fs.cwd().makePath(root);
+
+    const state_path = try std.fs.path.join(server.allocator, &.{ root, "state.json" });
+    defer server.allocator.free(state_path);
+
+    var nullclaw_instances = std.json.ArrayHashMap(StateInstanceEntry){};
+    defer nullclaw_instances.deinit(server.allocator);
+    try nullclaw_instances.map.put(server.allocator, "ops-agent", .{
+        .version = "1.0.0",
+        .space_id = "ops",
+    });
+
+    var boiler_instances = std.json.ArrayHashMap(StateInstanceEntry){};
+    defer boiler_instances.deinit(server.allocator);
+    try boiler_instances.map.put(server.allocator, "lab-boiler", .{
+        .version = "1.0.0",
+        .space_id = "lab",
+    });
+
+    var instances = std.json.ArrayHashMap(std.json.ArrayHashMap(StateInstanceEntry)){};
+    defer instances.deinit(server.allocator);
+    try instances.map.put(server.allocator, "nullclaw", nullclaw_instances);
+    try instances.map.put(server.allocator, "nullboiler", boiler_instances);
+
+    const state_json = try std.json.Stringify.valueAlloc(server.allocator, .{
+        .instances = instances,
+        .spaces = &.{},
         .saved_providers = &.{},
         .saved_channels = &.{},
     }, .{ .whitespace = .indent_2 });
@@ -397,6 +439,55 @@ test "integration harness serves health and core api routes" {
         const resp = try server.fetch(.{ .path = "/api/nonexistent" });
         defer resp.deinit(std.testing.allocator);
         try std.testing.expectEqual(std.http.Status.not_found, resp.status);
+    }
+}
+
+test "integration harness covers spaces CRUD and scoped instance list" {
+    var server = try IntegrationServer.startWithSeed(std.testing.allocator, struct {
+        fn call(srv: *IntegrationServer) !void {
+            try seedScopedInstances(srv);
+        }
+    }.call);
+    defer server.deinit();
+
+    {
+        const resp = try server.fetch(.{
+            .path = "/api/spaces",
+            .method = .POST,
+            .body = "{\"id\":\"ops\",\"name\":\"Operations\",\"kind\":\"team\",\"stage\":\"active\"}",
+        });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.created, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":\"ops\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"kind\":\"team\"") != null);
+    }
+
+    {
+        const resp = try server.fetch(.{ .path = "/api/spaces" });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"name\":\"Operations\"") != null);
+    }
+
+    {
+        const resp = try server.fetch(.{
+            .path = "/api/spaces/ops",
+            .method = .PATCH,
+            .body = "{\"stage\":\"paused\"}",
+        });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"stage\":\"paused\"") != null);
+    }
+
+    {
+        const resp = try server.fetch(.{ .path = "/api/instances?space=ops" });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "ops-agent") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "lab-boiler") == null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "nullboiler") == null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"space_id\":\"ops\"") != null);
     }
 }
 

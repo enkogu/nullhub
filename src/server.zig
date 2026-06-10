@@ -24,6 +24,7 @@ const instance_runtime = @import("api/instance_runtime.zig");
 const wizard_api = @import("api/wizard.zig");
 const providers_api = @import("api/providers.zig");
 const channels_api = @import("api/channels.zig");
+const spaces_api = @import("api/spaces.zig");
 const usage_api = @import("api/usage.zig");
 const report_api = @import("api/report.zig");
 const nullboiler_api = @import("api/nullboiler.zig");
@@ -1567,12 +1568,52 @@ pub const Server = struct {
             }
         }
 
+        // Spaces API — /api/spaces[/{id}]
+        if (spaces_api.isSpacesPath(target)) {
+            if (std.mem.eql(u8, target, "/api/spaces") or std.mem.startsWith(u8, target, "/api/spaces?")) {
+                if (std.mem.eql(u8, method, "GET")) {
+                    if (spaces_api.handleList(allocator, self.state)) |json| {
+                        return jsonResponse(json);
+                    } else |_| {
+                        return .{ .status = "500 Internal Server Error", .content_type = "application/json", .body = "{\"error\":\"internal error\"}" };
+                    }
+                }
+                if (std.mem.eql(u8, method, "POST")) {
+                    if (spaces_api.handleCreate(allocator, self.state, body)) |json| {
+                        const status = if (std.mem.indexOf(u8, json, "\"error\"") != null) "422 Unprocessable Entity" else "201 Created";
+                        return .{ .status = status, .content_type = "application/json", .body = json };
+                    } else |_| {
+                        return .{ .status = "500 Internal Server Error", .content_type = "application/json", .body = "{\"error\":\"internal error\"}" };
+                    }
+                }
+                return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+            }
+            const space_id = spaces_api.extractSpaceIdAlloc(allocator, target) catch |err| switch (err) {
+                error.InvalidPathSegment => return .{ .status = "400 Bad Request", .content_type = "application/json", .body = "{\"error\":\"invalid path segment\"}" },
+                else => return .{ .status = "500 Internal Server Error", .content_type = "application/json", .body = "{\"error\":\"internal error\"}" },
+            };
+            if (space_id) |id| {
+                defer allocator.free(id);
+                if (std.mem.eql(u8, method, "PATCH")) {
+                    if (spaces_api.handleUpdate(allocator, self.state, id, body)) |json| {
+                        const status = if (std.mem.indexOf(u8, json, "space not found") != null) "404 Not Found" else if (std.mem.indexOf(u8, json, "\"error\"") != null) "422 Unprocessable Entity" else "200 OK";
+                        return .{ .status = status, .content_type = "application/json", .body = json };
+                    } else |_| {
+                        return .{ .status = "500 Internal Server Error", .content_type = "application/json", .body = "{\"error\":\"internal error\"}" };
+                    }
+                }
+                return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+            }
+        }
+
         // Providers API — /api/providers[/{id}[/validate]]
         if (providers_api.isProvidersPath(target)) {
             if (std.mem.eql(u8, target, "/api/providers") or std.mem.startsWith(u8, target, "/api/providers?")) {
                 if (std.mem.eql(u8, method, "GET")) {
                     const reveal = providers_api.hasRevealParam(target);
-                    if (providers_api.handleList(allocator, self.state, reveal)) |json| {
+                    const space_id = spaces_api.spaceQueryAlloc(allocator, target) catch null;
+                    defer if (space_id) |value| allocator.free(value);
+                    if (providers_api.handleList(allocator, self.state, reveal, space_id)) |json| {
                         return jsonResponse(json);
                     } else |_| {
                         return .{ .status = "500 Internal Server Error", .content_type = "application/json", .body = "{\"error\":\"internal error\"}" };
@@ -1650,7 +1691,9 @@ pub const Server = struct {
             if (std.mem.eql(u8, target, "/api/channels") or std.mem.startsWith(u8, target, "/api/channels?")) {
                 if (std.mem.eql(u8, method, "GET")) {
                     const reveal = channels_api.hasRevealParam(target);
-                    if (channels_api.handleList(allocator, self.state, reveal)) |json| {
+                    const space_id = spaces_api.spaceQueryAlloc(allocator, target) catch null;
+                    defer if (space_id) |value| allocator.free(value);
+                    if (channels_api.handleList(allocator, self.state, reveal, space_id)) |json| {
                         return jsonResponse(json);
                     } else |_| {
                         return .{ .status = "500 Internal Server Error", .content_type = "application/json", .body = "{\"error\":\"internal error\"}" };

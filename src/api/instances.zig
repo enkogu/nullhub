@@ -2457,6 +2457,9 @@ fn appendInstanceJson(buf: *std.array_list.Managed(u8), entry: state_mod.Instanc
     try appendEscaped(buf, entry.launch_mode);
     try buf.appendSlice("\",\"verbose\":");
     try buf.appendSlice(if (entry.verbose) "true" else "false");
+    try buf.appendSlice(",\"space_id\":\"");
+    try appendEscaped(buf, if (entry.space_id.len > 0) entry.space_id else "default");
+    try buf.append('"');
     try buf.appendSlice(",\"status\":\"");
     try buf.appendSlice(status_str);
     try buf.append('"');
@@ -2502,10 +2505,10 @@ fn appendInstanceJson(buf: *std.array_list.Managed(u8), entry: state_mod.Instanc
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
 /// GET /api/instances — list all instances grouped by component.
-pub fn handleList(allocator: std.mem.Allocator, s: *state_mod.State, manager: *manager_mod.Manager, paths: paths_mod.Paths) ApiResponse {
+pub fn handleList(allocator: std.mem.Allocator, s: *state_mod.State, manager: *manager_mod.Manager, paths: paths_mod.Paths, space_id: ?[]const u8) ApiResponse {
     var buf = std.array_list.Managed(u8).init(allocator);
 
-    buildListJson(&buf, s, manager, paths) catch {
+    buildListJson(&buf, s, manager, paths, space_id) catch {
         buf.deinit();
         return .{
             .status = "500 Internal Server Error",
@@ -2518,12 +2521,22 @@ pub fn handleList(allocator: std.mem.Allocator, s: *state_mod.State, manager: *m
     return jsonOk(body);
 }
 
-fn buildListJson(buf: *std.array_list.Managed(u8), s: *state_mod.State, manager: *manager_mod.Manager, paths: paths_mod.Paths) !void {
+fn buildListJson(buf: *std.array_list.Managed(u8), s: *state_mod.State, manager: *manager_mod.Manager, paths: paths_mod.Paths, space_id: ?[]const u8) !void {
     try buf.appendSlice("{\"instances\":{");
 
     var comp_it = s.instances.iterator();
     var first_comp = true;
     while (comp_it.next()) |comp_entry| {
+        var has_matching_instance = false;
+        var match_it = comp_entry.value_ptr.iterator();
+        while (match_it.next()) |inst_entry| {
+            if (s.spaceMatches(inst_entry.value_ptr.space_id, space_id)) {
+                has_matching_instance = true;
+                break;
+            }
+        }
+        if (!has_matching_instance) continue;
+
         if (!first_comp) try buf.append(',');
         first_comp = false;
 
@@ -2534,6 +2547,7 @@ fn buildListJson(buf: *std.array_list.Managed(u8), s: *state_mod.State, manager:
         var inst_it = comp_entry.value_ptr.iterator();
         var first_inst = true;
         while (inst_it.next()) |inst_entry| {
+            if (!s.spaceMatches(inst_entry.value_ptr.space_id, space_id)) continue;
             if (!first_inst) try buf.append(',');
             first_inst = false;
 
@@ -5956,7 +5970,11 @@ pub fn dispatch(
 ) ?ApiResponse {
     // Exact match for the collection endpoint.
     if (std.mem.eql(u8, stripQuery(target), "/api/instances")) {
-        if (std.mem.eql(u8, method, "GET")) return handleList(allocator, s, manager, paths);
+        if (std.mem.eql(u8, method, "GET")) {
+            const space_id = query_api.valueAlloc(allocator, target, "space") catch null;
+            defer if (space_id) |value| allocator.free(value);
+            return handleList(allocator, s, manager, paths, space_id);
+        }
         return methodNotAllowed();
     }
 
@@ -7177,7 +7195,7 @@ test "handleList returns valid JSON structure" {
     try s.addInstance("nullclaw", "my-agent", .{ .version = "2026.3.1", .auto_start = true });
     try s.addInstance("nullclaw", "staging", .{ .version = "2026.3.1", .auto_start = false });
 
-    const resp = handleList(allocator, &s, &mctx.manager, state_fixture.paths);
+    const resp = handleList(allocator, &s, &mctx.manager, state_fixture.paths, null);
     defer allocator.free(resp.body);
 
     try std.testing.expectEqualStrings("200 OK", resp.status);
@@ -7191,6 +7209,7 @@ test "handleList returns valid JSON structure" {
                 auto_start: bool,
                 launch_mode: []const u8 = "gateway",
                 verbose: bool = false,
+                space_id: []const u8 = "default",
                 status: []const u8,
             })),
         },
@@ -7207,6 +7226,31 @@ test "handleList returns valid JSON structure" {
     const agent = nullclaw.map.get("my-agent").?;
     try std.testing.expectEqualStrings("2026.3.1", agent.version);
     try std.testing.expect(agent.auto_start == true);
+    try std.testing.expectEqualStrings("default", agent.space_id);
+}
+
+test "handleList filters instances by space" {
+    const allocator = std.testing.allocator;
+    var state_fixture = try test_helpers.TempPaths.init(allocator);
+    defer state_fixture.deinit();
+    const state_path = try state_fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var s = state_mod.State.init(allocator, state_path);
+    defer s.deinit();
+    var mctx = TestManagerCtx.init(allocator);
+    defer mctx.deinit(allocator);
+
+    try s.addInstance("nullclaw", "ops-agent", .{ .version = "2026.3.1", .space_id = "ops" });
+    try s.addInstance("nullboiler", "lab-boiler", .{ .version = "2026.3.1", .space_id = "lab" });
+
+    const resp = handleList(allocator, &s, &mctx.manager, state_fixture.paths, "ops");
+    defer allocator.free(resp.body);
+
+    try std.testing.expectEqualStrings("200 OK", resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "ops-agent") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "lab-boiler") == null);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "nullboiler") == null);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"space_id\":\"ops\"") != null);
 }
 
 test "handleGet returns 404 for missing instance" {
@@ -7250,6 +7294,7 @@ test "handleGet returns instance detail JSON" {
             auto_start: bool,
             launch_mode: []const u8 = "gateway",
             verbose: bool = false,
+            space_id: []const u8 = "default",
             status: []const u8,
         },
         allocator,
@@ -7260,6 +7305,7 @@ test "handleGet returns instance detail JSON" {
 
     try std.testing.expectEqualStrings("2026.3.1", parsed.value.version);
     try std.testing.expect(parsed.value.auto_start == true);
+    try std.testing.expectEqualStrings("default", parsed.value.space_id);
     try std.testing.expectEqualStrings("stopped", parsed.value.status);
 }
 

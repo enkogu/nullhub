@@ -83,6 +83,13 @@ const channel_id_param = ParamSpec{
     .description = "Saved channel numeric identifier.",
 };
 
+const space_id_param = ParamSpec{
+    .name = "id",
+    .location = "path",
+    .required = true,
+    .description = "Space identifier.",
+};
+
 const mission_replay_id_param = ParamSpec{
     .name = "id",
     .location = "path",
@@ -102,6 +109,13 @@ const reveal_query = ParamSpec{
     .location = "query",
     .required = false,
     .description = "When true, include secret-like fields in the response for local admin usage.",
+};
+
+const space_query = ParamSpec{
+    .name = "space",
+    .location = "query",
+    .required = false,
+    .description = "Selected Space id used to scope product data list responses.",
 };
 
 const lines_query = ParamSpec{
@@ -262,12 +276,15 @@ const common_instance_params = [_]ParamSpec{ component_param, instance_name_para
 const component_only_params = [_]ParamSpec{component_param};
 const provider_id_params = [_]ParamSpec{provider_id_param};
 const channel_id_params = [_]ParamSpec{channel_id_param};
+const space_id_params = [_]ParamSpec{space_id_param};
 const mission_replay_id_params = [_]ParamSpec{mission_replay_id_param};
 const module_name_params = [_]ParamSpec{module_name_param};
 const component_name_params = [_]ParamSpec{component_name_param};
 const wizard_component_params = [_]ParamSpec{wizard_component_param};
 const usage_query_params = [_]ParamSpec{window_query};
 const reveal_query_params = [_]ParamSpec{reveal_query};
+const space_query_params = [_]ParamSpec{space_query};
+const reveal_space_query_params = [_]ParamSpec{ reveal_query, space_query };
 const logs_query_params = [_]ParamSpec{ lines_query, log_source_query };
 const history_query_params = [_]ParamSpec{ history_session_query, history_limit_query, history_offset_query };
 const memory_query_params = [_]ParamSpec{ memory_stats_query, memory_key_query, memory_query_query, memory_q_query, memory_category_query, memory_limit_query, memory_offset_query, memory_include_internal_query, memory_session_query };
@@ -283,6 +300,17 @@ const route_examples_status = [_]ExampleSpec{
     .{
         .command = "nullhub api GET /api/status --pretty",
         .description = "Inspect hub health, uptime, and instance summary.",
+    },
+};
+
+const route_examples_spaces = [_]ExampleSpec{
+    .{
+        .command = "nullhub api GET /api/spaces --pretty",
+        .description = "List spaces available in the Hub product data plane.",
+    },
+    .{
+        .command = "nullhub api POST /api/spaces --body '{\"id\":\"ops\",\"name\":\"Operations\",\"kind\":\"team\",\"stage\":\"active\"}'",
+        .description = "Create a Space with an explicit stable id.",
     },
 };
 
@@ -621,13 +649,45 @@ const routes = [_]RouteSpec{
         .response = "Validation result array.",
     },
     .{
+        .id = "spaces.list",
+        .method = "GET",
+        .path_template = "/api/spaces",
+        .category = "spaces",
+        .summary = "List Spaces in the Hub product data plane.",
+        .auth_mode = "optional_bearer",
+        .response = "Space list with id, name, kind, and stage.",
+        .examples = route_examples_spaces[0..1],
+    },
+    .{
+        .id = "spaces.create",
+        .method = "POST",
+        .path_template = "/api/spaces",
+        .category = "spaces",
+        .summary = "Create a Space.",
+        .auth_mode = "optional_bearer",
+        .body = "Space create payload with optional id plus name, kind, and stage.",
+        .response = "Created Space record.",
+        .examples = route_examples_spaces[1..],
+    },
+    .{
+        .id = "spaces.update",
+        .method = "PATCH",
+        .path_template = "/api/spaces/{id}",
+        .category = "spaces",
+        .summary = "Update a Space name, kind, or stage.",
+        .auth_mode = "optional_bearer",
+        .path_params = space_id_params[0..],
+        .body = "Partial Space update payload.",
+        .response = "Updated Space record.",
+    },
+    .{
         .id = "providers.list",
         .method = "GET",
         .path_template = "/api/providers",
         .category = "providers",
         .summary = "List saved providers.",
         .auth_mode = "optional_bearer",
-        .query_params = reveal_query_params[0..],
+        .query_params = reveal_space_query_params[0..],
         .response = "Saved provider list.",
     },
     .{
@@ -680,7 +740,7 @@ const routes = [_]RouteSpec{
         .category = "channels",
         .summary = "List saved channels.",
         .auth_mode = "optional_bearer",
-        .query_params = reveal_query_params[0..],
+        .query_params = reveal_space_query_params[0..],
         .response = "Saved channel list.",
     },
     .{
@@ -732,6 +792,7 @@ const routes = [_]RouteSpec{
         .category = "instances",
         .summary = "List all managed instances across components.",
         .auth_mode = "optional_bearer",
+        .query_params = space_query_params[0..],
         .response = "Instance collection grouped by component.",
         .examples = route_examples_instances[0..],
     },

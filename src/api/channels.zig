@@ -88,16 +88,19 @@ fn maskSecret(buf: *std.array_list.Managed(u8), value: []const u8) !void {
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
 /// GET /api/channels — list all saved channels
-pub fn handleList(allocator: std.mem.Allocator, state: *state_mod.State, reveal: bool) ![]const u8 {
+pub fn handleList(allocator: std.mem.Allocator, state: *state_mod.State, reveal: bool, space_id: ?[]const u8) ![]const u8 {
     const channels = state.savedChannels();
 
     var buf = std.array_list.Managed(u8).init(allocator);
     errdefer buf.deinit();
     try buf.appendSlice("{\"channels\":[");
 
-    for (channels, 0..) |sc, idx| {
-        if (idx > 0) try buf.append(',');
+    var appended: usize = 0;
+    for (channels) |sc| {
+        if (!state.spaceMatches(sc.space_id, space_id)) continue;
+        if (appended > 0) try buf.append(',');
         try appendChannelJson(&buf, sc, reveal);
+        appended += 1;
     }
 
     try buf.appendSlice("]}");
@@ -131,6 +134,13 @@ pub fn handleCreate(
         .string => |s| s,
         else => return try allocator.dupe(u8, "{\"error\":\"account must be a string\"}"),
     };
+    const space_id = if (root_obj.get("space_id")) |v| switch (v) {
+        .string => |s| s,
+        else => "",
+    } else if (root_obj.get("space")) |v| switch (v) {
+        .string => |s| s,
+        else => "",
+    } else "";
 
     // Serialize config object to JSON string
     const config_val = root_obj.get("config");
@@ -166,6 +176,7 @@ pub fn handleCreate(
         .account = account,
         .config = config_json,
         .validated_with = component_name,
+        .space_id = space_id,
     });
 
     // Update validated_at on the just-added channel
@@ -215,6 +226,13 @@ pub fn handleUpdate(
         .string => |s| s,
         else => null,
     } else null;
+    const new_space_id: ?[]const u8 = if (root_obj.get("space_id")) |v| switch (v) {
+        .string => |s| s,
+        else => null,
+    } else if (root_obj.get("space")) |v| switch (v) {
+        .string => |s| s,
+        else => null,
+    } else null;
 
     // Serialize config object if present
     const config_val = root_obj.get("config");
@@ -261,10 +279,11 @@ pub fn handleUpdate(
             .config = new_config,
             .validated_at = now,
             .validated_with = component_name,
+            .space_id = new_space_id,
         });
     } else {
-        // Name-only update
-        _ = try state.updateSavedChannel(id, .{ .name = new_name });
+        // Metadata-only update
+        _ = try state.updateSavedChannel(id, .{ .name = new_name, .space_id = new_space_id });
     }
 
     try state.save();
@@ -439,6 +458,8 @@ fn appendChannelJson(buf: *std.array_list.Managed(u8), sc: state_mod.SavedChanne
     try appendEscaped(buf, sc.validated_at);
     try buf.appendSlice("\",\"validated_with\":\"");
     try appendEscaped(buf, sc.validated_with);
+    try buf.appendSlice("\",\"space_id\":\"");
+    try appendEscaped(buf, if (sc.space_id.len > 0) sc.space_id else "default");
     try buf.appendSlice("\"}");
 }
 
@@ -545,7 +566,7 @@ test "handleList returns empty array for no channels" {
     var s = state_mod.State.init(allocator, path);
     defer s.deinit();
 
-    const json = try handleList(allocator, &s, false);
+    const json = try handleList(allocator, &s, false, null);
     defer allocator.free(json);
     try std.testing.expectEqualStrings("{\"channels\":[]}", json);
 }
@@ -565,7 +586,7 @@ test "handleList masks secrets in config" {
         .config = "{\"bot_token\":\"123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\",\"chat_id\":\"@mychannel\"}",
     });
 
-    const json = try handleList(allocator, &s, false);
+    const json = try handleList(allocator, &s, false, null);
     defer allocator.free(json);
     // bot_token should be masked
     try std.testing.expect(std.mem.indexOf(u8, json, "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11") == null);
@@ -589,10 +610,29 @@ test "handleList reveals secrets when requested" {
         .config = "{\"bot_token\":\"123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11\",\"chat_id\":\"@mychannel\"}",
     });
 
-    const json = try handleList(allocator, &s, true);
+    const json = try handleList(allocator, &s, true, null);
     defer allocator.free(json);
     // bot_token should be revealed
     try std.testing.expect(std.mem.indexOf(u8, json, "123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11") != null);
+}
+
+test "handleList filters channels by space" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    const path = try fixture.paths.state(allocator);
+    defer allocator.free(path);
+    var s = state_mod.State.init(allocator, path);
+    defer s.deinit();
+
+    try s.addSavedChannel(.{ .channel_type = "telegram", .account = "opsbot", .space_id = "ops" });
+    try s.addSavedChannel(.{ .channel_type = "discord", .account = "lab", .space_id = "lab" });
+
+    const json = try handleList(allocator, &s, true, "ops");
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "opsbot") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "lab") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"space_id\":\"ops\"") != null);
 }
 
 test "handleDelete removes channel" {

@@ -52,16 +52,19 @@ pub fn isProbeModelsPath(target: []const u8) bool {
 // ─── Handlers ────────────────────────────────────────────────────────────────
 
 /// GET /api/providers — list all saved providers
-pub fn handleList(allocator: std.mem.Allocator, state: *state_mod.State, reveal: bool) ![]const u8 {
+pub fn handleList(allocator: std.mem.Allocator, state: *state_mod.State, reveal: bool, space_id: ?[]const u8) ![]const u8 {
     const providers = state.savedProviders();
 
     var buf = std.array_list.Managed(u8).init(allocator);
     errdefer buf.deinit();
     try buf.appendSlice("{\"providers\":[");
 
-    for (providers, 0..) |sp, idx| {
-        if (idx > 0) try buf.append(',');
+    var appended: usize = 0;
+    for (providers) |sp| {
+        if (!state.spaceMatches(sp.space_id, space_id)) continue;
+        if (appended > 0) try buf.append(',');
         try appendProviderJson(&buf, sp, reveal);
+        appended += 1;
     }
 
     try buf.appendSlice("]}");
@@ -80,6 +83,8 @@ pub fn handleCreate(
         api_key: []const u8 = "",
         model: []const u8 = "",
         base_url: []const u8 = "",
+        space: []const u8 = "",
+        space_id: []const u8 = "",
     }, allocator, body, .{
         .allocate = .alloc_always,
         .ignore_unknown_fields = true,
@@ -133,6 +138,7 @@ pub fn handleCreate(
         .model = parsed.value.model,
         .base_url = parsed.value.base_url,
         .validated_with = validated_with,
+        .space_id = if (parsed.value.space_id.len > 0) parsed.value.space_id else parsed.value.space,
     });
 
     // Record validation result
@@ -180,6 +186,8 @@ pub fn handleUpdate(
         api_key: ?[]const u8 = null,
         model: ?[]const u8 = null,
         base_url: ?[]const u8 = null,
+        space: ?[]const u8 = null,
+        space_id: ?[]const u8 = null,
     }, allocator, body, .{
         .allocate = .alloc_always,
         .ignore_unknown_fields = true,
@@ -237,6 +245,7 @@ pub fn handleUpdate(
                 .validated_with = component_name,
                 .last_validation_at = now,
                 .last_validation_ok = true,
+                .space_id = parsed.value.space_id orelse parsed.value.space,
             });
         } else {
             // Custom provider: probe /models endpoint; always update regardless of result.
@@ -253,11 +262,15 @@ pub fn handleUpdate(
                 .validated_with = if (models_probe.live_ok) "models-probe" else "",
                 .last_validation_at = now,
                 .last_validation_ok = models_probe.live_ok,
+                .space_id = parsed.value.space_id orelse parsed.value.space,
             });
         }
     } else {
-        // Name-only update
-        _ = try state.updateSavedProvider(id, .{ .name = parsed.value.name });
+        // Metadata-only update
+        _ = try state.updateSavedProvider(id, .{
+            .name = parsed.value.name,
+            .space_id = parsed.value.space_id orelse parsed.value.space,
+        });
     }
 
     try state.save();
@@ -719,6 +732,9 @@ fn appendProviderJson(buf: *std.array_list.Managed(u8), sp: state_mod.SavedProvi
     try appendEscaped(buf, sp.last_validation_at);
     try buf.appendSlice("\",\"last_validation_ok\":");
     try buf.appendSlice(if (sp.last_validation_ok) "true" else "false");
+    try buf.appendSlice(",\"space_id\":\"");
+    try appendEscaped(buf, if (sp.space_id.len > 0) sp.space_id else "default");
+    try buf.append('"');
     try buf.appendSlice("}");
 }
 
@@ -778,7 +794,7 @@ test "handleList returns empty array for no providers" {
     var s = state_mod.State.init(allocator, path);
     defer s.deinit();
 
-    const json = try handleList(allocator, &s, false);
+    const json = try handleList(allocator, &s, false, null);
     defer allocator.free(json);
     try std.testing.expectEqualStrings("{\"providers\":[]}", json);
 }
@@ -794,7 +810,7 @@ test "handleList masks api_key by default" {
 
     try s.addSavedProvider(.{ .provider = "openrouter", .api_key = "sk-or-1234567890abcdef" });
 
-    const json = try handleList(allocator, &s, false);
+    const json = try handleList(allocator, &s, false, null);
     defer allocator.free(json);
     // Should contain masked key, not the full key
     try std.testing.expect(std.mem.indexOf(u8, json, "sk-o...cdef") != null);
@@ -812,9 +828,28 @@ test "handleList reveals api_key when requested" {
 
     try s.addSavedProvider(.{ .provider = "openrouter", .api_key = "sk-or-1234567890abcdef" });
 
-    const json = try handleList(allocator, &s, true);
+    const json = try handleList(allocator, &s, true, null);
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "sk-or-1234567890abcdef") != null);
+}
+
+test "handleList filters providers by space" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    const path = try fixture.paths.state(allocator);
+    defer allocator.free(path);
+    var s = state_mod.State.init(allocator, path);
+    defer s.deinit();
+
+    try s.addSavedProvider(.{ .provider = "openrouter", .api_key = "space-a-key", .space_id = "ops" });
+    try s.addSavedProvider(.{ .provider = "anthropic", .api_key = "space-b-key", .space_id = "lab" });
+
+    const json = try handleList(allocator, &s, true, "ops");
+    defer allocator.free(json);
+    try std.testing.expect(std.mem.indexOf(u8, json, "space-a-key") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "space-b-key") == null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"space_id\":\"ops\"") != null);
 }
 
 test "handleList includes base_url for openai-compatible provider" {
@@ -833,7 +868,7 @@ test "handleList includes base_url for openai-compatible provider" {
         .base_url = "https://example.com/v1",
     });
 
-    const json = try handleList(allocator, &s, true);
+    const json = try handleList(allocator, &s, true, null);
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"base_url\":\"https://example.com/v1\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"provider\":\"custom-llm\"") != null);
@@ -850,7 +885,7 @@ test "handleList includes empty base_url for standard provider" {
 
     try s.addSavedProvider(.{ .provider = "openrouter", .api_key = "sk-or-xxx" });
 
-    const json = try handleList(allocator, &s, true);
+    const json = try handleList(allocator, &s, true, null);
     defer allocator.free(json);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"base_url\":\"\"") != null);
 }

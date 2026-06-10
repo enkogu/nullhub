@@ -1,5 +1,6 @@
 const std = @import("std");
 const std_compat = @import("compat");
+const test_helpers = @import("../test_helpers.zig");
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -10,6 +11,27 @@ pub const InstanceEntry = struct {
     verbose: bool = false,
     storage_mode: []const u8 = "",
     source_path: []const u8 = "",
+    space_id: []const u8 = "",
+};
+
+pub const Space = struct {
+    id: []const u8,
+    name: []const u8,
+    kind: []const u8,
+    stage: []const u8,
+};
+
+pub const SpaceInput = struct {
+    id: []const u8 = "",
+    name: []const u8,
+    kind: []const u8 = "workspace",
+    stage: []const u8 = "active",
+};
+
+pub const SpaceUpdate = struct {
+    name: ?[]const u8 = null,
+    kind: ?[]const u8 = null,
+    stage: ?[]const u8 = null,
 };
 
 pub const SavedProvider = struct {
@@ -23,6 +45,7 @@ pub const SavedProvider = struct {
     validated_with: []const u8 = "",
     last_validation_at: []const u8 = "",
     last_validation_ok: bool = false,
+    space_id: []const u8 = "",
 };
 
 pub const SavedProviderInput = struct {
@@ -31,6 +54,7 @@ pub const SavedProviderInput = struct {
     model: []const u8 = "",
     base_url: []const u8 = "",
     validated_with: []const u8 = "",
+    space_id: []const u8 = "",
 };
 
 pub const SavedProviderUpdate = struct {
@@ -42,6 +66,7 @@ pub const SavedProviderUpdate = struct {
     validated_with: ?[]const u8 = null,
     last_validation_at: ?[]const u8 = null,
     last_validation_ok: ?bool = null,
+    space_id: ?[]const u8 = null,
 };
 
 pub const SavedChannel = struct {
@@ -52,6 +77,7 @@ pub const SavedChannel = struct {
     config: []const u8 = "", // serialized JSON string
     validated_at: []const u8 = "",
     validated_with: []const u8 = "",
+    space_id: []const u8 = "",
 };
 
 pub const SavedChannelInput = struct {
@@ -60,6 +86,7 @@ pub const SavedChannelInput = struct {
     config: []const u8 = "",
     validated_with: []const u8 = "",
     validated_at: []const u8 = "",
+    space_id: []const u8 = "",
 };
 
 pub const SavedChannelUpdate = struct {
@@ -68,6 +95,7 @@ pub const SavedChannelUpdate = struct {
     config: ?[]const u8 = null,
     validated_at: ?[]const u8 = null,
     validated_with: ?[]const u8 = null,
+    space_id: ?[]const u8 = null,
 };
 
 fn providerLabel(provider: []const u8) []const u8 {
@@ -128,6 +156,7 @@ fn channelLabel(channel_type: []const u8) []const u8 {
 /// round-trip through `std.json` without custom hooks.
 const JsonState = struct {
     instances: std.json.ArrayHashMap(std.json.ArrayHashMap(InstanceEntry)),
+    spaces: []const Space = &.{},
     saved_providers: []const SavedProvider = &.{},
     saved_channels: []const SavedChannel = &.{},
 };
@@ -202,6 +231,8 @@ fn duplicateInstanceEntry(allocator: std.mem.Allocator, entry: InstanceEntry) !I
     errdefer freeOptionalString(allocator, owned_storage_mode);
     const owned_source_path = try duplicateOptionalString(allocator, entry.source_path);
     errdefer freeOptionalString(allocator, owned_source_path);
+    const owned_space_id = try duplicateOptionalString(allocator, entry.space_id);
+    errdefer freeOptionalString(allocator, owned_space_id);
 
     return .{
         .version = owned_version,
@@ -210,6 +241,7 @@ fn duplicateInstanceEntry(allocator: std.mem.Allocator, entry: InstanceEntry) !I
         .verbose = entry.verbose,
         .storage_mode = owned_storage_mode,
         .source_path = owned_source_path,
+        .space_id = owned_space_id,
     };
 }
 
@@ -218,6 +250,31 @@ fn freeInstanceEntry(allocator: std.mem.Allocator, entry: InstanceEntry) void {
     allocator.free(entry.launch_mode);
     freeOptionalString(allocator, entry.storage_mode);
     freeOptionalString(allocator, entry.source_path);
+    freeOptionalString(allocator, entry.space_id);
+}
+
+fn duplicateSpace(allocator: std.mem.Allocator, space: Space) !Space {
+    const owned_id = try allocator.dupe(u8, space.id);
+    errdefer allocator.free(owned_id);
+    const owned_name = try allocator.dupe(u8, space.name);
+    errdefer allocator.free(owned_name);
+    const owned_kind = try allocator.dupe(u8, space.kind);
+    errdefer allocator.free(owned_kind);
+    const owned_stage = try allocator.dupe(u8, space.stage);
+    errdefer allocator.free(owned_stage);
+    return .{
+        .id = owned_id,
+        .name = owned_name,
+        .kind = owned_kind,
+        .stage = owned_stage,
+    };
+}
+
+fn freeSpaceStrings(allocator: std.mem.Allocator, space: Space) void {
+    allocator.free(space.id);
+    allocator.free(space.name);
+    allocator.free(space.kind);
+    allocator.free(space.stage);
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -226,6 +283,7 @@ pub const State = struct {
     allocator: std.mem.Allocator,
     /// instances[component][name] = InstanceEntry
     instances: ComponentMap,
+    spaces: std.array_list.Managed(Space),
     saved_providers: std.array_list.Managed(SavedProvider),
     saved_channels: std.array_list.Managed(SavedChannel),
     path: []const u8,
@@ -235,6 +293,7 @@ pub const State = struct {
         return .{
             .allocator = allocator,
             .instances = ComponentMap.init(allocator),
+            .spaces = std.array_list.Managed(Space).init(allocator),
             .saved_providers = std.array_list.Managed(SavedProvider).init(allocator),
             .saved_channels = std.array_list.Managed(SavedChannel).init(allocator),
             .path = allocator.dupe(u8, path) catch @panic("OOM"),
@@ -250,6 +309,7 @@ pub const State = struct {
         if (sp.validated_at.len > 0) self.allocator.free(sp.validated_at);
         if (sp.validated_with.len > 0) self.allocator.free(sp.validated_with);
         if (sp.last_validation_at.len > 0) self.allocator.free(sp.last_validation_at);
+        if (sp.space_id.len > 0) self.allocator.free(sp.space_id);
     }
 
     fn freeSavedChannelStrings(self: *State, sc: SavedChannel) void {
@@ -259,10 +319,16 @@ pub const State = struct {
         if (sc.config.len > 0) self.allocator.free(sc.config);
         if (sc.validated_at.len > 0) self.allocator.free(sc.validated_at);
         if (sc.validated_with.len > 0) self.allocator.free(sc.validated_with);
+        if (sc.space_id.len > 0) self.allocator.free(sc.space_id);
     }
 
     /// Free all owned strings and hashmaps.
     pub fn deinit(self: *State) void {
+        for (self.spaces.items) |space| {
+            freeSpaceStrings(self.allocator, space);
+        }
+        self.spaces.deinit();
+
         for (self.saved_channels.items) |sc| {
             self.freeSavedChannelStrings(sc);
         }
@@ -337,6 +403,12 @@ pub const State = struct {
             try state.instances.put(comp_name, inner);
         }
 
+        for (parsed.value.spaces) |space| {
+            const owned_space = try duplicateSpace(allocator, space);
+            errdefer freeSpaceStrings(allocator, owned_space);
+            try state.spaces.append(owned_space);
+        }
+
         for (parsed.value.saved_providers) |sp| {
             const owned_name = try allocator.dupe(u8, sp.name);
             errdefer allocator.free(owned_name);
@@ -354,6 +426,8 @@ pub const State = struct {
             errdefer if (owned_validated_with.len > 0) allocator.free(@constCast(owned_validated_with));
             const owned_last_validation_at = if (sp.last_validation_at.len > 0) try allocator.dupe(u8, sp.last_validation_at) else @as([]const u8, "");
             errdefer if (owned_last_validation_at.len > 0) allocator.free(@constCast(owned_last_validation_at));
+            const owned_space_id = if (sp.space_id.len > 0) try allocator.dupe(u8, sp.space_id) else @as([]const u8, "");
+            errdefer if (owned_space_id.len > 0) allocator.free(@constCast(owned_space_id));
 
             try state.saved_providers.append(.{
                 .id = sp.id,
@@ -366,6 +440,7 @@ pub const State = struct {
                 .validated_with = owned_validated_with,
                 .last_validation_at = owned_last_validation_at,
                 .last_validation_ok = sp.last_validation_ok,
+                .space_id = owned_space_id,
             });
         }
 
@@ -382,6 +457,8 @@ pub const State = struct {
             errdefer if (owned_validated_at.len > 0) allocator.free(@constCast(owned_validated_at));
             const owned_validated_with = if (sc.validated_with.len > 0) try allocator.dupe(u8, sc.validated_with) else @as([]const u8, "");
             errdefer if (owned_validated_with.len > 0) allocator.free(@constCast(owned_validated_with));
+            const owned_space_id = if (sc.space_id.len > 0) try allocator.dupe(u8, sc.space_id) else @as([]const u8, "");
+            errdefer if (owned_space_id.len > 0) allocator.free(@constCast(owned_space_id));
 
             try state.saved_channels.append(.{
                 .id = sc.id,
@@ -391,6 +468,7 @@ pub const State = struct {
                 .config = owned_config,
                 .validated_at = owned_validated_at,
                 .validated_with = owned_validated_with,
+                .space_id = owned_space_id,
             });
         }
 
@@ -426,6 +504,7 @@ pub const State = struct {
 
         const json_state = JsonState{
             .instances = json_outer,
+            .spaces = self.spaces.items,
             .saved_providers = self.saved_providers.items,
             .saved_channels = self.saved_channels.items,
         };
@@ -509,6 +588,7 @@ pub const State = struct {
 
         const effective_storage_mode = if (entry.storage_mode.len > 0) entry.storage_mode else ptr.storage_mode;
         const effective_source_path = if (entry.source_path.len > 0) entry.source_path else ptr.source_path;
+        const effective_space_id = if (entry.space_id.len > 0) entry.space_id else ptr.space_id;
         const effective_entry = InstanceEntry{
             .version = entry.version,
             .auto_start = entry.auto_start,
@@ -516,6 +596,7 @@ pub const State = struct {
             .verbose = entry.verbose,
             .storage_mode = effective_storage_mode,
             .source_path = effective_source_path,
+            .space_id = effective_space_id,
         };
 
         // Dupe new values before freeing old ones to avoid use-after-free
@@ -547,6 +628,70 @@ pub const State = struct {
         return result;
     }
 
+    // ─── Spaces CRUD ───────────────────────────────────────────────────
+
+    pub fn spacesList(self: *State) []const Space {
+        return self.spaces.items;
+    }
+
+    pub fn getSpace(self: *State, id: []const u8) ?Space {
+        for (self.spaces.items) |space| {
+            if (std.mem.eql(u8, space.id, id)) return space;
+        }
+        return null;
+    }
+
+    pub fn addSpace(self: *State, input: SpaceInput) !Space {
+        const id = if (input.id.len > 0)
+            try self.allocator.dupe(u8, input.id)
+        else
+            try self.nextSpaceId();
+        errdefer self.allocator.free(id);
+
+        const name = try self.allocator.dupe(u8, input.name);
+        errdefer self.allocator.free(name);
+        const kind = try self.allocator.dupe(u8, if (input.kind.len > 0) input.kind else "workspace");
+        errdefer self.allocator.free(kind);
+        const stage = try self.allocator.dupe(u8, if (input.stage.len > 0) input.stage else "active");
+        errdefer self.allocator.free(stage);
+
+        const space = Space{
+            .id = id,
+            .name = name,
+            .kind = kind,
+            .stage = stage,
+        };
+        try self.spaces.append(space);
+        return space;
+    }
+
+    pub fn updateSpace(self: *State, id: []const u8, update: SpaceUpdate) !bool {
+        for (self.spaces.items) |*space| {
+            if (std.mem.eql(u8, space.id, id)) {
+                const new_name = if (update.name) |name| try self.allocator.dupe(u8, name) else null;
+                errdefer if (new_name) |n| self.allocator.free(n);
+                const new_kind = if (update.kind) |kind| try self.allocator.dupe(u8, kind) else null;
+                errdefer if (new_kind) |k| self.allocator.free(k);
+                const new_stage = if (update.stage) |stage| try self.allocator.dupe(u8, stage) else null;
+
+                if (update.name != null) {
+                    self.allocator.free(space.name);
+                    space.name = new_name.?;
+                }
+                if (update.kind != null) {
+                    self.allocator.free(space.kind);
+                    space.kind = new_kind.?;
+                }
+                if (update.stage != null) {
+                    self.allocator.free(space.stage);
+                    space.stage = new_stage.?;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
     pub fn savedProviders(self: *State) []const SavedProvider {
         return self.saved_providers.items;
     }
@@ -572,6 +717,8 @@ pub const State = struct {
         errdefer if (base_url.len > 0) self.allocator.free(@constCast(base_url));
         const validated_with = if (input.validated_with.len > 0) try self.allocator.dupe(u8, input.validated_with) else @as([]const u8, "");
         errdefer if (validated_with.len > 0) self.allocator.free(@constCast(validated_with));
+        const space_id = if (input.space_id.len > 0) try self.allocator.dupe(u8, input.space_id) else @as([]const u8, "");
+        errdefer if (space_id.len > 0) self.allocator.free(@constCast(space_id));
 
         try self.saved_providers.append(.{
             .id = id,
@@ -584,6 +731,7 @@ pub const State = struct {
             .validated_with = validated_with,
             .last_validation_at = "",
             .last_validation_ok = false,
+            .space_id = space_id,
         });
     }
 
@@ -620,6 +768,11 @@ pub const State = struct {
                 else
                     null;
                 errdefer if (new_last_validation_at) |t| if (t.len > 0) self.allocator.free(@constCast(t));
+                const new_space_id = if (update.space_id) |space_id|
+                    if (space_id.len > 0) try self.allocator.dupe(u8, space_id) else @as([]const u8, "")
+                else
+                    null;
+                errdefer if (new_space_id) |sid| if (sid.len > 0) self.allocator.free(@constCast(sid));
 
                 // Apply all at once (no more failures possible)
                 if (update.name != null) {
@@ -656,6 +809,11 @@ pub const State = struct {
                     const t = new_last_validation_at.?;
                     if (sp.last_validation_at.len > 0) self.allocator.free(sp.last_validation_at);
                     sp.last_validation_at = t;
+                }
+                if (update.space_id != null) {
+                    const sid = new_space_id.?;
+                    if (sp.space_id.len > 0) self.allocator.free(sp.space_id);
+                    sp.space_id = sid;
                 }
                 if (update.last_validation_ok) |ok| {
                     sp.last_validation_ok = ok;
@@ -731,6 +889,8 @@ pub const State = struct {
         errdefer if (validated_with.len > 0) self.allocator.free(@constCast(validated_with));
         const validated_at = if (input.validated_at.len > 0) try self.allocator.dupe(u8, input.validated_at) else @as([]const u8, "");
         errdefer if (validated_at.len > 0) self.allocator.free(@constCast(validated_at));
+        const space_id = if (input.space_id.len > 0) try self.allocator.dupe(u8, input.space_id) else @as([]const u8, "");
+        errdefer if (space_id.len > 0) self.allocator.free(@constCast(space_id));
 
         try self.saved_channels.append(.{
             .id = id,
@@ -740,6 +900,7 @@ pub const State = struct {
             .config = config,
             .validated_at = validated_at,
             .validated_with = validated_with,
+            .space_id = space_id,
         });
     }
 
@@ -763,6 +924,11 @@ pub const State = struct {
                 errdefer if (new_validated_at) |t| if (t.len > 0) self.allocator.free(@constCast(t));
                 const new_validated_with = if (update.validated_with) |validated_with|
                     if (validated_with.len > 0) try self.allocator.dupe(u8, validated_with) else @as([]const u8, "")
+                else
+                    null;
+                errdefer if (new_validated_with) |w| if (w.len > 0) self.allocator.free(@constCast(w));
+                const new_space_id = if (update.space_id) |space_id|
+                    if (space_id.len > 0) try self.allocator.dupe(u8, space_id) else @as([]const u8, "")
                 else
                     null;
                 // No errdefer needed for the last one - nothing after can fail
@@ -793,6 +959,11 @@ pub const State = struct {
                     if (sc.validated_with.len > 0) self.allocator.free(sc.validated_with);
                     sc.validated_with = w;
                 }
+                if (update.space_id != null) {
+                    const sid = new_space_id.?;
+                    if (sc.space_id.len > 0) self.allocator.free(sc.space_id);
+                    sc.space_id = sid;
+                }
 
                 return true;
             }
@@ -821,6 +992,24 @@ pub const State = struct {
             }
         }
         return false;
+    }
+
+    pub fn spaceMatches(_: *State, entry_space_id: []const u8, requested_space_id: ?[]const u8) bool {
+        const requested = requested_space_id orelse return true;
+        if (requested.len == 0) return true;
+        if (entry_space_id.len == 0) return std.mem.eql(u8, requested, "default");
+        return std.mem.eql(u8, entry_space_id, requested);
+    }
+
+    fn nextSpaceId(self: *State) ![]u8 {
+        var next_number: u32 = 1;
+        for (self.spaces.items) |space| {
+            const prefix = "space-";
+            if (!std.mem.startsWith(u8, space.id, prefix)) continue;
+            const value = std.fmt.parseInt(u32, space.id[prefix.len..], 10) catch continue;
+            if (value >= next_number) next_number = value + 1;
+        }
+        return std.fmt.allocPrint(self.allocator, "space-{d}", .{next_number});
     }
 
     fn nextChannelId(self: *State) u32 {
@@ -874,6 +1063,69 @@ fn testPath(allocator: std.mem.Allocator, name: []const u8) ![]const u8 {
 
 fn cleanupTestDir() void {
     std_compat.fs.deleteTreeAbsolute("/tmp/nullhub-state-test") catch {};
+}
+
+test "add spaces, save, load, verify round-trip" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    const path = try fixture.path(allocator, "state.json");
+    defer allocator.free(path);
+
+    {
+        var s = State.init(allocator, path);
+        defer s.deinit();
+
+        const created = try s.addSpace(.{
+            .id = "ops",
+            .name = "Operations",
+            .kind = "team",
+            .stage = "active",
+        });
+        try std.testing.expectEqualStrings("ops", created.id);
+        try s.save();
+    }
+
+    {
+        var s = try State.load(allocator, path);
+        defer s.deinit();
+
+        const spaces = s.spacesList();
+        try std.testing.expectEqual(@as(usize, 1), spaces.len);
+        try std.testing.expectEqualStrings("ops", spaces[0].id);
+        try std.testing.expectEqualStrings("Operations", spaces[0].name);
+        try std.testing.expectEqualStrings("team", spaces[0].kind);
+        try std.testing.expectEqualStrings("active", spaces[0].stage);
+    }
+}
+
+test "space ids persist on instances providers and channels" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    const path = try fixture.path(allocator, "state.json");
+    defer allocator.free(path);
+
+    {
+        var s = State.init(allocator, path);
+        defer s.deinit();
+
+        try s.addInstance("nullclaw", "agent", .{ .version = "1.0.0", .space_id = "ops" });
+        try s.addSavedProvider(.{ .provider = "openrouter", .api_key = "key", .space_id = "ops" });
+        try s.addSavedChannel(.{ .channel_type = "telegram", .account = "bot", .space_id = "ops" });
+        try s.save();
+    }
+
+    {
+        var s = try State.load(allocator, path);
+        defer s.deinit();
+
+        try std.testing.expectEqualStrings("ops", s.getInstance("nullclaw", "agent").?.space_id);
+        try std.testing.expectEqualStrings("ops", s.savedProviders()[0].space_id);
+        try std.testing.expectEqualStrings("ops", s.savedChannels()[0].space_id);
+        try std.testing.expect(s.spaceMatches("", "default"));
+        try std.testing.expect(!s.spaceMatches("", "ops"));
+    }
 }
 
 test "add instances, save, load, verify round-trip" {
