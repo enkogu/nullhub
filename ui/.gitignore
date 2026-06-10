@@ -1,6 +1,7 @@
 node_modules/
 build/
 .svelte-kit/
+storybook-static/
 
 # Local agent tooling installed by desktop/CLI assistants.
 .agents/
