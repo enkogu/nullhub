@@ -278,7 +278,7 @@ test "ensureNullclawWebChannelConfig injects web channel when missing" {
 
     const inst_dir = try fixture.paths.instanceDir(allocator, "nullclaw", "instance-1");
     defer allocator.free(inst_dir);
-    try std_compat.fs.makeDirAbsolute(inst_dir);
+    try std_compat.fs.cwd().makePath(inst_dir);
 
     const cfg_path = try fixture.paths.instanceConfig(allocator, "nullclaw", "instance-1");
     defer allocator.free(cfg_path);
@@ -330,7 +330,7 @@ test "ensureNullclawWebChannelConfig picks next free port among instances" {
 
     const default_dir = try fixture.paths.instanceDir(allocator, "nullclaw", "default");
     defer allocator.free(default_dir);
-    try std_compat.fs.makeDirAbsolute(default_dir);
+    try std_compat.fs.cwd().makePath(default_dir);
 
     const default_cfg = try fixture.paths.instanceConfig(allocator, "nullclaw", "default");
     defer allocator.free(default_cfg);
@@ -350,7 +350,7 @@ test "ensureNullclawWebChannelConfig picks next free port among instances" {
 
     const inst_dir = try fixture.paths.instanceDir(allocator, "nullclaw", "instance-2");
     defer allocator.free(inst_dir);
-    try std_compat.fs.makeDirAbsolute(inst_dir);
+    try std_compat.fs.cwd().makePath(inst_dir);
 
     const inst_cfg = try fixture.paths.instanceConfig(allocator, "nullclaw", "instance-2");
     defer allocator.free(inst_cfg);

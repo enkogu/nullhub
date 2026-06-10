@@ -1638,10 +1638,7 @@ fn writeUsageCacheBuckets(
 
 pub fn writeUsageCacheSnapshot(allocator: std.mem.Allocator, cache_path: []const u8, snapshot: *const UsageCacheSnapshot) !void {
     const cache_dir = std.fs.path.dirname(cache_path) orelse return error.InvalidPath;
-    std_compat.fs.makeDirAbsolute(cache_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
+    try ensurePath(cache_dir);
 
     var file = try std_compat.fs.createFileAbsolute(cache_path, .{ .truncate = true });
     defer file.close();
@@ -3731,10 +3728,7 @@ fn mergeMcpDraftIntoExisting(allocator: std.mem.Allocator, existing: *std.json.V
 fn saveMcpConfig(allocator: std.mem.Allocator, paths: paths_mod.Paths, component: []const u8, name: []const u8, value: std.json.Value) !void {
     const inst_dir = try paths.instanceDir(allocator, component, name);
     defer allocator.free(inst_dir);
-    std_compat.fs.makeDirAbsolute(inst_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
+    try ensurePath(inst_dir);
     const config_path = try paths.instanceConfig(allocator, component, name);
     defer allocator.free(config_path);
     try writeJsonConfigValue(allocator, config_path, value);
@@ -8613,7 +8607,6 @@ test "dispatch manages markdown docs in instance workspace" {
 
     if (comptime builtin.os.tag != .windows) {
         const symlink_read_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "GET", "/api/instances/nullclaw/my-agent/docs?path=docs%2Fsecret-link.md", "").?;
-        defer allocator.free(symlink_read_resp.body);
         try std.testing.expectEqualStrings("404 Not Found", symlink_read_resp.status);
     }
 
@@ -8632,7 +8625,6 @@ test "dispatch manages markdown docs in instance workspace" {
     try std.testing.expect(std.mem.indexOf(u8, write_resp.body, "\"path\":\"docs/new-note.md\"") != null);
 
     const delete_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "DELETE", "/api/instances/nullclaw/my-agent/docs?path=docs%2Fnew-note.md", "").?;
-    defer allocator.free(delete_resp.body);
     try std.testing.expectEqualStrings("200 OK", delete_resp.status);
     const new_note_path = try std.fs.path.join(allocator, &.{ docs_dir, "new-note.md" });
     defer allocator.free(new_note_path);
@@ -9195,15 +9187,16 @@ test "handleUsage aggregates provider/model rows" {
         else => return err,
     };
 
-    const ledger_path = try std.fs.path.join(allocator, &.{ inst_dir, "llm_usage.jsonl" });
+    const ledger_path = try std.fs.path.join(allocator, &.{ inst_dir, TOKEN_USAGE_LEDGER_FILENAME });
     defer allocator.free(ledger_path);
     var ledger = try std_compat.fs.createFileAbsolute(ledger_path, .{ .truncate = true });
     defer ledger.close();
     var writer_buf: [512]u8 = undefined;
     var fw = ledger.writer(&writer_buf);
     const w = &fw.interface;
-    try w.writeAll("{\"ts\":1700000000,\"provider\":\"openrouter\",\"model\":\"anthropic/claude-sonnet-4\",\"prompt_tokens\":100,\"completion_tokens\":50,\"total_tokens\":150,\"success\":true}\n");
-    try w.writeAll("{\"ts\":1700000001,\"provider\":\"openrouter\",\"model\":\"anthropic/claude-sonnet-4\",\"prompt_tokens\":20,\"completion_tokens\":10,\"total_tokens\":30,\"success\":true}\n");
+    const usage_ts = std_compat.time.timestamp();
+    try w.print("{{\"ts\":{d},\"provider\":\"openrouter\",\"model\":\"anthropic/claude-sonnet-4\",\"prompt_tokens\":100,\"completion_tokens\":50,\"total_tokens\":150,\"success\":true}}\n", .{usage_ts});
+    try w.print("{{\"ts\":{d},\"provider\":\"openrouter\",\"model\":\"anthropic/claude-sonnet-4\",\"prompt_tokens\":20,\"completion_tokens\":10,\"total_tokens\":30,\"success\":true}}\n", .{usage_ts + 1});
     try w.flush();
 
     const resp = handleUsage(allocator, &s, mctx.paths, "nullclaw", "usage-agent", "/api/instances/nullclaw/usage-agent/usage?window=all");
@@ -9249,7 +9242,8 @@ test "handleUsage refreshes cache immediately when ledger changes" {
     var writer_buf: [512]u8 = undefined;
     var fw = ledger.writer(&writer_buf);
     const w = &fw.interface;
-    try w.writeAll("{\"ts\":1700001000,\"provider\":\"openrouter\",\"model\":\"anthropic/claude-sonnet-4\",\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2,\"success\":true}\n");
+    const usage_ts = std_compat.time.timestamp();
+    try w.print("{{\"ts\":{d},\"provider\":\"openrouter\",\"model\":\"anthropic/claude-sonnet-4\",\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2,\"success\":true}}\n", .{usage_ts});
     try w.flush();
 
     const first = handleUsage(allocator, &s, mctx.paths, "nullclaw", "usage-agent-cache", "/api/instances/nullclaw/usage-agent-cache/usage?window=all");
@@ -9260,7 +9254,7 @@ test "handleUsage refreshes cache immediately when ledger changes" {
 
     // Append one more row and verify the next read reflects it immediately.
     try ledger.seekFromEnd(0);
-    try w.writeAll("{\"ts\":1700001001,\"provider\":\"openrouter\",\"model\":\"anthropic/claude-sonnet-4\",\"prompt_tokens\":2,\"completion_tokens\":1,\"total_tokens\":3,\"success\":true}\n");
+    try w.print("{{\"ts\":{d},\"provider\":\"openrouter\",\"model\":\"anthropic/claude-sonnet-4\",\"prompt_tokens\":2,\"completion_tokens\":1,\"total_tokens\":3,\"success\":true}}\n", .{usage_ts + 1});
     try w.flush();
 
     const second = handleUsage(allocator, &s, mctx.paths, "nullclaw", "usage-agent-cache", "/api/instances/nullclaw/usage-agent-cache/usage?window=all");
@@ -9354,7 +9348,6 @@ test "handleHistory rejects components without history CLI contract" {
         "default",
         "/api/instances/nulltickets/default/history?limit=1&offset=0",
     );
-    defer allocator.free(resp.body);
 
     try std.testing.expectEqualStrings("400 Bad Request", resp.status);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "only supported for nullclaw") != null);
@@ -9432,15 +9425,15 @@ test "handleMemory forwards q alias session_id and include_internal" {
     const script =
         \\#!/bin/sh
         \\if [ "$1" = "memory" ] && [ "$2" = "search" ] && [ "$3" = "hello" ] && [ "$4" = "--limit" ] && [ "$5" = "3" ] && [ "$6" = "--session" ] && [ "$7" = "s-1" ] && [ "$8" = "--json" ]; then
-        \\  printf '%s\n' '[]'
+        \\  printf '%s' '[]'
         \\  exit 0
         \\fi
         \\if [ "$1" = "memory" ] && [ "$2" = "list" ] && [ "$3" = "--category" ] && [ "$4" = "core" ] && [ "$5" = "--session" ] && [ "$6" = "s-2" ] && [ "$7" = "--include-internal" ] && [ "$8" = "--limit" ] && [ "$9" = "2" ] && [ "${10}" = "--json" ]; then
-        \\  printf '%s\n' '[]'
+        \\  printf '%s' '[]'
         \\  exit 0
         \\fi
         \\if [ "$1" = "memory" ] && [ "$2" = "list" ] && [ "$3" = "--category" ] && [ "$4" = "core" ] && [ "$5" = "--limit" ] && [ "$6" = "2" ] && [ "$7" = "--offset" ] && [ "$8" = "5" ] && [ "$9" = "--json" ]; then
-        \\  printf '%s\n' '[]'
+        \\  printf '%s' '[]'
         \\  exit 0
         \\fi
         \\echo "unexpected args: $*" >&2
@@ -10466,8 +10459,8 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp-validate",
         "{\"name\":\"context7\",\"transport\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@upstash/context7-mcp\"]}",
     ).?;
-    defer allocator.free(validate_resp.body);
     try std.testing.expectEqualStrings("200 OK", validate_resp.status);
+    defer allocator.free(validate_resp.body);
     try std.testing.expect(std.mem.indexOf(u8, validate_resp.body, "\"valid\":true") != null);
 
     const invalid_http_resp = dispatch(
@@ -10480,7 +10473,6 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp-validate",
         "{\"name\":\"remote-http\",\"transport\":\"http\",\"url\":\"http://example.com/mcp\"}",
     ).?;
-    defer allocator.free(invalid_http_resp.body);
     try std.testing.expectEqualStrings("400 Bad Request", invalid_http_resp.status);
 
     const invalid_ipv6_resp = dispatch(
@@ -10493,7 +10485,6 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp-validate",
         "{\"name\":\"bad-ipv6\",\"transport\":\"http\",\"url\":\"http://[fczz::1]:6000/mcp\"}",
     ).?;
-    defer allocator.free(invalid_ipv6_resp.body);
     try std.testing.expectEqualStrings("400 Bad Request", invalid_ipv6_resp.status);
 
     const invalid_timeout_resp = dispatch(
@@ -10506,7 +10497,6 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp",
         "{\"name\":\"bad-timeout\",\"transport\":\"stdio\",\"command\":\"npx\",\"timeout_ms\":0}",
     ).?;
-    defer allocator.free(invalid_timeout_resp.body);
     try std.testing.expectEqualStrings("400 Bad Request", invalid_timeout_resp.status);
 
     const invalid_header_resp = dispatch(
@@ -10519,7 +10509,6 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp-validate",
         "{\"name\":\"bad-header\",\"transport\":\"http\",\"url\":\"http://localhost:6000/mcp\",\"headers\":{\"X-Trace\":\"bad\\nvalue\"}}",
     ).?;
-    defer allocator.free(invalid_header_resp.body);
     try std.testing.expectEqualStrings("400 Bad Request", invalid_header_resp.status);
 
     const invalid_header_name_resp = dispatch(
@@ -10532,7 +10521,6 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp-validate",
         "{\"name\":\"bad-header-name\",\"transport\":\"http\",\"url\":\"http://localhost:6000/mcp\",\"headers\":{\"\\nX-Trace\":\"value\"}}",
     ).?;
-    defer allocator.free(invalid_header_name_resp.body);
     try std.testing.expectEqualStrings("400 Bad Request", invalid_header_name_resp.status);
 
     const create_resp = dispatch(
@@ -10545,8 +10533,8 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp",
         "{\"name\":\"context7\",\"transport\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@upstash/context7-mcp\"],\"env\":{\"CONTEXT7_API_KEY\":\"${CONTEXT7_API_KEY}\"}}",
     ).?;
-    defer allocator.free(create_resp.body);
     try std.testing.expectEqualStrings("200 OK", create_resp.status);
+    defer allocator.free(create_resp.body);
     try std.testing.expect(std.mem.indexOf(u8, create_resp.body, "\"action\":\"create\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, create_resp.body, "\"requires_restart\":true") != null);
 
@@ -10560,7 +10548,6 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp",
         "{\"name\":\"context7\",\"transport\":\"stdio\",\"command\":\"npx\"}",
     ).?;
-    defer allocator.free(duplicate_resp.body);
     try std.testing.expectEqualStrings("409 Conflict", duplicate_resp.status);
 
     const mismatch_resp = dispatch(
@@ -10573,14 +10560,12 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp?name=context7",
         "{\"name\":\"other\",\"transport\":\"stdio\",\"command\":\"node\"}",
     ).?;
-    defer allocator.free(mismatch_resp.body);
     try std.testing.expectEqualStrings("400 Bad Request", mismatch_resp.status);
 
     const method_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "PUT", "/api/instances/nullclaw/my-agent/mcp?name=context7", "{}").?;
     try std.testing.expectEqualStrings("405 Method Not Allowed", method_resp.status);
 
     const missing_delete_name_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "DELETE", "/api/instances/nullclaw/my-agent/mcp", "").?;
-    defer allocator.free(missing_delete_name_resp.body);
     try std.testing.expectEqualStrings("400 Bad Request", missing_delete_name_resp.status);
 
     {
@@ -10615,8 +10600,8 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp?name=context7",
         "{\"name\":\"context7\",\"transport\":\"stdio\",\"command\":\"node\",\"args\":[\"server.js\"]}",
     ).?;
-    defer allocator.free(update_resp.body);
     try std.testing.expectEqualStrings("200 OK", update_resp.status);
+    defer allocator.free(update_resp.body);
     try std.testing.expect(std.mem.indexOf(u8, update_resp.body, "\"action\":\"update\"") != null);
 
     {
@@ -10651,8 +10636,8 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp?name=context7",
         "{\"env\":{\"EXTRA\":\"1\"}}",
     ).?;
-    defer allocator.free(env_patch_resp.body);
     try std.testing.expectEqualStrings("200 OK", env_patch_resp.status);
+    defer allocator.free(env_patch_resp.body);
 
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
@@ -10679,8 +10664,8 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp?name=context7",
         "{\"env\":{},\"replace_env\":true}",
     ).?;
-    defer allocator.free(env_replace_resp.body);
     try std.testing.expectEqualStrings("200 OK", env_replace_resp.status);
+    defer allocator.free(env_replace_resp.body);
 
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
@@ -10707,8 +10692,8 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp?name=context7",
         "{\"transport\":\"http\",\"url\":\"http://localhost:6001/mcp\",\"headers\":{\"Authorization\":\"Bearer new\"}}",
     ).?;
-    defer allocator.free(stdio_to_http_resp.body);
     try std.testing.expectEqualStrings("200 OK", stdio_to_http_resp.status);
+    defer allocator.free(stdio_to_http_resp.body);
 
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
@@ -10739,8 +10724,8 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp",
         "{\"name\":\"http-one\",\"transport\":\"http\",\"url\":\"http://localhost:6000/mcp\",\"headers\":{\"Authorization\":\"Bearer old\"}}",
     ).?;
-    defer allocator.free(http_create_resp.body);
     try std.testing.expectEqualStrings("200 OK", http_create_resp.status);
+    defer allocator.free(http_create_resp.body);
 
     const header_patch_resp = dispatch(
         allocator,
@@ -10752,8 +10737,8 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp?name=http-one",
         "{\"headers\":{\"X-Trace\":\"1\"}}",
     ).?;
-    defer allocator.free(header_patch_resp.body);
     try std.testing.expectEqualStrings("200 OK", header_patch_resp.status);
+    defer allocator.free(header_patch_resp.body);
 
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
@@ -10780,8 +10765,8 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp?name=http-one",
         "{\"headers\":{},\"replace_headers\":true}",
     ).?;
-    defer allocator.free(header_replace_resp.body);
     try std.testing.expectEqualStrings("200 OK", header_replace_resp.status);
+    defer allocator.free(header_replace_resp.body);
 
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
@@ -10808,8 +10793,8 @@ test "dispatch mutates mcp server config subtree" {
         "/api/instances/nullclaw/my-agent/mcp?name=http-one",
         "{\"transport\":\"stdio\",\"command\":\"node\",\"args\":[\"server.js\"]}",
     ).?;
-    defer allocator.free(http_to_stdio_resp.body);
     try std.testing.expectEqualStrings("200 OK", http_to_stdio_resp.status);
+    defer allocator.free(http_to_stdio_resp.body);
 
     {
         const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
@@ -10830,12 +10815,11 @@ test "dispatch mutates mcp server config subtree" {
     }
 
     const delete_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "DELETE", "/api/instances/nullclaw/my-agent/mcp?name=context7", "").?;
-    defer allocator.free(delete_resp.body);
     try std.testing.expectEqualStrings("200 OK", delete_resp.status);
+    defer allocator.free(delete_resp.body);
     try std.testing.expect(std.mem.indexOf(u8, delete_resp.body, "\"action\":\"delete\"") != null);
 
     const missing_delete_resp = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "DELETE", "/api/instances/nullclaw/my-agent/mcp?name=context7", "").?;
-    defer allocator.free(missing_delete_resp.body);
     try std.testing.expectEqualStrings("404 Not Found", missing_delete_resp.status);
 }
 
@@ -10865,11 +10849,9 @@ test "dispatch rejects unsupported and malformed mcp mutation boundaries" {
         "/api/instances/nullboiler/pipe/mcp-validate",
         "{\"name\":\"x\",\"transport\":\"stdio\",\"command\":\"npx\"}",
     ).?;
-    defer allocator.free(unsupported_validate.body);
     try std.testing.expectEqualStrings("400 Bad Request", unsupported_validate.status);
 
     const unsupported_read = dispatch(allocator, &s, &mctx.manager, &mctx.mutex, mctx.paths, "GET", "/api/instances/nullboiler/pipe/mcp", "").?;
-    defer allocator.free(unsupported_read.body);
     try std.testing.expectEqualStrings("400 Bad Request", unsupported_read.status);
 
     const missing_instance = dispatch(
@@ -10886,10 +10868,7 @@ test "dispatch rejects unsupported and malformed mcp mutation boundaries" {
 
     const inst_dir = try mctx.paths.instanceDir(allocator, "nullclaw", "my-agent");
     defer allocator.free(inst_dir);
-    std_compat.fs.makeDirAbsolute(inst_dir) catch |err| switch (err) {
-        error.PathAlreadyExists => {},
-        else => return err,
-    };
+    try ensurePath(inst_dir);
     const config_path = try mctx.paths.instanceConfig(allocator, "nullclaw", "my-agent");
     defer allocator.free(config_path);
 
@@ -10908,7 +10887,6 @@ test "dispatch rejects unsupported and malformed mcp mutation boundaries" {
         "/api/instances/nullclaw/my-agent/mcp",
         "{\"name\":\"x\",\"transport\":\"stdio\",\"command\":\"npx\"}",
     ).?;
-    defer allocator.free(array_root_resp.body);
     try std.testing.expectEqualStrings("400 Bad Request", array_root_resp.status);
 
     {
@@ -10926,7 +10904,6 @@ test "dispatch rejects unsupported and malformed mcp mutation boundaries" {
         "/api/instances/nullclaw/my-agent/mcp",
         "{\"name\":\"x\",\"transport\":\"stdio\",\"command\":\"npx\"}",
     ).?;
-    defer allocator.free(array_servers_resp.body);
     try std.testing.expectEqualStrings("400 Bad Request", array_servers_resp.status);
 
     {
@@ -10944,7 +10921,6 @@ test "dispatch rejects unsupported and malformed mcp mutation boundaries" {
         "/api/instances/nullclaw/my-agent/mcp",
         "{\"name\":\"x\",\"transport\":\"stdio\",\"command\":\"npx\"}",
     ).?;
-    defer allocator.free(invalid_json_resp.body);
     try std.testing.expectEqualStrings("400 Bad Request", invalid_json_resp.status);
 }
 
