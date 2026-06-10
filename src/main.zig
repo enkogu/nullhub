@@ -11,12 +11,14 @@ const manager_mod = root.manager;
 const access = root.access;
 const mdns_mod = root.mdns;
 const routes_cli = @import("routes_cli.zig");
+const single_instance = root.single_instance;
 const status_cli = root.status_cli;
 const report_cli = @import("report_cli.zig");
 const version = root.version;
 
 pub fn main(init: std.process.Init) !void {
     std_compat.initProcess(init);
+    ignoreSigpipe();
 
     var gpa = std.heap.DebugAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -31,11 +33,29 @@ pub fn main(init: std.process.Init) !void {
     switch (command) {
         .version => try printVersionLine(),
         .serve => |opts| {
-            std.debug.print("nullhub v{s}\n", .{version.string});
+            std.debug.print("nullhub v{s} (git {s}, ui {s})\n", .{
+                version.string,
+                version.git_commit,
+                version.uiVersion() orelse "none",
+            });
 
             var paths = try paths_mod.Paths.init(allocator, null);
             defer paths.deinit(allocator);
             try paths.ensureDirs();
+
+            var instance_guard = single_instance.acquire(allocator, paths.root) catch |err| switch (err) {
+                error.AlreadyRunning => {
+                    if (single_instance.holderPid(allocator, paths.root)) |pid| {
+                        std.debug.print("nullhub is already running (pid {d}); refusing to start a second instance.\n", .{pid});
+                    } else {
+                        std.debug.print("nullhub is already running; refusing to start a second instance.\n", .{});
+                    }
+                    std.debug.print("Stop the running instance first, or point NULLHUB_HOME at a different directory.\n", .{});
+                    std.process.exit(1);
+                },
+                else => return err,
+            };
+            defer instance_guard.release();
 
             var mgr = manager_mod.Manager.init(allocator, paths);
             defer mgr.deinit();
@@ -131,6 +151,21 @@ pub fn main(init: std.process.Init) !void {
         },
         .help => cli.printUsage(),
     }
+}
+
+/// Client disconnects mid-response (hard reload, SSE abort, tab close) raise
+/// SIGPIPE on the next socket write; the default disposition would kill the
+/// whole hub. Ignore it explicitly so writes fail with EPIPE instead and the
+/// per-connection error handling runs. std.Io.Threaded installs a do-nothing
+/// handler as a side effect of process init, but the hub's survival must not
+/// hinge on that implementation detail.
+fn ignoreSigpipe() void {
+    if (builtin.os.tag == .windows or builtin.os.tag == .wasi) return;
+    std.posix.sigaction(.PIPE, &.{
+        .handler = .{ .handler = std.posix.SIG.IGN },
+        .mask = std.posix.sigemptyset(),
+        .flags = 0,
+    }, null);
 }
 
 fn runApiChecked(allocator: std.mem.Allocator, opts: cli.ApiOptions) void {

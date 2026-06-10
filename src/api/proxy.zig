@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const std_compat = @import("compat");
 const net_compat = @import("../net_compat.zig");
 
@@ -20,11 +21,107 @@ pub const ForwardOptions = struct {
     accept: ?[]const u8 = null,
     unreachable_body: []const u8 = "{\"error\":\"upstream unreachable\"}",
     max_response_bytes: ?usize = null,
+    /// Per-read/write socket deadline for the upstream connection. A wedged
+    /// upstream then yields a fast 504 instead of hanging the handler thread
+    /// forever. 0 disables the deadline.
+    timeout_ms: u32 = 15_000,
 };
+
+const timeout_response = Response{
+    .status = "504 Gateway Timeout",
+    .content_type = "application/json",
+    .body = "{\"error\":\"upstream timed out\"}",
+};
+
+/// Watchdog bounding how long an upstream request may stay in flight, so a
+/// wedged upstream cannot hold a connection thread forever.
+///
+/// SO_RCVTIMEO cannot be used here: std.Io's threaded backend treats EAGAIN
+/// from a socket deadline as a bug and aborts. Instead a small timer thread
+/// shuts down a dup'd handle of the upstream socket once the deadline
+/// passes, which unblocks the stalled read/write with an ordinary error.
+/// The dup keeps the kernel socket object alive for the timer, so a recycled
+/// fd number can never be hit by mistake, and finish() never blocks.
+const UpstreamDeadline = struct {
+    const poll_slice_ms: u64 = 200;
+
+    const Shared = struct {
+        done: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+        timed_out: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+        refs: std.atomic.Value(u8) = std.atomic.Value(u8).init(2),
+        dup_handle: std.c.fd_t,
+        timeout_ms: u64,
+    };
+
+    shared: ?*Shared = null,
+
+    fn start(connection: *std.http.Client.Connection, timeout_ms: u32) UpstreamDeadline {
+        if (builtin.os.tag == .windows) return .{};
+        const effective_ms = envTimeoutOverrideMs() orelse timeout_ms;
+        if (effective_ms == 0) return .{};
+        const handle = connection.stream_reader.stream.socket.handle;
+        const dup_handle = std.c.dup(handle);
+        if (dup_handle < 0) return .{};
+        const shared = std.heap.smp_allocator.create(Shared) catch {
+            _ = std.c.close(dup_handle);
+            return .{};
+        };
+        shared.* = .{ .dup_handle = dup_handle, .timeout_ms = effective_ms };
+        const thread = std.Thread.spawn(.{ .stack_size = 128 * 1024 }, timerMain, .{shared}) catch {
+            _ = std.c.close(dup_handle);
+            std.heap.smp_allocator.destroy(shared);
+            return .{};
+        };
+        thread.detach();
+        return .{ .shared = shared };
+    }
+
+    fn timerMain(shared: *Shared) void {
+        var elapsed_ms: u64 = 0;
+        while (elapsed_ms < shared.timeout_ms and !shared.done.load(.acquire)) {
+            const slice: u64 = @min(poll_slice_ms, shared.timeout_ms - elapsed_ms);
+            std_compat.thread.sleep(slice * std.time.ns_per_ms);
+            elapsed_ms += slice;
+        }
+        if (!shared.done.load(.acquire)) {
+            shared.timed_out.store(true, .release);
+            _ = std.c.shutdown(shared.dup_handle, std.posix.SHUT.RDWR);
+        }
+        release(shared);
+    }
+
+    fn release(shared: *Shared) void {
+        if (shared.refs.fetchSub(1, .acq_rel) == 1) {
+            _ = std.c.close(shared.dup_handle);
+            std.heap.smp_allocator.destroy(shared);
+        }
+    }
+
+    fn timedOut(self: *const UpstreamDeadline) bool {
+        const shared = self.shared orelse return false;
+        return shared.timed_out.load(.acquire);
+    }
+
+    fn finish(self: *UpstreamDeadline) void {
+        const shared = self.shared orelse return;
+        shared.done.store(true, .release);
+        release(shared);
+        self.shared = null;
+    }
+};
+
+/// Deadline override (NULLHUB_PROXY_TIMEOUT_MS) so regression tests can
+/// exercise the watchdog without waiting out production deadlines.
+fn envTimeoutOverrideMs() ?u32 {
+    if (builtin.os.tag == .windows) return null;
+    const value = std.c.getenv("NULLHUB_PROXY_TIMEOUT_MS") orelse return null;
+    return std.fmt.parseInt(u32, std.mem.span(value), 10) catch null;
+}
 
 const LimitedResponseBody = struct {
     body: std.Io.Writer.Allocating,
     writer: std.Io.Writer,
+    buffer_storage: [16 * 1024]u8 = undefined,
     limit: usize,
     written: usize = 0,
     too_large: bool = false,
@@ -40,11 +137,19 @@ const LimitedResponseBody = struct {
         };
     }
 
+    fn prepare(self: *LimitedResponseBody) void {
+        self.writer = .{
+            .vtable = &vtable,
+            .buffer = &self.buffer_storage,
+        };
+    }
+
     fn deinit(self: *LimitedResponseBody) void {
         self.body.deinit();
     }
 
-    fn toOwnedSlice(self: *LimitedResponseBody) Allocator.Error![]u8 {
+    fn toOwnedSlice(self: *LimitedResponseBody) ![]u8 {
+        self.writer.flush() catch return error.WriteFailed;
         return try self.body.toOwnedSlice();
     }
 
@@ -56,7 +161,12 @@ const LimitedResponseBody = struct {
     fn drain(writer: *std.Io.Writer, data: []const []const u8, splat: usize) std.Io.Writer.Error!usize {
         const self: *LimitedResponseBody = @fieldParentPtr("writer", writer);
         if (data.len == 0) return 0;
-        const total = std.Io.Writer.countSplat(data, splat);
+        const buffered = writer.buffer[0..writer.end];
+        const data_total = std.Io.Writer.countSplat(data, splat);
+        const total = std.math.add(usize, buffered.len, data_total) catch {
+            self.too_large = true;
+            return error.WriteFailed;
+        };
         const next_written = std.math.add(usize, self.written, total) catch {
             self.too_large = true;
             return error.WriteFailed;
@@ -66,6 +176,10 @@ const LimitedResponseBody = struct {
             return error.WriteFailed;
         }
 
+        if (buffered.len > 0) {
+            self.body.writer.writeAll(buffered) catch return error.WriteFailed;
+            writer.end = 0;
+        }
         for (data[0 .. data.len - 1]) |bytes| {
             self.body.writer.writeAll(bytes) catch return error.WriteFailed;
         }
@@ -74,11 +188,14 @@ const LimitedResponseBody = struct {
             self.body.writer.writeAll(pattern) catch return error.WriteFailed;
         }
         self.written = next_written;
-        return total;
+        return data_total;
     }
 
     fn flush(writer: *std.Io.Writer) std.Io.Writer.Error!void {
         const self: *LimitedResponseBody = @fieldParentPtr("writer", writer);
+        if (writer.end > 0) {
+            _ = try drain(writer, &.{""}, 1);
+        }
         try self.body.writer.flush();
     }
 };
@@ -198,6 +315,9 @@ pub fn forward(allocator: Allocator, opts: ForwardOptions) Response {
         return .{ .status = "500 Internal Server Error", .content_type = "application/json", .body = "{\"error\":\"internal error\"}" };
     defer allocator.free(url);
 
+    const uri = std.Uri.parse(url) catch
+        return .{ .status = "502 Bad Gateway", .content_type = "application/json", .body = opts.unreachable_body };
+
     var auth_header: ?[]const u8 = null;
     defer if (auth_header) |value| allocator.free(value);
     var header_buf: [3]std.http.Header = undefined;
@@ -222,28 +342,62 @@ pub fn forward(allocator: Allocator, opts: ForwardOptions) Response {
     defer client.deinit();
 
     var response_body = LimitedResponseBody.init(allocator, opts.max_response_bytes);
+    response_body.prepare();
     defer response_body.deinit();
 
-    const result = client.fetch(.{
-        .location = .{ .url = url },
-        .method = http_method,
-        .payload = if (opts.body.len > 0) opts.body else null,
-        .response_writer = &response_body.writer,
+    var request = client.request(http_method, uri, .{
+        .redirect_behavior = .unhandled,
+        .keep_alive = false,
+        .headers = .{
+            .accept_encoding = .omit,
+            .connection = .{ .override = "close" },
+        },
         .extra_headers = extra_headers,
-    }) catch |err| switch (err) {
+    }) catch
+        return .{ .status = "502 Bad Gateway", .content_type = "application/json", .body = opts.unreachable_body };
+    defer request.deinit();
+
+    var deadline: UpstreamDeadline = .{};
+    if (request.connection) |connection| deadline = UpstreamDeadline.start(connection, opts.timeout_ms);
+    defer deadline.finish();
+
+    const unreachable_response = Response{ .status = "502 Bad Gateway", .content_type = "application/json", .body = opts.unreachable_body };
+
+    if (opts.body.len > 0) {
+        request.transfer_encoding = .{ .content_length = opts.body.len };
+        var body_writer = request.sendBodyUnflushed(&.{}) catch
+            return if (deadline.timedOut()) timeout_response else unreachable_response;
+        body_writer.writer.writeAll(opts.body) catch
+            return if (deadline.timedOut()) timeout_response else unreachable_response;
+        body_writer.end() catch
+            return if (deadline.timedOut()) timeout_response else unreachable_response;
+        request.connection.?.flush() catch
+            return if (deadline.timedOut()) timeout_response else unreachable_response;
+    } else {
+        request.sendBodiless() catch
+            return if (deadline.timedOut()) timeout_response else unreachable_response;
+    }
+
+    var response = request.receiveHead(&.{}) catch
+        return if (deadline.timedOut()) timeout_response else unreachable_response;
+
+    var transfer_buffer: [64]u8 = undefined;
+    const reader = response.reader(&transfer_buffer);
+    _ = reader.streamRemaining(&response_body.writer) catch |err| switch (err) {
         error.WriteFailed => if (response_body.too_large)
             return .{ .status = "502 Bad Gateway", .content_type = "application/json", .body = "{\"error\":\"upstream response too large\"}" }
         else
             return .{ .status = "500 Internal Server Error", .content_type = "application/json", .body = "{\"error\":\"internal error\"}" },
-        else => return .{ .status = "502 Bad Gateway", .content_type = "application/json", .body = opts.unreachable_body },
+        error.ReadFailed => return if (deadline.timedOut()) timeout_response else unreachable_response,
     };
 
     const resp_body = response_body.toOwnedSlice() catch
         return .{ .status = "500 Internal Server Error", .content_type = "application/json", .body = "{\"error\":\"internal error\"}" };
 
+    const status_code = @intFromEnum(response.head.status);
     return .{
-        .status = mapStatus(@intFromEnum(result.status)),
-        .content_type = if (@intFromEnum(result.status) >= 200 and @intFromEnum(result.status) < 300) (opts.accept orelse "application/json") else "application/json",
+        .status = mapStatus(status_code),
+        .content_type = if (status_code >= 200 and status_code < 300) (opts.accept orelse "application/json") else "application/json",
         .body = resp_body,
     };
 }
@@ -368,6 +522,10 @@ pub fn forwardStream(allocator: Allocator, opts: ForwardOptions, downstream: std
     };
     defer request.deinit();
 
+    var deadline: UpstreamDeadline = .{};
+    if (request.connection) |connection| deadline = UpstreamDeadline.start(connection, opts.timeout_ms);
+    defer deadline.finish();
+
     if (http_method.requestHasBody()) {
         request.transfer_encoding = .{ .content_length = opts.body.len };
         var body_buffer: [8192]u8 = undefined;
@@ -395,7 +553,11 @@ pub fn forwardStream(allocator: Allocator, opts: ForwardOptions, downstream: std
     }
 
     var response = request.receiveHead(&.{}) catch {
-        try writeDirectResponse(downstream, "502 Bad Gateway", "application/json", opts.unreachable_body, cors_headers);
+        if (deadline.timedOut()) {
+            try writeDirectResponse(downstream, "504 Gateway Timeout", "application/json", "{\"error\":\"upstream timed out\"}", cors_headers);
+        } else {
+            try writeDirectResponse(downstream, "502 Bad Gateway", "application/json", opts.unreachable_body, cors_headers);
+        }
         return;
     };
     const status_code = @intFromEnum(response.head.status);
@@ -592,6 +754,36 @@ test "rewriteProductProxyTarget keeps root upstream filters on default path" {
 
     try std.testing.expectEqualStrings("/api/nullwatch?watch=upstream", rewritten.target);
     try std.testing.expectEqualStrings("/v1/summary?watch=upstream", rewritten.path);
+}
+
+test "limited response writer drains buffered bytes during rebase" {
+    const allocator = std.testing.allocator;
+    var limited = LimitedResponseBody.init(allocator, null);
+    limited.prepare();
+    defer limited.deinit();
+
+    const payload = try allocator.alloc(u8, 20 * 1024);
+    defer allocator.free(payload);
+    @memset(payload, 'x');
+
+    try limited.writer.writeAll(payload);
+    const body = try limited.toOwnedSlice();
+    defer allocator.free(body);
+
+    try std.testing.expectEqual(payload.len, body.len);
+    try std.testing.expect(std.mem.eql(u8, payload, body));
+}
+
+test "limited response writer enforces limit for buffered bytes on flush" {
+    const allocator = std.testing.allocator;
+    var limited = LimitedResponseBody.init(allocator, 8);
+    limited.prepare();
+    defer limited.deinit();
+
+    try limited.writer.writeAll("123456789");
+
+    try std.testing.expectError(error.WriteFailed, limited.toOwnedSlice());
+    try std.testing.expect(limited.too_large);
 }
 
 test "mapStatus preserves common upstream status codes" {

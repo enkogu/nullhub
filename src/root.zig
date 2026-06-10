@@ -40,6 +40,7 @@ pub const report_schema = @import("report_schema.zig");
 pub const server = @import("server.zig");
 pub const service = @import("service.zig");
 pub const settings_api = @import("api/settings.zig");
+pub const single_instance = @import("core/single_instance.zig");
 pub const state = @import("core/state.zig");
 pub const status_cli = @import("status_cli.zig");
 pub const status_api = @import("api/status.zig");
@@ -96,6 +97,7 @@ test {
     _ = server;
     _ = service;
     _ = settings_api;
+    _ = single_instance;
     _ = state;
     _ = status_cli;
     _ = status_api;

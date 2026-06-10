@@ -147,13 +147,24 @@ fn appendInstanceJson(buf: *std.array_list.Managed(u8), entry: state_mod.Instanc
 pub fn handleStatus(allocator: std.mem.Allocator, s: *state_mod.State, manager: *manager_mod.Manager, paths: paths_mod.Paths, uptime_seconds: u64, host: []const u8, port: u16, access_options: access.Options) ApiResponse {
     var buf = std.array_list.Managed(u8).init(allocator);
 
-    buildStatusJson(&buf, s, manager, paths, uptime_seconds, host, port, access_options) catch return .{
-        .status = "500 Internal Server Error",
-        .content_type = "application/json",
-        .body = "{\"error\":\"internal error\"}",
+    buildStatusJson(&buf, s, manager, paths, uptime_seconds, host, port, access_options) catch {
+        buf.deinit();
+        return .{
+            .status = "500 Internal Server Error",
+            .content_type = "application/json",
+            .body = "{\"error\":\"internal error\"}",
+        };
     };
 
-    return .{ .status = "200 OK", .content_type = "application/json", .body = buf.items };
+    const body = buf.toOwnedSlice() catch {
+        buf.deinit();
+        return .{
+            .status = "500 Internal Server Error",
+            .content_type = "application/json",
+            .body = "{\"error\":\"internal error\"}",
+        };
+    };
+    return .{ .status = "200 OK", .content_type = "application/json", .body = body };
 }
 
 fn buildStatusJson(buf: *std.array_list.Managed(u8), s: *state_mod.State, manager: *manager_mod.Manager, paths: paths_mod.Paths, uptime_seconds: u64, host: []const u8, port: u16, access_options: access.Options) !void {
@@ -188,6 +199,10 @@ fn buildStatusJson(buf: *std.array_list.Managed(u8), s: *state_mod.State, manage
     // Hub info
     try buf.appendSlice("{\"hub\":{\"version\":\"");
     try buf.appendSlice(version.string);
+    try buf.appendSlice("\",\"git_commit\":\"");
+    try buf.appendSlice(version.git_commit);
+    try buf.appendSlice("\",\"ui_version\":\"");
+    try appendEscaped(buf, version.uiVersion() orelse "none");
     try buf.appendSlice("\",\"platform\":\"");
     try buf.appendSlice(comptime platform.detect().toString());
     try buf.appendSlice("\",\"pid\":");
@@ -304,6 +319,8 @@ test "handleStatus returns valid JSON with hub version" {
         struct {
             hub: struct {
                 version: []const u8,
+                git_commit: []const u8,
+                ui_version: []const u8,
                 platform: []const u8,
                 pid: u64,
                 uptime_seconds: u64,
@@ -339,12 +356,14 @@ test "handleStatus returns valid JSON with hub version" {
     defer parsed.deinit();
 
     try std.testing.expectEqualStrings(version.string, parsed.value.hub.version);
+    try std.testing.expectEqualStrings(version.git_commit, parsed.value.hub.git_commit);
+    try std.testing.expectEqualStrings(version.uiVersion() orelse "none", parsed.value.hub.ui_version);
     try std.testing.expect(parsed.value.hub.platform.len > 0);
     try std.testing.expect(parsed.value.hub.pid > 0);
     try std.testing.expectEqual(@as(u64, 3600), parsed.value.hub.uptime_seconds);
     try std.testing.expect(!parsed.value.hub.access.public_alias_active);
     try std.testing.expectEqualStrings("none", parsed.value.hub.access.public_alias_provider);
-    try std.testing.expectEqualStrings("http://nullhub.localhost:19800", parsed.value.hub.access.browser_open_url);
+    try std.testing.expectEqualStrings("http://localhost:19800", parsed.value.hub.access.browser_open_url);
     try std.testing.expectEqualStrings("ok", parsed.value.overall_status);
     try std.testing.expectEqual(@as(usize, 0), parsed.value.components.map.count());
 }

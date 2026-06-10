@@ -41,6 +41,8 @@ const version = @import("version.zig");
 const test_helpers = @import("test_helpers.zig");
 
 const default_max_request_size: usize = 64 * 1024;
+const max_concurrent_connections: u32 = 128;
+const client_read_timeout_ms: u32 = 15_000;
 const gateway_max_request_size: usize = @as(usize, @intCast(nullclaw_gateway_config.min_body_size));
 const markdown_docs_max_request_size: usize = instances_api.max_markdown_doc_bytes * 2 + 16 * 1024;
 const initial_request_buffer_size: usize = 64 * 1024;
@@ -115,6 +117,7 @@ pub const Server = struct {
     mission_control: mission_control_api.RuntimeStore = .{},
     mission_workflow_evidence_cache: MissionWorkflowEvidenceCache = .{},
     start_time: i64,
+    active_connections: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     pub fn init(allocator: std.mem.Allocator, host: []const u8, port: u16, manager: *manager_mod.Manager, mutex: *std_compat.sync.Mutex) !Server {
         var paths = try paths_mod.Paths.init(allocator, null);
@@ -488,18 +491,70 @@ pub const Server = struct {
                 continue;
             };
 
-            {
-                defer conn.stream.close();
-
-                var arena = std.heap.ArenaAllocator.init(self.allocator);
-                defer arena.deinit();
-
-                self.handleConnection(conn, arena.allocator()) catch |err| {
-                    std.debug.print("request error: {}\n", .{err});
-                };
-            }
+            self.serveConnection(conn);
         }
     }
+
+    /// Handle each connection on its own detached thread so one slow request
+    /// (e.g. a proxy to a wedged upstream or an open SSE stream) can never
+    /// stall static assets, health checks, or other API calls.
+    fn serveConnection(self: *Server, conn: std_compat.net.Server.Connection) void {
+        configureClientReadTimeout(conn.stream);
+
+        const active = self.active_connections.fetchAdd(1, .acq_rel) + 1;
+        if (active > max_concurrent_connections) {
+            defer _ = self.active_connections.fetchSub(1, .acq_rel);
+            defer conn.stream.close();
+            sendBusyResponse(conn.stream);
+            return;
+        }
+
+        // Never handle a request inline on the accept loop: one slow request
+        // there stops all accepting. Under resource pressure, shed load with
+        // a 503 instead.
+        const task = self.allocator.create(ConnectionTask) catch {
+            defer _ = self.active_connections.fetchSub(1, .acq_rel);
+            defer conn.stream.close();
+            sendBusyResponse(conn.stream);
+            return;
+        };
+        task.* = .{ .server = self, .conn = conn };
+
+        const thread = std.Thread.spawn(.{}, ConnectionTask.run, .{task}) catch {
+            self.allocator.destroy(task);
+            defer _ = self.active_connections.fetchSub(1, .acq_rel);
+            defer conn.stream.close();
+            sendBusyResponse(conn.stream);
+            return;
+        };
+        thread.detach();
+    }
+
+    fn handleConnectionInline(self: *Server, conn: std_compat.net.Server.Connection) void {
+        defer conn.stream.close();
+
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+
+        self.handleConnection(conn, arena.allocator()) catch |err| {
+            std.debug.print("request error: {}\n", .{err});
+        };
+    }
+
+    const ConnectionTask = struct {
+        server: *Server,
+        conn: std_compat.net.Server.Connection,
+
+        fn run(task: *ConnectionTask) void {
+            const server = task.server;
+            const conn = task.conn;
+            defer {
+                _ = server.active_connections.fetchSub(1, .acq_rel);
+                server.allocator.destroy(task);
+            }
+            server.handleConnectionInline(conn);
+        }
+    };
 
     fn handleConnection(self: *Server, conn: std_compat.net.Server.Connection, alloc: std.mem.Allocator) !void {
         var req_buf: [initial_request_buffer_size]u8 = undefined;
@@ -600,6 +655,10 @@ pub const Server = struct {
                         .bearer_token = upstream.token,
                         .accept = if (upstream.event_stream) "text/event-stream" else null,
                         .unreachable_body = "{\"error\":\"nullclaw gateway unreachable\"}",
+                        // Agent invocations legitimately take minutes; event
+                        // streams may idle between events. Generous deadlines
+                        // here only bound truly wedged gateways.
+                        .timeout_ms = if (upstream.event_stream) 300_000 else 180_000,
                     };
                     if (upstream.event_stream) {
                         try proxy_api.forwardStream(alloc, proxy_options, conn.stream, cors_headers);
@@ -926,6 +985,7 @@ pub const Server = struct {
             .bearer_token = backend.token,
             .unreachable_body = "{\"error\":\"NullBoiler unreachable\"}",
             .max_response_bytes = mission_workflow_response_max_bytes,
+            .timeout_ms = 10_000,
         });
         if (!isSuccessStatus(runs_resp.status)) {
             return missionWorkflowEvidenceWithBackendName(allocator, missionWorkflowEvidenceStatus("unavailable", "nullboiler_runs_unavailable", 0), backend.name);
@@ -982,6 +1042,7 @@ pub const Server = struct {
             .bearer_token = token,
             .unreachable_body = "{\"error\":\"NullBoiler unreachable\"}",
             .max_response_bytes = mission_workflow_response_max_bytes,
+            .timeout_ms = 10_000,
         });
         if (!isSuccessStatus(resp.status)) return error.CheckpointsUnavailable;
 
@@ -1124,6 +1185,11 @@ pub const Server = struct {
     }
 
     fn routeWithoutServerMutex(target: []const u8) bool {
+        // Non-API paths (embedded static assets, the SPA fallback, UI module
+        // files, /health) touch no shared server state — keep them off the
+        // global lock so the UI shell stays responsive no matter how slow the
+        // state-touching API handlers are.
+        if (!auth.isApiPath(target)) return true;
         return instances_api.isIntegrationPath(target) or
             instances_api.isTicketsActionPath(target) or
             logs_api.isLogsPath(target) or
@@ -2217,6 +2283,38 @@ fn readBody(raw: []const u8, n: usize, stream: std_compat.net.Stream, alloc: std
     return extractBody(raw);
 }
 
+/// Bound reads from accepted client sockets so a connection that never sends
+/// a (complete) request — browser preconnects do exactly this — cannot pin a
+/// handler thread and its connection slot forever. Only reads are bounded;
+/// long-lived writes such as SSE streams are unaffected. Posix-only: the raw
+/// read path in compat/net.zig maps the resulting EAGAIN to a clean
+/// error.WouldBlock, whereas std.Io's threaded backend (the Windows read
+/// path) treats socket-deadline EAGAIN as a bug (see api/proxy.zig).
+fn configureClientReadTimeout(stream: std_compat.net.Stream) void {
+    const native = @import("builtin").os.tag;
+    if (native == .windows or native == .wasi) return;
+    const timeout = std.posix.timeval{
+        .sec = @intCast(@divTrunc(client_read_timeout_ms, 1000)),
+        .usec = @intCast(@mod(client_read_timeout_ms, 1000) * std.time.us_per_ms),
+    };
+    std.posix.setsockopt(
+        stream.handle,
+        std.posix.SOL.SOCKET,
+        std.posix.SO.RCVTIMEO,
+        std.mem.asBytes(&timeout),
+    ) catch {};
+}
+
+fn sendBusyResponse(stream: std_compat.net.Stream) void {
+    const body = "{\"error\":\"server busy\"}";
+    const response = "HTTP/1.1 503 Service Unavailable\r\n" ++
+        "Content-Type: application/json\r\n" ++
+        std.fmt.comptimePrint("Content-Length: {d}\r\n", .{body.len}) ++
+        "Retry-After: 1\r\n" ++
+        "Connection: close\r\n\r\n" ++ body;
+    net_compat.streamWriteAll(stream, response) catch {};
+}
+
 fn sendResponse(stream: std_compat.net.Stream, response: Response, raw_request: []const u8, bind_host: []const u8, port: u16, extra_origins: []const []const u8) !void {
     var buf: [4096]u8 = undefined;
     var writer: std.Io.Writer = .fixed(&buf);
@@ -2409,8 +2507,8 @@ const TestContext = struct {
     fixture: test_helpers.TempPaths,
     state: *state_mod.State,
     paths: paths_mod.Paths,
-    manager: manager_mod.Manager,
-    mutex: std_compat.sync.Mutex,
+    manager: *manager_mod.Manager,
+    mutex: *std_compat.sync.Mutex,
     server: Server,
 
     fn init(allocator: std.mem.Allocator) TestContext {
@@ -2419,19 +2517,28 @@ const TestContext = struct {
         defer allocator.free(state_path);
         const state = allocator.create(state_mod.State) catch @panic("OOM");
         state.* = state_mod.State.init(allocator, state_path);
-        var ctx: TestContext = undefined;
-        ctx.fixture = fixture;
-        ctx.state = state;
-        ctx.paths = fixture.paths;
-        ctx.manager = manager_mod.Manager.init(allocator, fixture.paths);
-        ctx.mutex = .{};
-        ctx.server = Server.initWithState(allocator, state, fixture.paths, &ctx.manager, &ctx.mutex);
-        return ctx;
+        // The server stores raw pointers to the manager and mutex, and
+        // TestContext is returned by value — pointers into the local frame
+        // would dangle, so both must live on the heap.
+        const manager = allocator.create(manager_mod.Manager) catch @panic("OOM");
+        manager.* = manager_mod.Manager.init(allocator, fixture.paths);
+        const mutex = allocator.create(std_compat.sync.Mutex) catch @panic("OOM");
+        mutex.* = .{};
+        return .{
+            .fixture = fixture,
+            .state = state,
+            .paths = fixture.paths,
+            .manager = manager,
+            .mutex = mutex,
+            .server = Server.initWithState(allocator, state, fixture.paths, manager, mutex),
+        };
     }
 
     fn deinit(self: *TestContext, allocator: std.mem.Allocator) void {
         self.server.mission_workflow_evidence_cache.deinit();
         self.manager.deinit();
+        allocator.destroy(self.manager);
+        allocator.destroy(self.mutex);
         self.state.deinit();
         allocator.destroy(self.state);
         self.fixture.deinit();
@@ -2524,13 +2631,14 @@ test "reconcileInstancesOnBoot adopts persisted managed instance without respawn
         .starting_since = std_compat.time.milliTimestamp(),
     });
 
-    ctx.reconcileInstancesOnBoot();
+    ctx.server.reconcileInstancesOnBoot();
 
     const status = ctx.manager.getStatus("nullclaw", "demo").?;
     try std.testing.expectEqual(manager_mod.Status.running, status.status);
 
     ctx.manager.stopInstance("nullclaw", "demo") catch {};
-    _ = spawned.child.wait() catch {};
+    var spawned_child = spawned.child;
+    _ = spawned_child.wait() catch {};
 
     const file = try std_compat.fs.openFileAbsolute(output_path, .{});
     defer file.close();
@@ -2554,9 +2662,14 @@ test "reconcileInstancesOnBoot restarts auto-start instance when persisted pid i
     const binary_path = try ctx.paths.binary(allocator, "nullclaw", "1.0.0");
     defer allocator.free(binary_path);
     {
+        // handleStart probes the binary with --export-manifest before the
+        // supervised spawn; exit immediately there so the probe neither
+        // writes a spurious marker nor blocks on the 60 s sleep. `exec`
+        // replaces the shell so SIGTERM reaches the sleep directly and the
+        // captured stdout/stderr pipes close as soon as it is terminated.
         const script = try std.fmt.allocPrint(
             allocator,
-            "#!/bin/sh\nprintf 'started\\n' >> '{s}'\nsleep 60\n",
+            "#!/bin/sh\ncase \"$1\" in --export-manifest) exit 1;; esac\nprintf 'started\\n' >> '{s}'\nexec sleep 60\n",
             .{output_path},
         );
         defer allocator.free(script);
@@ -2587,11 +2700,32 @@ test "reconcileInstancesOnBoot restarts auto-start instance when persisted pid i
         .starting_since = std_compat.time.milliTimestamp(),
     });
 
-    ctx.reconcileInstancesOnBoot();
+    ctx.server.reconcileInstancesOnBoot();
     ctx.manager.tick();
 
     const status = ctx.manager.getStatus("nullclaw", "demo").?;
     try std.testing.expectEqual(manager_mod.Status.running, status.status);
+
+    // The respawned script writes its marker just after exec; wait for the
+    // write before stopping so the assertion below cannot race the child.
+    var attempts: usize = 0;
+    while (attempts < 100) : (attempts += 1) {
+        const file = std_compat.fs.openFileAbsolute(output_path, .{}) catch {
+            std_compat.thread.sleep(50 * std.time.ns_per_ms);
+            continue;
+        };
+        defer file.close();
+        const contents = try file.readToEndAlloc(allocator, 1024);
+        defer allocator.free(contents);
+        if (std.mem.eql(u8, contents, "started\n")) break;
+        std_compat.thread.sleep(50 * std.time.ns_per_ms);
+    }
+
+    ctx.manager.stopInstance("nullclaw", "demo") catch {};
+    // startInstance attached a detached log-pump thread that frees its
+    // context once the child's pipes hit EOF; give it a moment so the test
+    // allocator does not report those in-flight allocations as leaks.
+    std_compat.thread.sleep(300 * std.time.ns_per_ms);
 
     const file = try std_compat.fs.openFileAbsolute(output_path, .{});
     defer file.close();
@@ -2641,9 +2775,27 @@ test "reconcileInstancesOnBoot terminates mismatched persisted runtime without r
         .binary = binary_path,
         .argv = launch.argv,
     });
-    defer {
-        if (process_mod.isAlive(spawned.pid)) process_mod.forceKill(spawned.pid) catch {};
-        _ = spawned.child.wait() catch {};
+    var spawned_child = spawned.child;
+    var reaped = false;
+    defer if (!reaped) {
+        process_mod.forceKill(spawned.pid) catch {};
+        _ = spawned_child.wait() catch {};
+    };
+
+    // Wait for the script's start marker so the SIGTERM from reconciliation
+    // below cannot kill the shell before it has written the log line the
+    // final assertion reads.
+    var marker_attempts: usize = 0;
+    while (marker_attempts < 100) : (marker_attempts += 1) {
+        const file = std_compat.fs.openFileAbsolute(output_path, .{}) catch {
+            std_compat.thread.sleep(50 * std.time.ns_per_ms);
+            continue;
+        };
+        defer file.close();
+        const contents = try file.readToEndAlloc(allocator, 1024);
+        defer allocator.free(contents);
+        if (std.mem.eql(u8, contents, "started\n")) break;
+        std_compat.thread.sleep(50 * std.time.ns_per_ms);
     }
 
     // Regression: if persisted runtime metadata no longer matches the desired
@@ -2660,12 +2812,17 @@ test "reconcileInstancesOnBoot terminates mismatched persisted runtime without r
         .starting_since = std_compat.time.milliTimestamp(),
     });
 
-    ctx.reconcileInstancesOnBoot();
+    ctx.server.reconcileInstancesOnBoot();
 
-    var attempts: usize = 0;
-    while (attempts < 20 and process_mod.isAlive(spawned.pid)) : (attempts += 1) {
-        std_compat.thread.sleep(50 * std.time.ns_per_ms);
-    }
+    // Reconciliation escalates SIGTERM -> SIGKILL for the mismatched runtime.
+    // Reap the child before probing liveness: macOS proc_pidinfo fails for
+    // unreaped zombies, so isAlive would misreport them as alive. The elapsed
+    // bound proves termination happened — a surviving script would otherwise
+    // hold wait() for its full 60 s sleep.
+    const reap_started_ms = std_compat.time.milliTimestamp();
+    _ = spawned_child.wait() catch {};
+    reaped = true;
+    try std.testing.expect(std_compat.time.milliTimestamp() - reap_started_ms < 30_000);
 
     try std.testing.expect(!process_mod.isAlive(spawned.pid));
     try std.testing.expect(ctx.manager.getStatus("nullclaw", "demo") == null);
@@ -2715,18 +2872,21 @@ test "reconcileInstancesOnBoot rejects mismatched nullwatch launch mode" {
         .starting_since = std_compat.time.milliTimestamp(),
     });
 
-    ctx.reconcileInstancesOnBoot();
+    ctx.server.reconcileInstancesOnBoot();
 
-    var attempts: usize = 0;
-    while (attempts < 20 and process_mod.isAlive(spawned.pid)) : (attempts += 1) {
-        std_compat.thread.sleep(50 * std.time.ns_per_ms);
-    }
+    // Reap the child before probing liveness: macOS proc_pidinfo fails for
+    // unreaped zombies, so isAlive would misreport the terminated child as
+    // alive. The elapsed bound proves termination happened — an untouched
+    // /bin/sleep would otherwise hold wait() for its full 60 s.
+    var spawned_child = spawned.child;
+    const reap_started_ms = std_compat.time.milliTimestamp();
+    _ = spawned_child.wait() catch {};
+    try std.testing.expect(std_compat.time.milliTimestamp() - reap_started_ms < 30_000);
 
     try std.testing.expect(!process_mod.isAlive(spawned.pid));
     try std.testing.expect(ctx.manager.getStatus("nullwatch", "watch") == null);
     try std.testing.expectEqualStrings("gateway", ctx.state.getInstance("nullwatch", "watch").?.launch_mode);
     try std.testing.expect((try runtime_state_mod.load(allocator, ctx.paths, "nullwatch", "watch")) == null);
-    _ = spawned.child.wait() catch {};
 }
 
 test "route GET /api/status returns version and platform" {
@@ -2819,8 +2979,14 @@ test "route unknown non-API path attempts static file serving" {
     defer ctx.deinit(std.testing.allocator);
 
     const resp = ctx.route(std.testing.allocator, "GET", "/nonexistent", "");
-    defer std.testing.allocator.free(resp.body);
-    try std.testing.expectEqualStrings("200 OK", resp.status);
+    if (ui_assets.hasAssets()) {
+        // Embedded UI: unknown paths fall back to the (allocated) index page.
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    } else {
+        // -Dembed-ui=false: static serving answers with a static 404 body.
+        try std.testing.expectEqualStrings("404 Not Found", resp.status);
+    }
     try std.testing.expectEqualStrings("text/html", resp.content_type);
 }
 
@@ -2829,8 +2995,15 @@ test "route POST to GET-only route falls through to static serving" {
     defer ctx.deinit(std.testing.allocator);
 
     const resp = ctx.route(std.testing.allocator, "POST", "/health", "");
-    defer std.testing.allocator.free(resp.body);
-    try std.testing.expectEqualStrings("200 OK", resp.status);
+    if (ui_assets.hasAssets()) {
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    } else {
+        // -Dembed-ui=false: the fallthrough still reaches static serving,
+        // which answers with a static 404 body instead of /health JSON.
+        try std.testing.expectEqualStrings("404 Not Found", resp.status);
+    }
+    try std.testing.expectEqualStrings("text/html", resp.content_type);
 }
 
 test "route unknown API path returns JSON 404" {
@@ -2922,7 +3095,7 @@ test "hostMatchesAliasHost matches bare host and host with port" {
 
 test "isAllowedCorsOrigin allows local aliases for loopback binds" {
     try std.testing.expect(isAllowedCorsOrigin("http://127.0.0.1:19800", "127.0.0.1", 19800, &.{}));
-    try std.testing.expect(isAllowedCorsOrigin("http://nullhub.localhost:19800", "127.0.0.1", 19800, &.{}));
+    try std.testing.expect(isAllowedCorsOrigin("http://localhost:19800", "127.0.0.1", 19800, &.{}));
     try std.testing.expect(isAllowedCorsOrigin("http://nullhub.local:19800", "127.0.0.1", 19800, &.{}));
 }
 
@@ -2969,7 +3142,7 @@ test "requestOriginAllowed rejects foreign API origins" {
     const local_raw =
         "GET /api/status HTTP/1.1\r\n" ++
         "Host: 127.0.0.1:19800\r\n" ++
-        "Origin: http://nullhub.localhost:19800\r\n\r\n";
+        "Origin: http://localhost:19800\r\n\r\n";
     try std.testing.expect(requestOriginAllowed(local_raw, "/api/status", "127.0.0.1", 19800, &.{}));
 }
 
@@ -3122,7 +3295,7 @@ test "managed NullWatch target reads host and token from config" {
 
     const inst_dir = try ctx.paths.instanceDir(allocator, "nullwatch", "watch");
     defer allocator.free(inst_dir);
-    try std_compat.fs.makeDirAbsolute(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
 
     const config_path = try ctx.paths.instanceConfig(allocator, "nullwatch", "watch");
     defer allocator.free(config_path);
@@ -3152,7 +3325,7 @@ test "managed NullWatch target brackets IPv6 host and lets env token override co
 
     const inst_dir = try ctx.paths.instanceDir(allocator, "nullwatch", "watch");
     defer allocator.free(inst_dir);
-    try std_compat.fs.makeDirAbsolute(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
 
     const config_path = try ctx.paths.instanceConfig(allocator, "nullwatch", "watch");
     defer allocator.free(config_path);
@@ -3188,7 +3361,9 @@ test "route GET /api/instances returns empty instances" {
     var ctx = TestContext.init(std.testing.allocator);
     defer ctx.deinit(std.testing.allocator);
 
-    const resp = ctx.route(std.testing.allocator, "GET", "/api/instances", "");
+    // handleList returns its ArrayList buffer with spare capacity, which a
+    // plain free would reject; the arena helper dupes it to an exact slice.
+    const resp = ctx.routeWithRequestArena(std.testing.allocator, "GET", "/api/instances", "");
     defer std.testing.allocator.free(resp.body);
     try std.testing.expectEqualStrings("200 OK", resp.status);
     try std.testing.expectEqualStrings("{\"instances\":{}}", resp.body);
@@ -3297,7 +3472,7 @@ test "route GET /api/settings returns defaults" {
     try std.testing.expectEqualStrings("200 OK", resp.status);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"port\":19800") != null);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"host\":\"127.0.0.1\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"browser_open_url\":\"http://nullhub.localhost:19800\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"browser_open_url\":\"http://localhost:19800\"") != null);
 }
 
 test "route PUT /api/settings returns ok" {
@@ -3377,7 +3552,7 @@ test "route GET config supports percent-encoded instance names" {
 
     const inst_dir = try ctx.paths.instanceDir(allocator, "nullclaw", "Opencode Go");
     defer allocator.free(inst_dir);
-    try std_compat.fs.makeDirAbsolute(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
 
     const config_path = try ctx.paths.instanceConfig(allocator, "nullclaw", "Opencode Go");
     defer allocator.free(config_path);
@@ -3409,7 +3584,7 @@ test "route GET logs supports percent-encoded instance names" {
 
     const logs_dir = try ctx.paths.instanceLogs(allocator, "nullclaw", "Opencode Go");
     defer allocator.free(logs_dir);
-    try std_compat.fs.makeDirAbsolute(logs_dir);
+    try std_compat.fs.makePathAbsolute(logs_dir);
 
     const log_path = try std.fs.path.join(allocator, &.{ logs_dir, "stdout.log" });
     defer allocator.free(log_path);
@@ -3437,7 +3612,8 @@ test "route POST update supports percent-encoded instance names" {
 }
 
 test "Server init sets fields" {
-    const paths = try paths_mod.Paths.init(std.testing.allocator, null);
+    var paths = try paths_mod.Paths.init(std.testing.allocator, null);
+    defer paths.deinit(std.testing.allocator);
     var mgr = manager_mod.Manager.init(std.testing.allocator, paths);
     defer mgr.deinit();
     var mutex: std_compat.sync.Mutex = .{};
@@ -3496,8 +3672,14 @@ test "contentType returns octet-stream for unknown extension" {
 
 test "serveStaticFile serves embedded index fallback" {
     const resp = serveStaticFile(std.testing.allocator, "/nonexistent.html");
-    defer std.testing.allocator.free(resp.body);
-    try std.testing.expectEqualStrings("200 OK", resp.status);
+    if (ui_assets.hasAssets()) {
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    } else {
+        // -Dembed-ui=false: no index fallback exists, so the response is a
+        // static 404 body that must not be freed.
+        try std.testing.expectEqualStrings("404 Not Found", resp.status);
+    }
     try std.testing.expectEqualStrings("text/html", resp.content_type);
 }
 
@@ -3512,7 +3694,12 @@ test "route GET / attempts static file serving" {
     defer ctx.deinit(std.testing.allocator);
 
     const resp = ctx.route(std.testing.allocator, "GET", "/", "");
-    defer std.testing.allocator.free(resp.body);
-    try std.testing.expectEqualStrings("200 OK", resp.status);
+    if (ui_assets.hasAssets()) {
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    } else {
+        // -Dembed-ui=false: static serving answers with a static 404 body.
+        try std.testing.expectEqualStrings("404 Not Found", resp.status);
+    }
     try std.testing.expectEqualStrings("text/html", resp.content_type);
 }
