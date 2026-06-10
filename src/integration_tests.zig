@@ -11,17 +11,39 @@ const IntegrationServer = struct {
     child: ?std_compat.process.Child = null,
     env_map: ?std_compat.process.EnvMap = null,
 
+    const EnvVar = struct {
+        name: []const u8,
+        value: []const u8,
+    };
+
     fn start(allocator: std.mem.Allocator) !IntegrationServer {
         if (builtin.os.tag == .wasi) return error.SkipZigTest;
 
-        return startWithSeed(allocator, struct {
+        return startWithSeedAndEnv(allocator, struct {
             fn call(_: *IntegrationServer) !void {}
-        }.call);
+        }.call, &.{});
+    }
+
+    fn startWithEnv(
+        allocator: std.mem.Allocator,
+        env_vars: []const EnvVar,
+    ) !IntegrationServer {
+        return startWithSeedAndEnv(allocator, struct {
+            fn call(_: *IntegrationServer) !void {}
+        }.call, env_vars);
     }
 
     fn startWithSeed(
         allocator: std.mem.Allocator,
         comptime seedFn: *const fn (*IntegrationServer) anyerror!void,
+    ) !IntegrationServer {
+        return startWithSeedAndEnv(allocator, seedFn, &.{});
+    }
+
+    fn startWithSeedAndEnv(
+        allocator: std.mem.Allocator,
+        comptime seedFn: *const fn (*IntegrationServer) anyerror!void,
+        env_vars: []const EnvVar,
     ) !IntegrationServer {
         if (builtin.os.tag == .wasi) return error.SkipZigTest;
 
@@ -52,6 +74,9 @@ const IntegrationServer = struct {
 
         server.env_map = try std_compat.process.getEnvMap(allocator);
         try seedFn(&server);
+        for (env_vars) |env_var| {
+            try server.env_map.?.put(env_var.name, env_var.value);
+        }
 
         const port = try reservePort();
         server.port = port;
@@ -875,6 +900,40 @@ test "integration harness covers NullBoiler proxy not configured" {
     defer resp.deinit(std.testing.allocator);
     try std.testing.expectEqual(std.http.Status.service_unavailable, resp.status);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "NullBoiler not configured") != null);
+}
+
+test "wedged upstream returns 504 within timeout and hub stays alive" {
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const addr = try std_compat.net.Address.resolveIp("127.0.0.1", 0);
+    var listener = try addr.listen(.{});
+    defer listener.deinit();
+
+    const upstream_url = try std.fmt.allocPrint(
+        std.testing.allocator,
+        "http://127.0.0.1:{d}",
+        .{listener.listen_address.in.getPort()},
+    );
+    defer std.testing.allocator.free(upstream_url);
+
+    var server = try IntegrationServer.startWithEnv(std.testing.allocator, &.{
+        .{ .name = "NULLBOILER_URL", .value = upstream_url },
+        .{ .name = "NULLHUB_PROXY_TIMEOUT_MS", .value = "2000" },
+    });
+    defer server.deinit();
+
+    const started_ms = std_compat.time.milliTimestamp();
+    const resp = try server.fetch(.{ .path = "/api/nullboiler/runs" });
+    const elapsed_ms = std_compat.time.milliTimestamp() - started_ms;
+    defer resp.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(std.http.Status.gateway_timeout, resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "upstream timed out") != null);
+    try std.testing.expect(elapsed_ms < 15_000);
+
+    const health_resp = try server.fetch(.{ .path = "/health" });
+    defer health_resp.deinit(std.testing.allocator);
+    try std.testing.expectEqual(std.http.Status.ok, health_resp.status);
 }
 
 test "integration harness covers service route contracts" {
