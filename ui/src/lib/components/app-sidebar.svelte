@@ -50,6 +50,7 @@
 				{ title: "Tasks", url: "/work/tasks", icon: ListChecksIcon, match: "prefix" },
 				{ title: "Planner", url: "/work/planner", icon: WorkflowIcon, match: "prefix" },
 				{ title: "Dependencies", url: "/work/dependencies", icon: BoxesIcon, match: "prefix" },
+				{ title: "Mission Control", url: "/work/mission-control", icon: ActivityIcon, match: "prefix" },
 			],
 		},
 		{

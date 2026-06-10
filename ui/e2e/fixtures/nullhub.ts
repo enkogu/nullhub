@@ -27,14 +27,63 @@ const fixtureStatus = {
   },
 };
 
-export async function installNullHubFixtureRoutes(page: Page) {
-  await page.route('**/api/**', (route) =>
-    fulfillJson(route, { error: 'Unhandled Playwright fixture route' }, 404),
-  );
-  await page.route('**/nullhub-api/**', (route) =>
-    fulfillJson(route, { error: 'Unhandled Playwright fixture route' }, 404),
-  );
+const missionControlState = {
+  schema_version: 1,
+  mode: 'deterministic_local_replay',
+  scenario_id: 'mission-control-smoke',
+  scenario_version: '1',
+  generated_at_ms: 1_730_000_000_000,
+  mission_id: 'mission-control-smoke',
+  title: 'Mission Control Smoke',
+  status: 'idle',
+  phase: 'idle',
+  headline: 'Mission control is ready.',
+  elapsed_ms: 0,
+  progress: 0,
+  active_run_id: null,
+  failed_run_id: null,
+  recovered_run_id: null,
+  controls: {
+    can_launch: true,
+    can_recover: false,
+    can_reset: true,
+  },
+  agents: [],
+  graph: {
+    nodes: [],
+    edges: [],
+  },
+  events: [],
+  telemetry: {
+    runs: 0,
+    spans: 0,
+    evals: 0,
+    errors: 0,
+    total_tokens: 0,
+    total_cost_usd: 0,
+    verdict: 'pass',
+  },
+  workflow_evidence: {
+    status: 'not_configured',
+    source: 'fixture',
+    boiler_instance: null,
+    failed_run: null,
+    recovered_run: null,
+    checkpoint: null,
+    scanned_run_count: 0,
+    reason: null,
+  },
+  replay_comparison: null,
+  failure: null,
+  recovery: null,
+};
 
+const missionControlReplays = {
+  items: [],
+  count: 0,
+};
+
+export async function installNullHubFixtureRoutes(page: Page) {
   await page.route('**/site.webmanifest', (route) =>
     fulfillJson(route, { name: 'NullHub', short_name: 'NullHub', start_url: '/', display: 'standalone' }),
   );
@@ -44,4 +93,6 @@ export async function installNullHubFixtureRoutes(page: Page) {
 
   await page.route('**/api/status', (route) => fulfillJson(route, fixtureStatus));
   await page.route('**/nullhub-api/status', (route) => fulfillJson(route, fixtureStatus));
+  await page.route('**/api/mission-control/state', (route) => fulfillJson(route, missionControlState));
+  await page.route('**/api/mission-control/replays', (route) => fulfillJson(route, missionControlReplays));
 }
