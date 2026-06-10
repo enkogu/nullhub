@@ -1,6 +1,7 @@
 import { createNullBoilerApi } from '$lib/api/nullboiler';
 import { createMissionControlApi } from '$lib/api/missionControl';
 import { createNullTicketsApi, createNullTicketsStoreApi } from '$lib/api/nulltickets';
+import { createSpacesApi } from '$lib/api/spaces';
 import { componentApiPath, encodePathSegment, instanceApiPath } from '$lib/nullstack/path';
 import { normalizeMojibakeText, normalizeMojibakeValue } from '$lib/textEncoding';
 
@@ -121,6 +122,14 @@ function withQuery(path: string, params: Record<string, string | number | boolea
 }
 
 export { encodePathSegment };
+export type {
+  Space,
+  SpaceCreateInput,
+  SpaceScopedOptions,
+  SpaceSelection,
+  SpaceUpdateInput,
+  SpacesApi,
+} from '$lib/api/spaces';
 export type {
   MissionControlAgent,
   MissionControlComponentMapping,
@@ -404,6 +413,7 @@ export const nullTicketsApi = createNullTicketsApi((c, n, payload) =>
 );
 
 export const nullTicketsStoreApi = createNullTicketsStoreApi(request, withQuery);
+export const spacesApi = createSpacesApi(request, withQuery);
 
 export const nullWatchApi = {
   getNullWatchHealth: (params?: NullWatchTarget) =>
