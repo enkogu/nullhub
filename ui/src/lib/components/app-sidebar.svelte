@@ -19,6 +19,7 @@
 	import { browser } from "$app/environment";
 	import { onMount } from "svelte";
 	import * as Sidebar from "$lib/components/ui/sidebar/index.js";
+	import SpaceSwitcher from "$lib/components/SpaceSwitcher.svelte";
 	import { api } from "$lib/api/client";
 	import { pollWhileVisible } from "$lib/poll";
 	import { readLocalSessionUser } from "$lib/sessionState";
@@ -194,6 +195,7 @@
 				</Sidebar.MenuButton>
 			</Sidebar.MenuItem>
 		</Sidebar.Menu>
+		<SpaceSwitcher class="mt-2" />
 	</Sidebar.Header>
 
 	<Sidebar.Content class="gap-3 px-3">
