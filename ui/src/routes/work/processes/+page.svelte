@@ -5,7 +5,7 @@
 </script>
 
 <NullTicketsWorkspacePage
-  title="Processes"
+  title="Task Flows"
   initialView="pipelines"
   {views}
 />

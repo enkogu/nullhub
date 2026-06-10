@@ -33,9 +33,9 @@
 </script>
 
 <div class="dashboard">
-  <PageHeader title="Instances" subtitle="Components installed in this workspace and their runtime status.">
+  <PageHeader title="Home" subtitle="Current workspace state and runtime status.">
     {#snippet actions()}
-      <Button href="/install">Install component</Button>
+      <Button href="/market">Install component</Button>
     {/snippet}
   </PageHeader>
 
@@ -64,7 +64,7 @@
       <Card class="px-5">
         <div class="empty-state">
           <p>No instances installed yet.</p>
-          <Button variant="outline" href="/install">Install component</Button>
+          <Button variant="outline" href="/market">Install component</Button>
         </div>
       </Card>
     {/if}

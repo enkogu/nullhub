@@ -154,7 +154,7 @@
     <Card class="items-center px-5 text-center">
       <p class="text-sm text-foreground">{wizardError}</p>
       <div>
-        <Button variant="outline" onclick={() => goto('/install')}>Back</Button>
+        <Button variant="outline" onclick={() => goto('/market')}>Back</Button>
       </div>
     </Card>
   {:else if wizardData}

@@ -1,5 +1,5 @@
 import { redirect } from "@sveltejs/kit";
 
-export function load() {
-  throw redirect(307, "/nullwatch");
+export function load({ url }: { url: URL }) {
+  throw redirect(307, `/system/observability${url.search}${url.hash}`);
 }

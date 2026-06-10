@@ -69,7 +69,7 @@
       label: "Install",
       variant: "default",
       visible: (record) => record.fields?.installable !== "coming soon",
-      href: (record) => `/install/${encodePathSegment(String(record.fields?.name || record.title))}`,
+      href: (record) => `/market/install/${encodePathSegment(String(record.fields?.name || record.title))}`,
     },
   ];
   let componentRecords = $derived(
@@ -83,7 +83,7 @@
         status: instanceCount > 0 ? "active" : component.installable === false ? "disabled" : "available",
         subtitle: stage,
         description: component.description,
-        href: component.installable === false && instanceCount === 0 ? undefined : `/install/${encodePathSegment(component.name)}`,
+        href: component.installable === false && instanceCount === 0 ? undefined : `/market/install/${encodePathSegment(component.name)}`,
         fields: {
           name: component.name,
           stage,

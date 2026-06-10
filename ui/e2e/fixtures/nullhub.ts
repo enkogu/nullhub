@@ -21,10 +21,50 @@ async function fulfillText(route: Route, body: string, contentType: string) {
 const fixtureStatus = {
   ok: true,
   version: 'playwright-fixture',
-  components: {},
-  instances: {
-    nulltickets: {},
+  components: {
+    nulltickets: { status: 'stopped', running: 0 },
+    nullboiler: { status: 'stopped', running: 0 },
+    nullwatch: { status: 'stopped', running: 0 },
   },
+  instances: {},
+};
+
+const fixtureComponents = {
+  components: [
+    {
+      name: 'nullclaw',
+      display_name: 'NullClaw',
+      description: 'Autonomous AI agent runtime.',
+      installable: true,
+      instance_count: 0,
+      stage: 'stable',
+    },
+    {
+      name: 'nulltickets',
+      display_name: 'NullTickets',
+      description: 'Ticket-backed loop runtime.',
+      installable: true,
+      instance_count: 0,
+      stage: 'stable',
+    },
+  ],
+};
+
+const fixtureSettings = {
+  port: 19800,
+  host: '127.0.0.1',
+  auth_token: null,
+  auto_update_check: true,
+  access: null,
+};
+
+const fixtureServiceStatus = {
+  status: 'ok',
+  message: '',
+  registered: false,
+  running: false,
+  service_type: '',
+  unit_path: '',
 };
 
 export async function installNullHubFixtureRoutes(page: Page) {
@@ -44,4 +84,30 @@ export async function installNullHubFixtureRoutes(page: Page) {
 
   await page.route('**/api/status', (route) => fulfillJson(route, fixtureStatus));
   await page.route('**/nullhub-api/status', (route) => fulfillJson(route, fixtureStatus));
+  await page.route('**/api/components', (route) => fulfillJson(route, fixtureComponents));
+  await page.route('**/nullhub-api/components', (route) => fulfillJson(route, fixtureComponents));
+  await page.route('**/api/settings', (route) => fulfillJson(route, fixtureSettings));
+  await page.route('**/nullhub-api/settings', (route) => fulfillJson(route, fixtureSettings));
+  await page.route('**/api/service/status', (route) => fulfillJson(route, fixtureServiceStatus));
+  await page.route('**/nullhub-api/service/status', (route) => fulfillJson(route, fixtureServiceStatus));
+  await page.route('**/api/providers**', (route) => fulfillJson(route, { providers: [] }));
+  await page.route('**/nullhub-api/providers**', (route) => fulfillJson(route, { providers: [] }));
+  await page.route('**/api/channels**', (route) => fulfillJson(route, { channels: [] }));
+  await page.route('**/nullhub-api/channels**', (route) => fulfillJson(route, { channels: [] }));
+  await page.route('**/api/nullboiler/runs**', (route) =>
+    fulfillJson(route, { items: [], limit: 50, offset: 0, has_more: false }),
+  );
+  await page.route('**/nullhub-api/nullboiler/runs**', (route) =>
+    fulfillJson(route, { items: [], limit: 50, offset: 0, has_more: false }),
+  );
+  await page.route('**/api/nullboiler/workflows**', (route) => fulfillJson(route, { items: [] }));
+  await page.route('**/nullhub-api/nullboiler/workflows**', (route) => fulfillJson(route, { items: [] }));
+  await page.route('**/api/nullwatch/v1/summary**', (route) =>
+    fulfillJson(route, { totals: {}, status: 'empty' }),
+  );
+  await page.route('**/nullhub-api/nullwatch/v1/summary**', (route) =>
+    fulfillJson(route, { totals: {}, status: 'empty' }),
+  );
+  await page.route('**/api/nullwatch/v1/runs**', (route) => fulfillJson(route, { items: [] }));
+  await page.route('**/nullhub-api/nullwatch/v1/runs**', (route) => fulfillJson(route, { items: [] }));
 }

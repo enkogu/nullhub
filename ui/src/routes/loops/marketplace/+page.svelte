@@ -11,7 +11,7 @@
     align="start"
   >
     {#snippet actions()}
-      <Button href="/loops/library" size="sm">Open Library</Button>
+      <Button href="/orders/loops/library" size="sm">Open Library</Button>
     {/snippet}
   </PageHeader>
 
@@ -21,7 +21,7 @@
       Remote loop catalog sync will appear here once the marketplace service is configured.
       Installed and built-in loops are available in Library.
     </p>
-    <Button href="/loops/library" variant="outline" size="sm">Open Library</Button>
+    <Button href="/orders/loops/library" variant="outline" size="sm">Open Library</Button>
   </Card>
 </div>
 

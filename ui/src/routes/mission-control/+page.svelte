@@ -399,7 +399,7 @@
     if (runId) params.set('run_id', runId);
     if (traceWatchName) params.set('watch', traceWatchName);
     const query = params.toString();
-    return query ? `/nullwatch?${query}` : '/nullwatch';
+    return query ? `/system/observability?${query}` : '/system/observability';
   }
 
   function traceLabel(trace: MissionControlTraceRef): string {

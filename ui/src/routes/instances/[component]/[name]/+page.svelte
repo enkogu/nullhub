@@ -1187,7 +1187,7 @@
         <Button
           variant="outline"
           size="sm"
-          href={`/nullwatch?watch=${encodeURIComponent(name)}`}
+          href={`/system/observability?watch=${encodeURIComponent(name)}`}
           title="Open NullWatch"
         >
           <RadioIcon />
@@ -1405,7 +1405,7 @@
                       variant="outline"
                       size="sm"
                       class="integration-btn"
-                      href={`/nullwatch?watch=${encodeURIComponent(linkedWatch.name)}`}
+                      href={`/system/observability?watch=${encodeURIComponent(linkedWatch.name)}`}
                     >
                       Open NullWatch
                     </Button>
@@ -1464,7 +1464,7 @@
                     variant="outline"
                     size="sm"
                     class="integration-btn"
-                    href={`/nullwatch?watch=${encodeURIComponent(name)}`}
+                    href={`/system/observability?watch=${encodeURIComponent(name)}`}
                   >
                     Open NullWatch
                   </Button>

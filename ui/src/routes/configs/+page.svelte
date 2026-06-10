@@ -33,14 +33,14 @@
   let cards = $derived<ConfigCard[]>([
     {
       title: "Providers",
-      href: "/providers",
+      href: "/system/providers",
       primary: `${providers.length} saved`,
       secondary: providerError || `${validProviders} validated`,
       tone: providerError ? "warn" : providers.length > 0 ? "ok" : "neutral",
     },
     {
       title: "Channels",
-      href: "/channels",
+      href: "/system/channels",
       primary: `${channels.length} saved`,
       secondary: channelError || `${validChannels} validated`,
       tone: channelError ? "warn" : channels.length > 0 ? "ok" : "neutral",
