@@ -49,7 +49,7 @@ pub fn ensureNullclawWebChannelConfig(
 
     var used_ports = try collectUsedNullclawWebPorts(allocator, paths, state, name);
     defer used_ports.deinit();
-    const web_port = pickAvailableWebPort(used_ports);
+    const web_port = try pickAvailableWebPort(used_ports);
 
     var changed = false;
     const channels_obj = (try ensureObjectField(json_allocator, root, "channels", &changed)) orelse return .{};
@@ -245,12 +245,13 @@ fn readConfiguredWebPortFromFile(allocator: std.mem.Allocator, config_path: []co
     return extractConfiguredWebPort(parsed.value.object);
 }
 
-fn pickAvailableWebPort(used_ports: std.AutoHashMap(u16, void)) u16 {
-    var candidate = DEFAULT_WEB_PORT_START;
-    while (candidate < 65535) : (candidate += 1) {
-        if (!used_ports.contains(candidate)) return candidate;
+fn pickAvailableWebPort(used_ports: std.AutoHashMap(u16, void)) error{NoAvailableWebPort}!u16 {
+    var candidate: u32 = DEFAULT_WEB_PORT_START;
+    while (candidate <= std.math.maxInt(u16)) : (candidate += 1) {
+        const port: u16 = @intCast(candidate);
+        if (!used_ports.contains(port)) return port;
     }
-    return DEFAULT_WEB_PORT_START;
+    return error.NoAvailableWebPort;
 }
 
 fn writeAbsolute(path: []const u8, content: []const u8) !void {
@@ -365,4 +366,19 @@ test "ensureNullclawWebChannelConfig picks next free port among instances" {
     const result = try ensureNullclawWebChannelConfig(allocator, fixture.paths, &state, "nullclaw", "instance-2");
     try std.testing.expect(result.changed);
     try std.testing.expectEqual(@as(?u16, 32124), result.web_port);
+}
+
+test "pickAvailableWebPort never reuses an occupied port" {
+    const allocator = std.testing.allocator;
+    var used_ports = std.AutoHashMap(u16, void).init(allocator);
+    defer used_ports.deinit();
+
+    var port: u32 = DEFAULT_WEB_PORT_START;
+    while (port < std.math.maxInt(u16)) : (port += 1) {
+        try used_ports.put(@intCast(port), {});
+    }
+
+    try std.testing.expectEqual(@as(u16, 65535), try pickAvailableWebPort(used_ports));
+    try used_ports.put(65535, {});
+    try std.testing.expectError(error.NoAvailableWebPort, pickAvailableWebPort(used_ports));
 }
