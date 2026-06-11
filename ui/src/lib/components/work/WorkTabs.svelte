@@ -8,16 +8,18 @@
     { label: 'Board', href: '/work' },
     { label: 'Activity', href: '/work/activity' },
     { label: 'Tasks', href: '/work/tasks' },
-    { label: 'Loop Runs', href: '/work/loops/runs' },
+    { label: 'Loop Runs', href: '/work/loops/runs', activePrefixes: ['/work/runs'] },
     { label: 'Artifacts', href: '/work/artifacts' },
     { label: 'Reports', href: '/work/reports' },
   ];
 
   let { class: className }: { class?: string } = $props();
 
-  function isActive(href: string): boolean {
+  function isActive(tab: (typeof tabs)[number]): boolean {
     const path = $page.url.pathname;
+    const { href } = tab;
     if (href === '/work') return path === href;
+    if (tab.activePrefixes?.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) return true;
     return path === href || path.startsWith(`${href}/`);
   }
 </script>
@@ -26,9 +28,9 @@
   {#each tabs as tab (tab.href)}
     <Button
       href={tab.href}
-      variant={isActive(tab.href) ? 'secondary' : 'outline'}
+      variant={isActive(tab) ? 'secondary' : 'outline'}
       size="sm"
-      aria-current={isActive(tab.href) ? 'page' : undefined}
+      aria-current={isActive(tab) ? 'page' : undefined}
     >
       {tab.label}
     </Button>

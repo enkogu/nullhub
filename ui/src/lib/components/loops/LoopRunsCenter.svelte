@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
-  import BoilerInstanceSelector from "$lib/components/nullboiler/BoilerInstanceSelector.svelte";
+  import TicketsInstanceSelector from "$lib/components/nulltickets/TicketsInstanceSelector.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Card } from "$lib/components/ui/card";
   import { PageHeader } from "$lib/components/ui/page-header";
   import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
+  import { getSelectedTicketsInstance } from "$lib/nullstack/backendSelection";
+  import { spacesStore } from "$lib/stores/spaces.svelte";
   import LoopRunDetailPanel from "./LoopRunDetailPanel.svelte";
   import {
     detailWorkerInstance,
@@ -14,6 +16,7 @@
     entryBucket,
     entryStatus,
     entryTime,
+    loadLoopAgentResult,
     loopName,
     type LoopAgentResult as AgentResult,
     type LoopRunDetailData as RunDetail,
@@ -49,24 +52,41 @@
   let message = $state("");
   let actionLoading = $state("");
   let requestSeq = 0;
+  let detailRequestSeq = 0;
   let loadInFlight = false;
+  let detailCacheScope = "";
   let interval: ReturnType<typeof setInterval> | undefined;
   const detailCache: TaskDetailCache = new Map();
   const agentResultCache = new Map<string, AgentResult | null>();
 
   function ticketsRunning(): boolean {
     const component = status?.components?.nulltickets || {};
-    return Number(component.running || 0) > 0 || ["ok", "running"].includes(String(component.status || "").toLowerCase());
+    const instances = status?.instances?.nulltickets || {};
+    const instanceRunning = Object.values(instances).some((info: any) => {
+      const state = String(info?.status || "").toLowerCase();
+      return Number(info?.running || 0) > 0 || ["ok", "running"].includes(state);
+    });
+    return (
+      instanceRunning ||
+      Number(component.running || 0) > 0 ||
+      ["ok", "running"].includes(String(component.status || "").toLowerCase())
+    );
   }
 
   function ticketsInstance(): string {
     const instances = status?.instances?.nulltickets || {};
+    const selected = getSelectedTicketsInstance();
+    if (selected && instances[selected]) return selected;
     return Object.keys(instances)[0] || "tickets";
   }
 
   function clawInstance(): string {
     const instances = status?.instances?.nullclaw || {};
     return Object.keys(instances)[0] || "claw";
+  }
+
+  function clawInstances(): string[] {
+    return Object.keys(status?.instances?.nullclaw || {});
   }
 
   function runEntries(): RunEntry[] {
@@ -108,6 +128,14 @@
     return loopsState.pipelines.find((pipeline) => pipeline.id === loopFilter)?.name || loopFilter.slice(0, 8);
   }
 
+  function detailScopeFor(runId: string): string {
+    return `${ticketsInstance()}:${spacesStore.selectedSpaceId ?? "all"}:${runId}`;
+  }
+
+  function detailScopeStillCurrent(scope: string, runId: string, seq: number): boolean {
+    return detailRequestSeq === seq && detailScopeFor(runId) === scope && selectedEntry()?.run?.id === runId;
+  }
+
   function selectEntry(entry: RunEntry) {
     selectedTaskId = entry.task.id;
     selectionPinned = true;
@@ -126,80 +154,61 @@
       detail = { events: [], artifacts: [] };
       detailLoadedForRun = "";
       agentResult = null;
+      agentResultLoading = false;
       return;
     }
     const runId = entry.run.id;
-    if (detailLoadedForRun === runId && entryBucket(entry) !== "active") {
+    const detailScope = detailScopeFor(runId);
+    if (detailLoadedForRun === detailScope && entryBucket(entry) !== "active") {
       return;
     }
+    const detailSeq = ++detailRequestSeq;
     try {
       const [eventsResult, artifactsResult] = await Promise.all([
         api.nullTicketsRunEvents(ticketsComponent, ticketsInstance(), runId, { limit: 30 }),
         api.nullTicketsArtifacts(ticketsComponent, ticketsInstance(), { runId, taskId: entry.task.id, limit: 12 }),
       ]);
-      if (selectedEntry()?.run?.id !== runId) return;
+      if (!detailScopeStillCurrent(detailScope, runId, detailSeq)) return;
       detail = {
         events: Array.isArray(eventsResult?.items) ? eventsResult.items : [],
         artifacts: Array.isArray(artifactsResult?.items) ? artifactsResult.items : [],
       };
-      detailLoadedForRun = runId;
+      detailLoadedForRun = detailScope;
     } catch (e) {
-      if (selectedEntry()?.run?.id === runId) {
+      if (detailScopeStillCurrent(detailScope, runId, detailSeq)) {
         detail = { events: [], artifacts: [] };
         error = (e as Error).message;
+      } else {
+        return;
       }
     }
-    void loadAgentResult(entry);
+    void loadAgentResult(entry, detailScope, detailSeq);
   }
 
-  async function loadAgentResult(entry: RunEntry) {
+  async function loadAgentResult(entry: RunEntry, expectedScope?: string, expectedSeq?: number) {
     if (!entry.run?.id) return;
-    const instanceName = detailWorkerInstance(detail.events, entry, clawInstance());
-    const cacheKey = `${instanceName}:${entry.task.id}`;
+    const runId = entry.run.id;
+    const detailSeq = expectedSeq ?? detailRequestSeq;
+    const detailScope = expectedScope ?? detailScopeFor(runId);
+    if (!detailScopeStillCurrent(detailScope, runId, detailSeq)) return;
+    const instanceName = detailWorkerInstance(detail.events, entry, clawInstance(), clawInstances());
+    const cacheKey = `${ticketsInstance()}:${spacesStore.selectedSpaceId ?? "all"}:${instanceName}:${entry.task.id}:${entry.run.id}`;
     if (agentResultCache.has(cacheKey)) {
+      if (!detailScopeStillCurrent(detailScope, runId, detailSeq)) return;
       agentResult = agentResultCache.get(cacheKey) || null;
       agentResultLoading = false;
       return;
     }
     agentResultLoading = true;
     agentResult = null;
-    const taskId = entry.task.id;
     try {
-      const sessionList = await api.getHistory("nullclaw", instanceName, { limit: 12 });
-      const sessions = Array.isArray(sessionList?.sessions) ? sessionList.sessions : [];
-      const sessionIds = sessions
-        .map((session: any) => session.session_id)
-        .filter((sessionId: unknown): sessionId is string => Boolean(sessionId))
-        .sort((a: string, b: string) => Number(b.startsWith("webhook:")) - Number(a.startsWith("webhook:")));
-      if (!sessionIds.includes("webhook:local-nullboiler-worker")) {
-        sessionIds.push("webhook:local-nullboiler-worker");
-      }
-
-      for (const sessionId of sessionIds.slice(0, 4)) {
-        const history = await api.getHistory("nullclaw", instanceName, { sessionId, limit: 100 });
-        const messages = Array.isArray(history?.messages) ? history.messages : [];
-        for (let index = 0; index < messages.length; index += 1) {
-          const current = messages[index];
-          if (current.role !== "user" || !String(current.content || "").includes(taskId)) continue;
-          const assistant = messages.slice(index + 1).find((candidate: any) => candidate.role === "assistant");
-          if (!assistant?.content) continue;
-          const result = {
-            instanceName,
-            sessionId,
-            content: assistant.content,
-            createdAt: assistant.created_at,
-          };
-          agentResultCache.set(cacheKey, result);
-          if (selectedEntry()?.task.id === taskId) agentResult = result;
-          return;
-        }
-      }
-      agentResultCache.set(cacheKey, null);
-      if (selectedEntry()?.task.id === taskId) agentResult = null;
+      const result = await loadLoopAgentResult(api, entry, detail.events, clawInstance(), clawInstances());
+      agentResultCache.set(cacheKey, result);
+      if (detailScopeStillCurrent(detailScope, runId, detailSeq)) agentResult = result;
     } catch (e) {
-      if (selectedEntry()?.task.id === taskId) agentResultError = (e as Error).message;
+      if (detailScopeStillCurrent(detailScope, runId, detailSeq)) agentResultError = (e as Error).message;
     } finally {
-      if (selectedEntry()?.task.id === taskId) agentResultLoading = false;
+      if (detailScopeStillCurrent(detailScope, runId, detailSeq)) agentResultLoading = false;
     }
   }
 
@@ -231,14 +240,28 @@
     refreshing = true;
     error = "";
     try {
-      const statusResult = await api.getStatus();
+      const [statusResult, instancesResult] = await Promise.all([api.getStatus(), api.getInstances()]);
       if (seq !== requestSeq) return;
-      status = statusResult;
+      status = {
+        ...statusResult,
+        instances: instancesResult?.instances || statusResult?.instances || {},
+      };
       if (!ticketsRunning()) {
         loopsState = emptyLoopsState();
         return;
       }
-      const nextState = await loadLoopsState(ticketsInstance(), detailCache);
+      const instance = ticketsInstance();
+      const cacheScope = `${instance}:${spacesStore.selectedSpaceId ?? "all"}`;
+      if (cacheScope !== detailCacheScope) {
+        detailCache.clear();
+        agentResultCache.clear();
+        detailRequestSeq += 1;
+        detailLoadedForRun = "";
+        detail = { events: [], artifacts: [] };
+        agentResult = null;
+        detailCacheScope = cacheScope;
+      }
+      const nextState = await loadLoopsState(instance, detailCache);
       if (seq !== requestSeq) return;
       loopsState = nextState;
       void loadDetail(selectedEntry());
@@ -282,7 +305,7 @@
     align="start"
   >
     {#snippet controls()}
-      <BoilerInstanceSelector onChange={() => void loadAll()} />
+      <TicketsInstanceSelector onChange={() => void loadAll()} />
     {/snippet}
     {#snippet actions()}
       <Button variant="outline" size="sm" onclick={() => loadAll()} disabled={refreshing}>

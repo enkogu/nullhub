@@ -20,10 +20,11 @@
 		errorMessage = "The code block could not be loaded.",
 		emptyTitle = "No code",
 		emptyDescription = "Source content will appear here when available.",
-		copyLabel = "Copy",
-		copiedLabel = "Copied",
-		showCopy = true,
-		lineNumbers = false,
+			copyLabel = "Copy",
+			copiedLabel = "Copied",
+			ariaLabel,
+			showCopy = true,
+			lineNumbers = false,
 		wrap = false,
 		highlightLines = [],
 		onCopy,
@@ -37,9 +38,10 @@
 		errorMessage?: string;
 		emptyTitle?: string;
 		emptyDescription?: string;
-		copyLabel?: string;
-		copiedLabel?: string;
-		showCopy?: boolean;
+			copyLabel?: string;
+			copiedLabel?: string;
+			ariaLabel?: string;
+			showCopy?: boolean;
 		lineNumbers?: boolean;
 		wrap?: boolean;
 		highlightLines?: number[];
@@ -70,7 +72,12 @@
 	}
 </script>
 
-<section data-slot="code-block" class={cn("overflow-hidden rounded-lg border bg-card text-card-foreground", className)} aria-busy={resolvedState === "loading"}>
+	<section
+		data-slot="code-block"
+		class={cn("overflow-hidden rounded-lg border bg-card text-card-foreground", className)}
+		aria-busy={resolvedState === "loading"}
+		aria-label={ariaLabel}
+	>
 	{#if resolvedState === "loading"}
 		<div class="border-b px-4 py-3">
 			<Skeleton class="h-4 w-40" aria-label="Loading code block" />

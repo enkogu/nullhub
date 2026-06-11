@@ -68,7 +68,7 @@ function event(partial: Partial<NullHubEvent> = {}): NullHubEvent {
 describe('live run adapters', () => {
   test('normalizes loop, workflow, and agent sources into one run shape', () => {
     const watch = { running: true, selectedWatch: 'watch', observedRunIds: new Set(['loop-run-1', 'workflow-run-1']) };
-    const loop = loopRunsToLiveRuns([loopRow()], watch, nowMs)[0];
+    const loop = loopRunsToLiveRuns([loopRow()], watch, nowMs, { ticketsInstance: 'tickets', spaceId: 'ops' })[0];
     const workflow = workflowRunsToLiveRuns(
       [
         {
@@ -104,6 +104,7 @@ describe('live run adapters', () => {
       owner: 'Athena',
       surfaceLabel: 'Work evidence',
       watchState: 'observed',
+      href: '/work/runs/loop-run-1?task_id=task-1&tickets_instance=tickets&space=ops',
     });
     expect(workflow).toMatchObject({
       source: 'workflow',

@@ -94,7 +94,7 @@ test('renders /work/live from loop, workflow, and agent sources', async ({ page 
       {
         id: 'task-loop-1',
         pipeline_id: 'support-triage',
-        stage: 'in_progress',
+        stage: 'done',
         title: 'Triage support inbox',
         description: 'Review incoming support requests.',
         created_at_ms: nowMs - 20 * 60_000,
@@ -121,17 +121,17 @@ test('renders /work/live from loop, workflow, and agent sources', async ({ page 
         space_id: 'ops',
       },
       {
-        id: 'task-lab-1',
+        id: 'task-loop-1',
         pipeline_id: 'lab-process',
-        stage: 'in_progress',
+        stage: 'done',
         title: 'Lab-only task',
         description: 'This belongs to the Lab space.',
-        created_at_ms: nowMs - 3 * 60_000,
-        updated_at_ms: nowMs - 2 * 60_000,
+        created_at_ms: nowMs - 20 * 60_000,
+        updated_at_ms: nowMs - 8 * 60_000,
         space_id: 'lab',
         latest_run: {
           id: 'lab-loop-run-1',
-          task_id: 'task-lab-1',
+          task_id: 'task-loop-1',
           status: 'running',
           agent_id: 'LabAgent',
           started_at_ms: nowMs - 3 * 60_000,
@@ -194,6 +194,25 @@ test('renders /work/live from loop, workflow, and agent sources', async ({ page 
   await expect(
     page.getByRole('article', { name: 'Onboarding Graph Workflow run' }).getByText('Watch not seen', { exact: true }),
   ).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open Triage support inbox' })).toHaveAttribute(
+    'href',
+    '/work/runs/loop-run-1?task_id=task-loop-1&tickets_instance=tickets&space=ops',
+  );
+
+  await page.getByRole('button', { name: /Operations Workspace - Active/ }).click();
+  await page.getByRole('menuitem', { name: /Lab Workspace - Paused/ }).click();
+  await expect(page).toHaveURL(/(?:\?|&)space=lab(?:&|$)/);
+  await expect(page.getByRole('article', { name: 'Lab-only task Loop run' })).toBeVisible();
+  await expect(page.getByText('Triage support inbox')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Open Lab-only task' })).toHaveAttribute(
+    'href',
+    '/work/runs/lab-loop-run-1?task_id=task-loop-1&tickets_instance=labtickets&space=lab',
+  );
+
+  await page.getByRole('button', { name: /Lab Workspace - Paused/ }).click();
+  await page.getByRole('menuitem', { name: /Operations Workspace - Active/ }).click();
+  await expect(page).toHaveURL(/(?:\?|&)space=ops(?:&|$)/);
+  await expect(page.getByRole('article', { name: 'Triage support inbox Loop run' })).toBeVisible();
 
   await page.getByRole('combobox', { name: 'source' }).selectOption('workflow');
   await expect(page.getByText('Onboarding Graph')).toBeVisible();

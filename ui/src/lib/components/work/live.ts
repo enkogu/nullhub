@@ -1,4 +1,5 @@
 import type { NullHubEvent } from '$lib/api/client';
+import { detailHref } from '$lib/components/loops/loopRunDetail';
 import { nullboilerUiRoutes } from '$lib/nullboiler/routes';
 import {
   attemptNumber,
@@ -163,7 +164,12 @@ function finalizeLiveRun(run: Omit<LiveRun, 'stalled' | 'stallReason'>, nowMs: n
   };
 }
 
-export function loopRunsToLiveRuns(rows: LoopRunRow[], watch: LiveWatchContext = { running: false }, nowMs = Date.now()): LiveRun[] {
+export function loopRunsToLiveRuns(
+  rows: LoopRunRow[],
+  watch: LiveWatchContext = { running: false },
+  nowMs = Date.now(),
+  options: { ticketsInstance?: string; spaceId?: string | null } = {},
+): LiveRun[] {
   return rows.map((row) => {
     const status = formatStatus(row.run.status);
     const bucket = rowBucket(row);
@@ -187,7 +193,7 @@ export function loopRunsToLiveRuns(rows: LoopRunRow[], watch: LiveWatchContext =
         updatedAtMs,
         durationMs: startedAtMs ? Math.max(0, (row.run.ended_at_ms || nowMs) - startedAtMs) : null,
         attempt: attemptNumber(row),
-        href: '/work/loops/runs',
+        href: detailHref(row, options.ticketsInstance, options.spaceId),
         evidenceRef: row.run.error_text || row.task.dead_letter_reason ? rowFailureReason(row) : undefined,
         watchState,
         raw: row,

@@ -43,6 +43,7 @@
   let requestSeq = 0;
   let loadInFlight = false;
   let pendingLoad = false;
+  let detailCacheScope = '';
   const detailCache: TaskDetailCache = new Map();
 
   let selectedSpaceKey = $derived(`${$page.url.searchParams.get('space') ?? ''}:${spacesStore.selectedSpaceId ?? 'all'}`);
@@ -125,7 +126,12 @@
     return Object.keys(instances)[0] || fallback;
   }
 
-  async function safeLoadLoops(instance: string): Promise<LoopsState> {
+  async function safeLoadLoops(instance: string, spaceId: string): Promise<LoopsState> {
+    const cacheScope = `${instance}:${spaceId}`;
+    if (cacheScope !== detailCacheScope) {
+      detailCache.clear();
+      detailCacheScope = cacheScope;
+    }
     try {
       return await loadLoopsState(instance, detailCache);
     } catch {
@@ -176,7 +182,7 @@
       selectedBoilerInstance = resolvedBoilerInstance(instances);
 
       const [loopsState, workflowPage, watch] = await Promise.all([
-        safeLoadLoops(selectedTicketsInstance || defaultInstanceNameFromStatus({ instances }, 'nulltickets', 'tickets')),
+        safeLoadLoops(selectedTicketsInstance || defaultInstanceNameFromStatus({ instances }, 'nulltickets', 'tickets'), selectedSpaceId),
         safeLoadWorkflowRuns(selectedBoilerInstance),
         watchContext(instances, selectedSpaceId),
         eventsStore.refresh({ limit: 50, spaceId: selectedSpaceId }),
@@ -184,7 +190,7 @@
 
       if (seq !== requestSeq) return;
       liveRuns = mergeLiveRuns([
-        loopRunsToLiveRuns(loopsState.rows, watch, nowMs),
+        loopRunsToLiveRuns(loopsState.rows, watch, nowMs, { ticketsInstance: selectedTicketsInstance, spaceId: selectedSpaceId }),
         waitingTasksToLiveRuns(loopsState.queue, nowMs),
         workflowRunsToLiveRuns((workflowPage?.items || []) as Record<string, unknown>[], watch, nowMs, {
           boilerInstance: selectedBoilerInstance,

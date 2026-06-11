@@ -3,6 +3,7 @@ import type { Page, Route } from '@playwright/test';
 type JsonBody = Record<string, unknown> | unknown[];
 type NullHubFixtureOptions = {
   requests?: string[];
+  nullticketsActions?: string[];
   spacesStatus?: number;
   status?: JsonBody;
   events?: Record<string, unknown>[];
@@ -13,6 +14,11 @@ type NullHubFixtureOptions = {
   loopCatalogStatus?: number;
   nullticketsPipelines?: Record<string, unknown>[];
   nullticketsTasks?: Record<string, unknown>[];
+  nullticketsRunEvents?: Record<string, unknown>[];
+  nullticketsArtifacts?: Record<string, unknown>[];
+  nullclawHistorySessions?: Record<string, unknown>[];
+  nullclawHistoryMessages?: Record<string, Record<string, unknown>[]>;
+  nullclawHistoryStatus?: number;
   nullboilerRuns?: Record<string, unknown>[];
   nullwatchRuns?: Record<string, unknown>[];
   instances?: Record<string, Record<string, unknown>>;
@@ -541,6 +547,11 @@ function matchesFixtureSpace(record: Record<string, unknown>, space: string | nu
   return !recordSpace || recordSpace === space;
 }
 
+function matchesFixtureInstance(record: Record<string, unknown>, instanceName: string): boolean {
+  const recordInstance = String(record.tickets_instance ?? record.ticketsInstance ?? '').trim();
+  return !recordInstance || recordInstance === instanceName;
+}
+
 async function instancesRoute(route: Route, options: NullHubFixtureOptions) {
   recordRequest(route, options);
   const url = new URL(route.request().url());
@@ -572,10 +583,13 @@ async function nullTicketsActionRoute(
   const payload = route.request().postDataJSON() as { method?: string; path?: string; payload?: any } | null;
   const method = String(payload?.method || 'GET').toUpperCase();
   const path = String(payload?.path || '');
+  options.nullticketsActions?.push(`${method} ${path}`);
+  const pathUrl = new URL(path, 'http://nulltickets.local');
+  const pathOnly = pathUrl.pathname;
   const parts = url.pathname.split('/').filter(Boolean);
   const instanceName = parts[3] || 'tickets';
 
-  if (method === 'GET' && path === '/pipelines') {
+  if (method === 'GET' && pathOnly === '/pipelines') {
     const space = url.searchParams.get('space');
     const instancePipelines = pipelines.filter((pipeline) => {
       const pipelineInstance = String(pipeline.tickets_instance ?? pipeline.ticketsInstance ?? instanceName);
@@ -585,19 +599,47 @@ async function nullTicketsActionRoute(
     return;
   }
 
-  if (method === 'GET' && (path === '/tasks' || path.startsWith('/tasks?'))) {
+  const runEventsMatch = pathOnly.match(/^\/runs\/([^/]+)\/events$/);
+  if (method === 'GET' && runEventsMatch) {
     const space = url.searchParams.get('space');
-    const query = new URL(path, 'http://nulltickets.local').searchParams;
-    const limit = Number(query.get('limit') || '50');
-    const filteredTasks = tasks.filter((task) => matchesFixtureSpace(task, space));
+    const runId = decodeURIComponent(runEventsMatch[1] || '');
+    const limit = Number(pathUrl.searchParams.get('limit') || '50');
+    const events = (options.nullticketsRunEvents || []).filter((event) => {
+      if (String(event.run_id || '') !== runId) return false;
+      return matchesFixtureInstance(event, instanceName) && matchesFixtureSpace(event, space);
+    });
+    await fulfillJson(route, { items: events.slice(0, Number.isFinite(limit) ? limit : 50), next_cursor: null });
+    return;
+  }
+
+  if (method === 'GET' && pathOnly === '/artifacts') {
+    const space = url.searchParams.get('space');
+    const runId = pathUrl.searchParams.get('run_id') || '';
+    const taskId = pathUrl.searchParams.get('task_id') || '';
+    const limit = Number(pathUrl.searchParams.get('limit') || '50');
+    const artifacts = (options.nullticketsArtifacts || []).filter((artifact) => {
+      if (runId && String(artifact.run_id || '') !== runId) return false;
+      if (taskId && String(artifact.task_id || '') !== taskId) return false;
+      return matchesFixtureInstance(artifact, instanceName) && matchesFixtureSpace(artifact, space);
+    });
+    await fulfillJson(route, { items: artifacts.slice(0, Number.isFinite(limit) ? limit : 50), next_cursor: null });
+    return;
+  }
+
+  if (method === 'GET' && pathOnly === '/tasks') {
+    const space = url.searchParams.get('space');
+    const limit = Number(pathUrl.searchParams.get('limit') || '50');
+    const filteredTasks = tasks.filter((task) => matchesFixtureInstance(task, instanceName) && matchesFixtureSpace(task, space));
     await fulfillJson(route, { items: filteredTasks.slice(0, Number.isFinite(limit) ? limit : 50) });
     return;
   }
 
-  if (method === 'GET' && path.startsWith('/tasks/')) {
+  if (method === 'GET' && pathOnly.startsWith('/tasks/')) {
     const space = url.searchParams.get('space');
-    const taskId = decodeURIComponent(path.split('/')[2] || '');
-    const task = tasks.find((item) => String(item.id || '') === taskId && matchesFixtureSpace(item, space));
+    const taskId = decodeURIComponent(pathOnly.split('/')[2] || '');
+    const task = tasks.find(
+      (item) => String(item.id || '') === taskId && matchesFixtureInstance(item, instanceName) && matchesFixtureSpace(item, space),
+    );
     await fulfillJson(route, task || { error: 'Task not found.' }, task ? 200 : 404);
     return;
   }
@@ -624,6 +666,7 @@ async function instanceDetailRoute(route: Route, options: NullHubFixtureOptions)
   recordRequest(route, options);
   const url = new URL(route.request().url());
   const parts = url.pathname.split('/').filter(Boolean);
+  const component = parts[2] || '';
   const action = parts[4] || '';
 
   if (action === 'config') {
@@ -660,6 +703,26 @@ async function instanceDetailRoute(route: Route, options: NullHubFixtureOptions)
     return;
   }
   if (action === 'history') {
+    if (component === 'nullclaw' && (options.nullclawHistoryStatus || options.nullclawHistorySessions || options.nullclawHistoryMessages)) {
+      if (options.nullclawHistoryStatus && options.nullclawHistoryStatus >= 400) {
+        await fulfillJson(route, { error: 'History unavailable.' }, options.nullclawHistoryStatus);
+        return;
+      }
+      const sessionId = url.searchParams.get('session_id') || '';
+      if (!sessionId) {
+        const sessions = options.nullclawHistorySessions || [{ session_id: 'webhook:local-nullboiler-worker' }];
+        await fulfillJson(route, {
+          sessions,
+          total: sessions.length,
+        });
+        return;
+      }
+      await fulfillJson(route, {
+        session_id: sessionId,
+        messages: options.nullclawHistoryMessages?.[sessionId] || [],
+      });
+      return;
+    }
     if (url.searchParams.get('session_id')) {
       await fulfillJson(route, {
         messages: [

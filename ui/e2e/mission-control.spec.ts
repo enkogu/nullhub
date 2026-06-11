@@ -20,7 +20,7 @@ test('loads Mission Control under the Work route and preserves the legacy redire
   await installNullHubFixtureRoutes(page);
   await page.goto('/mission-control');
 
-  await expect(page).toHaveURL(/\/work\/mission-control$/);
+  await expect(page).toHaveURL(/\/work\/mission-control(?:\?space=ops)?$/);
   await expect(page.getByRole('heading', { name: 'Mission Control' })).toBeVisible();
   await expect(page.getByText('Mission ready. Launch the local agent stack.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reset' })).toBeVisible();

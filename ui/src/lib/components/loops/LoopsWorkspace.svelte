@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
-  import BoilerInstanceSelector from "$lib/components/nullboiler/BoilerInstanceSelector.svelte";
+  import TicketsInstanceSelector from "$lib/components/nulltickets/TicketsInstanceSelector.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Card } from "$lib/components/ui/card";
@@ -11,7 +11,9 @@
   import { PageHeader } from "$lib/components/ui/page-header";
   import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
   import { getSelectedTicketsInstance } from "$lib/nullstack/backendSelection";
+  import { spacesStore } from "$lib/stores/spaces.svelte";
   import LoopGalleryPanel from "$lib/components/loops/LoopGalleryPanel.svelte";
+  import { detailHref } from "$lib/components/loops/loopRunDetail";
   import StartLoopDialog from "$lib/components/loops/StartLoopDialog.svelte";
   import {
     badgeVariant,
@@ -63,6 +65,7 @@
   let actionLoading = $state("");
   let requestSeq = 0;
   let loadInFlight = false;
+  let detailCacheInstance = "";
   let interval: ReturnType<typeof setInterval> | undefined;
   const detailCache: TaskDetailCache = new Map();
 
@@ -200,7 +203,13 @@
         return;
       }
 
-      const nextState = await loadLoopsState(ticketsInstance(), detailCache);
+      const instance = ticketsInstance();
+      const cacheScope = `${instance}:${spacesStore.selectedSpaceId ?? "all"}`;
+      if (cacheScope !== detailCacheInstance) {
+        detailCache.clear();
+        detailCacheInstance = cacheScope;
+      }
+      const nextState = await loadLoopsState(instance, detailCache);
       if (seq !== requestSeq) return;
       loopsState = nextState;
     } catch (e) {
@@ -343,7 +352,7 @@
     align="start"
   >
     {#snippet controls()}
-      <BoilerInstanceSelector onChange={() => void loadAll()} />
+      <TicketsInstanceSelector onChange={() => void loadAll()} />
     {/snippet}
     {#snippet actions()}
       <Button variant="outline" size="sm" onclick={() => loadAll()} disabled={refreshing}>
@@ -442,7 +451,7 @@
         </div>
         <div class="compact-list">
           {#each attentionRows().slice(0, 5) as row (row.run.id)}
-            <a class="list-item danger" href={`/loops/runs?run=${row.run.id}`}>
+            <a class="list-item danger" href={detailHref(row, ticketsInstance(), spacesStore.selectedSpaceId)}>
               <div class="item-main">
                 <strong>{row.task.title}</strong>
                 <span>{row.pipeline?.name || "loop"} · {rowFailureReason(row)}</span>
@@ -511,7 +520,7 @@
         {#if activeRows().length > 0}
           <div class="compact-list">
             {#each activeRows().slice(0, 5) as row (row.run.id)}
-              <a class="list-item" href={`/loops/runs?run=${row.run.id}`}>
+              <a class="list-item" href={detailHref(row, ticketsInstance(), spacesStore.selectedSpaceId)}>
                 <div class="item-main">
                   <strong>{row.task.title}</strong>
                   <span>{row.pipeline?.name || "loop"} · {workerId(row)} · attempt {row.run.attempt || 1} · {formatDuration(row)}</span>
@@ -548,7 +557,7 @@
         {#if recentResults().length > 0}
           <div class="compact-list">
             {#each recentResults() as row (row.run.id)}
-              <a class="list-item" href={`/loops/runs?run=${row.run.id}`}>
+              <a class="list-item" href={detailHref(row, ticketsInstance(), spacesStore.selectedSpaceId)}>
                 <div class="item-main">
                   <strong>{row.task.title}</strong>
                   <span>{row.pipeline?.name || "loop"} · {formatMs(rowTime(row))}</span>
