@@ -8,7 +8,7 @@
     "storybook": "svelte-kit sync && storybook dev -p 6006",
     "storybook:build": "svelte-kit sync && storybook build",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.svelte-check.json",
-    "test": "vitest run",
+    "test": "svelte-kit sync && vitest run",
     "test:e2e": "playwright test",
     "test:mcp": "node src/lib/mcpEditor.test.mjs",
     "test:mission-control": "node src/lib/missionControl/replayAutomation.test.mjs",
