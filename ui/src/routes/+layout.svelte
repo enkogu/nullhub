@@ -5,6 +5,7 @@
   import { onMount } from 'svelte';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import type { SpaceOption } from '$lib/components/AppSidebar.svelte';
+  import CommandPalette from '$lib/components/CommandPalette.svelte';
   import GlobalAgentChatDrawer from '$lib/components/GlobalAgentChatDrawer.svelte';
   import * as Breadcrumb from '$lib/components/ui/breadcrumb/index.js';
   import { Button } from '$lib/components/ui/button';
@@ -16,9 +17,11 @@
   import { spacesStore } from '$lib/stores/spaces.svelte';
   import PanelRightCloseIcon from '@lucide/svelte/icons/panel-right-close';
   import PanelRightOpenIcon from '@lucide/svelte/icons/panel-right-open';
+  import SearchIcon from '@lucide/svelte/icons/search';
 
   let { children } = $props();
   let agentChatOpen = $state(false);
+  let commandPaletteOpen = $state(false);
 
   const routeTitles: { test: (path: string) => boolean; title: string; section?: string }[] = [
     { test: (path) => path === '/', title: 'Home' },
@@ -194,11 +197,27 @@
     }
   }
 
+  function isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    const tagName = target.tagName.toLowerCase();
+    return tagName === 'input' || tagName === 'textarea' || tagName === 'select' || target.isContentEditable;
+  }
+
+  function handleCommandPaletteShortcut(event: KeyboardEvent) {
+    if (event.defaultPrevented || isEditableTarget(event.target)) return;
+    if (event.key.toLowerCase() !== 'k' || (!event.metaKey && !event.ctrlKey)) return;
+
+    event.preventDefault();
+    commandPaletteOpen = !commandPaletteOpen;
+  }
+
   onMount(() => {
     void redirectToPreferredOrigin(window.location);
     void loadSpacesForShell();
   });
 </script>
+
+<svelte:window onkeydown={handleCommandPaletteShortcut} />
 
 <div class="shadcn-app">
   {#if isLogoutRoute}
@@ -207,7 +226,12 @@
     </main>
   {:else}
     <Sidebar.Provider class="app-shell">
-      <AppSidebar spaces={sidebarSpaces} {activeSpaceId} onSpaceChange={handleSpaceChange} onCreateSpace={handleCreateSpace} />
+      <AppSidebar
+        spaces={sidebarSpaces}
+        {activeSpaceId}
+        onSpaceChange={handleSpaceChange}
+        onCreateSpace={handleCreateSpace}
+      />
       <Sidebar.Inset>
         <header
           class="app-header flex h-16 shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
@@ -270,6 +294,17 @@
                 type="button"
                 variant="outline"
                 size="icon-sm"
+                class="command-palette-header-toggle"
+                onclick={() => (commandPaletteOpen = true)}
+                aria-label="Open command palette"
+                title="Open command palette"
+              >
+                <SearchIcon />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon-sm"
                 class="agent-chat-header-toggle"
                 onclick={() => (agentChatOpen = !agentChatOpen)}
                 aria-label={agentChatOpen ? 'Collapse agent chat' : 'Open agent chat'}
@@ -301,6 +336,7 @@
         </main>
       </Sidebar.Inset>
     </Sidebar.Provider>
+    <CommandPalette bind:open={commandPaletteOpen} onCreateSpace={handleCreateSpace} />
     <GlobalAgentChatDrawer bind:open={agentChatOpen} />
   {/if}
 </div>
@@ -435,6 +471,10 @@
   }
 
   :global(.agent-chat-header-toggle svg) {
+    stroke-width: 1.85;
+  }
+
+  :global(.command-palette-header-toggle svg) {
     stroke-width: 1.85;
   }
 

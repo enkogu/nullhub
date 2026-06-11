@@ -8,8 +8,11 @@
 		ref = $bindable(null),
 		class: className,
 		value = $bindable(""),
+		"aria-label": ariaLabel,
 		...restProps
 	}: CommandPrimitive.InputProps = $props();
+
+	let inputAriaLabel = $derived(typeof ariaLabel === "string" ? ariaLabel : undefined);
 </script>
 
 <div data-slot="command-input-wrapper" class="p-1 pb-0">
@@ -24,7 +27,13 @@
 			{...restProps}
 		>
 			{#snippet child({ props })}
-				<InputGroup.Input {...props} bind:value bind:ref />
+				<InputGroup.Input
+					{...props}
+					aria-label={inputAriaLabel}
+					aria-labelledby={inputAriaLabel ? undefined : typeof props["aria-labelledby"] === "string" ? props["aria-labelledby"] : undefined}
+					bind:value
+					bind:ref
+				/>
 			{/snippet}
 		</CommandPrimitive.Input>
 		<InputGroup.Addon>

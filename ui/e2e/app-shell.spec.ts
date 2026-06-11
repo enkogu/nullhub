@@ -64,6 +64,23 @@ test('space switcher reloads product reads with the selected space scope', async
   ]);
 });
 
+test('global command palette shortcut opens shell navigation', async ({ page }) => {
+  await installNullHubFixtureRoutes(page);
+
+  await page.goto('/');
+  await expect(page.getByLabel('Primary navigation').getByRole('link', { name: 'Home' })).toBeVisible();
+  await page.keyboard.press('Control+K');
+
+  await expect(page.getByRole('dialog', { name: 'Command Palette' })).toBeVisible();
+  await expect(page.getByLabel('Command search')).toBeFocused();
+  await expect(page.getByRole('option', { name: /^Work Live runs/ })).toBeVisible();
+  await expect(page.getByText('New task', { exact: true })).toBeVisible();
+
+  await page.getByLabel('Command search').fill('work');
+  await page.keyboard.press('Enter');
+  await expect(page).toHaveURL(/\/work$/);
+});
+
 test('explicit All spaces selection keeps product reads unscoped and visible in the sidebar', async ({ page }) => {
   const requests: string[] = [];
   await page.addInitScript(

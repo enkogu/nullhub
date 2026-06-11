@@ -46,3 +46,9 @@ test("marks System active without expanding it", async () => {
 	expect(system.getAttribute("data-active")).toBe("true");
 	expect(system.getAttribute("aria-expanded")).toBe("false");
 });
+
+test("keeps the left panel limited to product IA entries", async () => {
+	const screen = await render(AppSidebarFixture);
+
+	expect(screen.container.textContent).not.toContain("Command palette");
+});
