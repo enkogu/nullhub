@@ -585,6 +585,82 @@ test "integration harness covers event append filters and cursor pagination" {
     }
 }
 
+test "integration harness covers approvals create decide and conflict flows" {
+    var server = try IntegrationServer.start(std.testing.allocator);
+    defer server.deinit();
+
+    {
+        const resp = try server.fetch(.{
+            .path = "/api/approvals?space=ops",
+            .method = .POST,
+            .body = "{\"kind\":\"signature\",\"queue\":\"deploys\",\"target_ref\":\"order:42\",\"title\":\"Sign deploy\",\"summary\":\"Deploy v2\"}",
+        });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.created, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"pending\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"space_id\":\"ops\"") != null);
+    }
+
+    {
+        const resp = try server.fetch(.{
+            .path = "/api/approvals?space=ops&kind=signature&status=pending",
+        });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "Sign deploy") != null);
+    }
+
+    // Approvals are space scoped: another space sees an empty list.
+    {
+        const resp = try server.fetch(.{ .path = "/api/approvals?space=lab" });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "Sign deploy") == null);
+    }
+
+    // pushed_back without feedback is rejected.
+    {
+        const resp = try server.fetch(.{
+            .path = "/api/approvals/1/decide?space=ops",
+            .method = .POST,
+            .body = "{\"decision\":\"pushed_back\"}",
+        });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.unprocessable_entity, resp.status);
+    }
+
+    {
+        const resp = try server.fetch(.{
+            .path = "/api/approvals/1/decide?space=ops",
+            .method = .POST,
+            .body = "{\"decision\":\"approved\"}",
+        });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"approved\"") != null);
+    }
+
+    // Second decide conflicts.
+    {
+        const resp = try server.fetch(.{
+            .path = "/api/approvals/1/decide?space=ops",
+            .method = .POST,
+            .body = "{\"decision\":\"rejected\",\"feedback\":\"too late\"}",
+        });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.conflict, resp.status);
+    }
+
+    // approval.* events are visible on the Events surface.
+    {
+        const resp = try server.fetch(.{ .path = "/api/events?space=ops&subject_type=approval" });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"approval.created\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"approval.approved\"") != null);
+    }
+}
+
 test "integration harness covers settings and config round-trips" {
     var server = try IntegrationServer.startWithSeed(std.testing.allocator, struct {
         fn call(srv: *IntegrationServer) !void {

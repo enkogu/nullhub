@@ -63,6 +63,37 @@ pub const EventInput = struct {
     created_at_ms: i64,
 };
 
+pub const Approval = struct {
+    id: u64,
+    space_id: []const u8,
+    kind: []const u8,
+    queue: []const u8 = "",
+    target_ref: []const u8 = "",
+    title: []const u8,
+    summary: []const u8 = "",
+    status: []const u8 = "pending",
+    feedback: []const u8 = "",
+    created_at_ms: i64,
+    decided_at_ms: i64 = 0,
+};
+
+pub const ApprovalInput = struct {
+    space_id: []const u8,
+    kind: []const u8,
+    queue: []const u8 = "",
+    target_ref: []const u8 = "",
+    title: []const u8,
+    summary: []const u8 = "",
+    created_at_ms: i64,
+};
+
+pub const DecideApprovalError = error{
+    ApprovalNotFound,
+    AlreadyDecided,
+    FeedbackRequired,
+    InvalidDecision,
+} || std.mem.Allocator.Error;
+
 pub const SavedProvider = struct {
     id: u32,
     name: []const u8,
@@ -187,6 +218,7 @@ const JsonState = struct {
     instances: std.json.ArrayHashMap(std.json.ArrayHashMap(InstanceEntry)),
     spaces: []const Space = &.{},
     events: []const Event = &.{},
+    approvals: []const Approval = &.{},
     saved_providers: []const SavedProvider = &.{},
     saved_channels: []const SavedChannel = &.{},
 };
@@ -345,6 +377,50 @@ fn duplicateEvent(allocator: std.mem.Allocator, event: Event) !Event {
     };
 }
 
+fn duplicateApproval(allocator: std.mem.Allocator, approval: Approval) !Approval {
+    const owned_space_id = try allocator.dupe(u8, approval.space_id);
+    errdefer allocator.free(owned_space_id);
+    const owned_kind = try allocator.dupe(u8, approval.kind);
+    errdefer allocator.free(owned_kind);
+    const owned_queue = try allocator.dupe(u8, approval.queue);
+    errdefer allocator.free(owned_queue);
+    const owned_target_ref = try allocator.dupe(u8, approval.target_ref);
+    errdefer allocator.free(owned_target_ref);
+    const owned_title = try allocator.dupe(u8, approval.title);
+    errdefer allocator.free(owned_title);
+    const owned_summary = try allocator.dupe(u8, approval.summary);
+    errdefer allocator.free(owned_summary);
+    const owned_status = try allocator.dupe(u8, approval.status);
+    errdefer allocator.free(owned_status);
+    const owned_feedback = try allocator.dupe(u8, approval.feedback);
+    errdefer allocator.free(owned_feedback);
+
+    return .{
+        .id = approval.id,
+        .space_id = owned_space_id,
+        .kind = owned_kind,
+        .queue = owned_queue,
+        .target_ref = owned_target_ref,
+        .title = owned_title,
+        .summary = owned_summary,
+        .status = owned_status,
+        .feedback = owned_feedback,
+        .created_at_ms = approval.created_at_ms,
+        .decided_at_ms = approval.decided_at_ms,
+    };
+}
+
+fn freeApprovalStrings(allocator: std.mem.Allocator, approval: Approval) void {
+    allocator.free(approval.space_id);
+    allocator.free(approval.kind);
+    allocator.free(approval.queue);
+    allocator.free(approval.target_ref);
+    allocator.free(approval.title);
+    allocator.free(approval.summary);
+    allocator.free(approval.status);
+    allocator.free(approval.feedback);
+}
+
 fn freeEventStrings(allocator: std.mem.Allocator, event: Event) void {
     allocator.free(event.space_id);
     allocator.free(event.event_type);
@@ -366,6 +442,7 @@ pub const State = struct {
     instances: ComponentMap,
     spaces: std.array_list.Managed(Space),
     events: std.array_list.Managed(Event),
+    approvals: std.array_list.Managed(Approval),
     saved_providers: std.array_list.Managed(SavedProvider),
     saved_channels: std.array_list.Managed(SavedChannel),
     path: []const u8,
@@ -377,6 +454,7 @@ pub const State = struct {
             .instances = ComponentMap.init(allocator),
             .spaces = std.array_list.Managed(Space).init(allocator),
             .events = std.array_list.Managed(Event).init(allocator),
+            .approvals = std.array_list.Managed(Approval).init(allocator),
             .saved_providers = std.array_list.Managed(SavedProvider).init(allocator),
             .saved_channels = std.array_list.Managed(SavedChannel).init(allocator),
             .path = allocator.dupe(u8, path) catch @panic("OOM"),
@@ -416,6 +494,11 @@ pub const State = struct {
             freeEventStrings(self.allocator, event);
         }
         self.events.deinit();
+
+        for (self.approvals.items) |approval| {
+            freeApprovalStrings(self.allocator, approval);
+        }
+        self.approvals.deinit();
 
         for (self.saved_channels.items) |sc| {
             self.freeSavedChannelStrings(sc);
@@ -501,6 +584,12 @@ pub const State = struct {
             const owned_event = try duplicateEvent(allocator, event);
             errdefer freeEventStrings(allocator, owned_event);
             try state.events.append(owned_event);
+        }
+
+        for (parsed.value.approvals) |approval| {
+            const owned_approval = try duplicateApproval(allocator, approval);
+            errdefer freeApprovalStrings(allocator, owned_approval);
+            try state.approvals.append(owned_approval);
         }
 
         for (parsed.value.saved_providers) |sp| {
@@ -600,6 +689,7 @@ pub const State = struct {
             .instances = json_outer,
             .spaces = self.spaces.items,
             .events = self.events.items,
+            .approvals = self.approvals.items,
             .saved_providers = self.saved_providers.items,
             .saved_channels = self.saved_channels.items,
         };
@@ -812,6 +902,85 @@ pub const State = struct {
         errdefer freeEventStrings(self.allocator, owned_event);
         try self.events.append(owned_event);
         return self.events.items[self.events.items.len - 1];
+    }
+
+    // ─── Approvals ──────────────────────────────────────────────────────
+
+    pub fn approvalsList(self: *State) []const Approval {
+        return self.approvals.items;
+    }
+
+    pub fn getApproval(self: *State, id: u64) ?Approval {
+        for (self.approvals.items) |approval| {
+            if (approval.id == id) return approval;
+        }
+        return null;
+    }
+
+    pub fn addApproval(self: *State, input: ApprovalInput) !Approval {
+        const approval = Approval{
+            .id = self.nextApprovalId(),
+            .space_id = input.space_id,
+            .kind = input.kind,
+            .queue = input.queue,
+            .target_ref = input.target_ref,
+            .title = input.title,
+            .summary = input.summary,
+            .status = "pending",
+            .feedback = "",
+            .created_at_ms = input.created_at_ms,
+            .decided_at_ms = 0,
+        };
+        const owned_approval = try duplicateApproval(self.allocator, approval);
+        errdefer freeApprovalStrings(self.allocator, owned_approval);
+        try self.approvals.append(owned_approval);
+        return self.approvals.items[self.approvals.items.len - 1];
+    }
+
+    /// Apply a decision to a pending approval. State transitions are
+    /// pending → approved | pushed_back | rejected; decided approvals are
+    /// immutable. `pushed_back` requires non-empty feedback.
+    pub fn decideApproval(
+        self: *State,
+        id: u64,
+        decision: []const u8,
+        feedback: []const u8,
+        now_ms: i64,
+    ) DecideApprovalError!Approval {
+        const is_valid_decision = std.mem.eql(u8, decision, "approved") or
+            std.mem.eql(u8, decision, "pushed_back") or
+            std.mem.eql(u8, decision, "rejected");
+        if (!is_valid_decision) return error.InvalidDecision;
+
+        const trimmed_feedback = std.mem.trim(u8, feedback, &std.ascii.whitespace);
+        if (std.mem.eql(u8, decision, "pushed_back") and trimmed_feedback.len == 0) {
+            return error.FeedbackRequired;
+        }
+
+        for (self.approvals.items) |*approval| {
+            if (approval.id != id) continue;
+            if (!std.mem.eql(u8, approval.status, "pending")) return error.AlreadyDecided;
+
+            const new_status = try self.allocator.dupe(u8, decision);
+            errdefer self.allocator.free(new_status);
+            const new_feedback = try self.allocator.dupe(u8, trimmed_feedback);
+
+            self.allocator.free(approval.status);
+            approval.status = new_status;
+            self.allocator.free(approval.feedback);
+            approval.feedback = new_feedback;
+            approval.decided_at_ms = now_ms;
+            return approval.*;
+        }
+        return error.ApprovalNotFound;
+    }
+
+    fn nextApprovalId(self: *State) u64 {
+        var max_id: u64 = 0;
+        for (self.approvals.items) |approval| {
+            if (approval.id > max_id) max_id = approval.id;
+        }
+        return max_id + 1;
     }
 
     pub fn savedProviders(self: *State) []const SavedProvider {

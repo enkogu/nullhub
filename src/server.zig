@@ -25,6 +25,7 @@ const wizard_api = @import("api/wizard.zig");
 const providers_api = @import("api/providers.zig");
 const channels_api = @import("api/channels.zig");
 const events_api = @import("api/events.zig");
+const approvals_api = @import("api/approvals.zig");
 const event_producers = @import("api/event_producers.zig");
 const spaces_api = @import("api/spaces.zig");
 const usage_api = @import("api/usage.zig");
@@ -1629,6 +1630,26 @@ pub const Server = struct {
             return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
         }
 
+        // Approvals API — /api/approvals?space={id} and /api/approvals/{id}/decide?space={id}
+        if (approvals_api.isApprovalsPath(target)) {
+            if (std.mem.eql(u8, method, "GET")) {
+                const resp = approvals_api.handleList(allocator, self.state, target);
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            if (std.mem.eql(u8, method, "POST")) {
+                const resp = approvals_api.handleCreate(allocator, self.state, target, body, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+        if (approvals_api.decideIdFromTarget(target)) |approval_id| {
+            if (std.mem.eql(u8, method, "POST")) {
+                const resp = approvals_api.handleDecide(allocator, self.state, target, approval_id, body, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+
         // Providers API — /api/providers[/{id}[/validate]]
         if (providers_api.isProvidersPath(target)) {
             if (std.mem.eql(u8, target, "/api/providers") or std.mem.startsWith(u8, target, "/api/providers?")) {
@@ -3212,6 +3233,82 @@ test "route POST and GET /api/events are space scoped and cursor paged" {
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":1") != null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":3") == null);
     }
+}
+
+test "route /api/approvals covers decide state transitions and feedback-required" {
+    var ctx = TestContext.init(std.testing.allocator);
+    defer ctx.deinit(std.testing.allocator);
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/approvals?space=ops",
+            "{\"kind\":\"signature\",\"queue\":\"deploys\",\"target_ref\":\"order:42\",\"title\":\"Sign deploy\"}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"pending\"") != null);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "GET", "/api/approvals?space=ops&status=pending", "");
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "Sign deploy") != null);
+    }
+
+    // pushed_back without feedback is rejected at the route level.
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/approvals/1/decide?space=ops",
+            "{\"decision\":\"pushed_back\"}",
+        );
+        try std.testing.expectEqualStrings("422 Unprocessable Entity", resp.status);
+    }
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/approvals/1/decide?space=ops",
+            "{\"decision\":\"pushed_back\",\"feedback\":\"Needs a rollback plan\"}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"pushed_back\"") != null);
+    }
+
+    // A decided approval is immutable.
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/approvals/1/decide?space=ops",
+            "{\"decision\":\"approved\"}",
+        );
+        try std.testing.expectEqualStrings("409 Conflict", resp.status);
+    }
+
+    // approval.* events flowed through the Events surface.
+    {
+        const resp = ctx.route(std.testing.allocator, "GET", "/api/events?space=ops&subject_type=approval", "");
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"approval.created\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"approval.pushed_back\"") != null);
+    }
+}
+
+test "route /api/approvals requires query space" {
+    var ctx = TestContext.init(std.testing.allocator);
+    defer ctx.deinit(std.testing.allocator);
+
+    const resp = ctx.route(std.testing.allocator, "GET", "/api/approvals", "");
+    try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    try std.testing.expectEqualStrings("{\"error\":\"space query is required\"}", resp.body);
 }
 
 test "route /api/events requires query space" {
