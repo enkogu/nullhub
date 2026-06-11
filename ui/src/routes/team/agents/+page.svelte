@@ -3,6 +3,7 @@
   import { api } from "$lib/api/client";
   import { pollWhileVisible } from "$lib/poll";
   import AgentCard from "$lib/components/AgentCard.svelte";
+  import { type StatusDotStatus } from "$lib/components/StatusDot.svelte";
   import HireWizard from "$lib/components/HireWizard.svelte";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
@@ -67,8 +68,21 @@
     }
   }
 
-  function statusLabel(info: AgentInfo): string {
-    return typeof info?.status === "string" && info.status.trim() ? info.status : "stopped";
+  function statusLabel(info: AgentInfo): StatusDotStatus {
+    const raw = typeof info?.status === "string" ? info.status.trim().toLowerCase() : "";
+    switch (raw) {
+      case "running":
+        return "running";
+      case "starting":
+      case "restarting":
+        return "starting";
+      case "failed":
+        return "failed";
+      case "stopped":
+        return "stopped";
+      default:
+        return "stopped";
+    }
   }
 
   function roleLabel(info: AgentInfo): string {
