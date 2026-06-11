@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { nullBoilerApi } from "$lib/api/client";
+  import { isCircuitBreakerError } from "$lib/components/DataState.svelte";
   import { nullboilerUiRoutes } from "$lib/nullboiler/routes";
   import BoilerInstanceSelector from "$lib/components/nullboiler/BoilerInstanceSelector.svelte";
   import { Button } from "$lib/components/ui/button";
@@ -14,7 +15,7 @@
 
   let workflows = $state<any[]>([]);
   let loading = $state(true);
-  let error = $state<string | null>(null);
+  let error = $state<unknown>(null);
   let offline = $state(false);
   let deleteConfirm = $state<string | null>(null);
 
@@ -95,6 +96,12 @@
     );
   }
 
+  function errorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    if (typeof error === "string") return error;
+    return "";
+  }
+
   async function loadWorkflows() {
     loading = true;
     try {
@@ -102,14 +109,17 @@
       error = null;
       offline = false;
     } catch (e) {
-      const message = (e as Error).message;
-      if (isOfflineError(message)) {
+      const message = errorMessage(e);
+      if (isCircuitBreakerError(e)) {
+        offline = false;
+        error = e;
+      } else if (isOfflineError(message)) {
         offline = true;
         error = null;
         workflows = [];
       } else {
         offline = false;
-        error = message;
+        error = e || message;
       }
     } finally {
       loading = false;
@@ -127,7 +137,7 @@
       deleteConfirm = null;
       await loadWorkflows();
     } catch (e) {
-      error = (e as Error).message;
+      error = e;
     }
   }
 

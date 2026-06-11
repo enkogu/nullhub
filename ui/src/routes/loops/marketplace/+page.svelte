@@ -1,6 +1,6 @@
 <script lang="ts">
+  import DataState from "$lib/components/DataState.svelte";
   import { Button } from "$lib/components/ui/button";
-  import { Card } from "$lib/components/ui/card";
   import { PageHeader } from "$lib/components/ui/page-header";
 </script>
 
@@ -15,14 +15,13 @@
     {/snippet}
   </PageHeader>
 
-  <Card class="empty-state">
-    <h2>Marketplace service is not connected</h2>
-    <p>
-      Remote loop catalog sync will appear here once the marketplace service is configured.
-      Installed and built-in loops are available in Library.
-    </p>
-    <Button href="/orders/loops/library" variant="outline" size="sm">Open Library</Button>
-  </Card>
+  <DataState
+    state="empty"
+    emptyTitle="Marketplace service is not connected"
+    emptyDescription="Remote loop catalog sync will appear here once the marketplace service is configured. Installed and built-in loops are available in Library."
+    emptyActionLabel="Open Library"
+    emptyActionHref="/orders/loops/library"
+  />
 </div>
 
 <style>
@@ -33,24 +32,4 @@
     gap: 1rem;
   }
 
-  :global(.empty-state) {
-    align-items: flex-start;
-    padding: 1.25rem;
-  }
-
-  h2,
-  p {
-    margin: 0;
-  }
-
-  h2 {
-    font-size: 1rem;
-    font-weight: 600;
-  }
-
-  p {
-    max-width: 44rem;
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.875rem;
-  }
 </style>

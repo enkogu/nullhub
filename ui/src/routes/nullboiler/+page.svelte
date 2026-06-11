@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { nullBoilerApi } from '$lib/api/client';
+  import { isCircuitBreakerError } from '$lib/components/DataState.svelte';
   import { pollWhileVisible } from '$lib/poll';
   import { nullboilerUiRoutes } from '$lib/nullboiler/routes';
   import BoilerInstanceSelector from '$lib/components/nullboiler/BoilerInstanceSelector.svelte';
@@ -15,7 +16,7 @@
 
   let runs = $state<any[]>([]);
   let loading = $state(true);
-  let error = $state<string | null>(null);
+  let error = $state<unknown>(null);
   let offline = $state(false);
   let stats = $state({ active: 0, completed: 0, failed: 0, interrupted: 0 });
 
@@ -68,6 +69,12 @@
     );
   }
 
+  function errorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    if (typeof error === 'string') return error;
+    return '';
+  }
+
   async function loadRuns() {
     try {
       runs = await nullBoilerApi.listRuns() || [];
@@ -80,15 +87,18 @@
       error = null;
       offline = false;
     } catch (e) {
-      const message = (e as Error).message;
-      if (isOfflineError(message)) {
+      const message = errorMessage(e);
+      if (isCircuitBreakerError(e)) {
+        offline = false;
+        error = e;
+      } else if (isOfflineError(message)) {
         offline = true;
         error = null;
         runs = [];
         stats = { active: 0, completed: 0, failed: 0, interrupted: 0 };
       } else {
         offline = false;
-        error = message;
+        error = e || message;
       }
     } finally {
       loading = false;

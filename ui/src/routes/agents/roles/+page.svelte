@@ -19,7 +19,7 @@
 
   let rows = $state<RoleRow[]>(defaultRoles.map((row) => ({ ...row })));
   let loading = $state(false);
-  let error = $state<string | null>(null);
+  let error = $state<unknown>(null);
   let refreshToken = 0;
   let detailLoadTimer: ReturnType<typeof setTimeout> | null = null;
   const roleColumns: EntityColumn[] = [
@@ -98,7 +98,7 @@
       if (detailLoadTimer) clearTimeout(detailLoadTimer);
       detailLoadTimer = setTimeout(() => void loadAgentRoles(agents, token), 350);
     } catch (err) {
-      error = (err as Error).message || "Failed to load roles.";
+      error = err || "Failed to load roles.";
       loading = false;
     } finally {
       if (token === refreshToken && rows.length === 0) loading = false;

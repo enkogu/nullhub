@@ -19,7 +19,10 @@ test("renders empty state with primary action", async () => {
 test("renders loading state", async () => {
 	const screen = await render(EmptyState, {
 		loading: true,
+		title: "Loading orders",
+		description: "Fetching order data.",
 	});
 
-	expect(screen.container.querySelector('[aria-label="Loading empty state"]')).not.toBeNull();
+	await expect.element(screen.getByRole("status")).toHaveTextContent("Loading orders");
+	await expect.element(screen.getByText("Fetching order data.")).toBeVisible();
 });

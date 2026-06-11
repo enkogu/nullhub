@@ -21,6 +21,7 @@
   import SearchIcon from "@lucide/svelte/icons/search";
   import Table2Icon from "@lucide/svelte/icons/table-2";
   import TreePineIcon from "@lucide/svelte/icons/tree-pine";
+  import DataState, { type DataStateKind } from "$lib/components/DataState.svelte";
   import { PageHeader } from "$lib/components/ui/page-header";
 
   import {
@@ -90,6 +91,9 @@
       .map((record) => ({ record, ms: dateMs(fieldById(record, activeView.dateField || "date")) }))
       .filter((entry): entry is { record: EntityRecord; ms: number } => entry.ms !== null)
       .sort((a, b) => a.ms - b.ms),
+  );
+  let dataState = $derived<DataStateKind>(
+    error ? "error" : loading && filteredRecords.length === 0 ? "loading" : filteredRecords.length === 0 ? "empty" : "populated",
   );
 
   $effect(() => {
@@ -391,22 +395,20 @@
     </PageHeader>
   {/if}
 
-  {#if error}
-    <div class="entity-banner error">{error}</div>
-  {/if}
-
-  {#if loading && filteredRecords.length === 0}
-    <div class="entity-skeleton">
-      {#each Array.from({ length: 6 }) as _}
-        <span></span>
-      {/each}
-    </div>
-  {:else if filteredRecords.length === 0}
-    <div class="empty-state">
-      <BoxIcon size={22} />
-      <strong>{emptyTitle}</strong>
-      <span>{emptyDescription}</span>
-    </div>
+  {#if dataState !== "populated"}
+    <DataState
+      state={dataState}
+      {error}
+      emptyTitle={emptyTitle}
+      emptyDescription={emptyDescription}
+      emptyTitleAsHeading={false}
+      loadingTitle="Loading records"
+      loadingDescription="Fetching the latest records for this view."
+      errorTitle="Unable to load records"
+      errorFallback="This view could not load records."
+      retryLabel={onRefresh ? refreshLabel : undefined}
+      onRetry={onRefresh ? () => void onRefresh() : undefined}
+    />
   {:else if activeView.mode === "table"}
     <div class="table-view" style:grid-template-columns={`minmax(220px, 1.35fr) ${visibleColumns.map((column) => column.width || "minmax(130px, .75fr)").join(" ")} ${actions.length ? "auto" : ""}`} onmouseleave={() => (hoveredId = "")} role="presentation">
       <div class="table-head primary">Name</div>
@@ -734,17 +736,10 @@
     cursor: pointer;
   }
 
-  .entity-banner,
   .empty-state {
     border: 1px solid var(--shadcn-border);
     border-radius: var(--shadcn-radius);
     background: var(--shadcn-card);
-  }
-
-  .entity-banner {
-    padding: 0.875rem 1rem;
-    color: var(--shadcn-destructive);
-    border-color: color-mix(in srgb, var(--shadcn-destructive) 24%, var(--shadcn-border));
   }
 
   .empty-state {
@@ -758,27 +753,8 @@
     text-align: center;
   }
 
-  .empty-state strong {
-    color: var(--shadcn-foreground);
-    font-size: 0.95rem;
-  }
-
   .empty-state.compact {
     min-height: 11rem;
-  }
-
-  .entity-skeleton {
-    display: grid;
-    gap: 0.5rem;
-  }
-
-  .entity-skeleton span {
-    display: block;
-    height: 2.75rem;
-    border-radius: var(--shadcn-radius);
-    background: linear-gradient(90deg, var(--shadcn-muted), var(--shadcn-accent), var(--shadcn-muted));
-    background-size: 220% 100%;
-    animation: shimmer 1.2s ease-in-out infinite;
   }
 
   .table-view {

@@ -20,7 +20,7 @@
 
   let component = $derived($page.params.component);
   let status = $state<any>(null);
-  let error = $state<string | null>(null);
+  let error = $state<unknown>(null);
   let loading = $state(true);
   let stopPolling: (() => void) | null = null;
 
@@ -97,7 +97,7 @@
       status = await api.getStatus();
       error = null;
     } catch (e) {
-      error = (e as Error).message;
+      error = e;
     } finally {
       loading = false;
     }

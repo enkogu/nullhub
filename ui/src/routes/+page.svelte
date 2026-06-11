@@ -3,21 +3,34 @@
   import InstanceCard from "$lib/components/InstanceCard.svelte";
   import { api } from "$lib/api/client";
   import { pollWhileVisible } from "$lib/poll";
+  import DataState, { type DataStateKind } from "$lib/components/DataState.svelte";
   import { PageHeader } from "$lib/components/ui/page-header";
-  import { Card } from "$lib/components/ui/card";
   import { Button } from "$lib/components/ui/button";
 
   let status = $state<any>(null);
-  let error = $state<string | null>(null);
+  let error = $state<unknown>(null);
+  let loading = $state(true);
   let stopPolling: (() => void) | null = null;
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
+  const instanceEntries = $derived(
+    Object.entries((status?.instances || {}) as Record<string, Record<string, any>>).flatMap(([component, instances]) =>
+      Object.entries(instances).map(([name, info]) => ({ component, name, info })),
+    ),
+  );
+  const dashboardState = $derived<DataStateKind>(
+    error ? "error" : loading && !status ? "loading" : instanceEntries.length === 0 ? "empty" : "populated",
+  );
+
   async function refresh() {
+    loading = true;
     try {
       status = await api.getStatus();
       error = null;
     } catch (e) {
-      error = (e as Error).message;
+      error = e;
+    } finally {
+      loading = false;
     }
   }
 
@@ -39,36 +52,34 @@
     {/snippet}
   </PageHeader>
 
-  {#if error}
-    <div class="banner banner-error">{error}</div>
-  {/if}
-
-  {#if status}
+  <DataState
+    state={dashboardState}
+    {error}
+    loadingTitle="Loading workspace"
+    loadingDescription="Fetching instances and runtime status."
+    emptyTitle="No instances installed yet."
+    emptyDescription="Install a component to start running agents and workflows in this workspace."
+    emptyActionLabel="Install component"
+    emptyActionHref="/market"
+    emptyIcon="plus"
+    errorTitle="Unable to load workspace"
+    retryLabel="Retry"
+    onRetry={() => void refresh()}
+  >
     <div class="instance-grid">
-      {#each Object.entries(status.instances || {}) as [component, instances]}
-        {#each Object.entries(instances as Record<string, any>) as [name, info]}
-          <InstanceCard
-            {component}
-            {name}
-            version={info.version}
-            status={info.status || "stopped"}
-            autoStart={info.auto_start}
-            port={info.port || 0}
-            onAction={refresh}
-          />
-        {/each}
+      {#each instanceEntries as { component, name, info } (`${component}:${name}`)}
+        <InstanceCard
+          {component}
+          {name}
+          version={info.version}
+          status={info.status || "stopped"}
+          autoStart={info.auto_start}
+          port={info.port || 0}
+          onAction={refresh}
+        />
       {/each}
     </div>
-
-    {#if Object.keys(status.instances || {}).length === 0}
-      <Card class="px-5">
-        <div class="empty-state">
-          <p>No instances installed yet.</p>
-          <Button variant="outline" href="/market">Install component</Button>
-        </div>
-      </Card>
-    {/if}
-  {/if}
+  </DataState>
 </div>
 
 <style>
@@ -81,39 +92,9 @@
     margin: 0;
   }
 
-  .banner {
-    padding: 0.75rem 1rem;
-    border: 1px solid var(--shadcn-border);
-    border-radius: var(--shadcn-radius);
-    background: var(--shadcn-muted);
-    font-size: 0.875rem;
-    color: var(--shadcn-foreground);
-  }
-
-  .banner-error {
-    border-color: var(--shadcn-destructive);
-    color: var(--shadcn-destructive);
-    background: color-mix(in srgb, var(--shadcn-destructive) 8%, transparent);
-  }
-
   .instance-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 1rem;
-  }
-
-  .empty-state {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 1rem;
-    padding: 2.5rem 1rem;
-    text-align: center;
-  }
-
-  .empty-state p {
-    margin: 0;
-    font-size: 0.9375rem;
-    color: var(--shadcn-muted-foreground);
   }
 </style>

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { nullBoilerApi } from "$lib/api/client";
+  import { isCircuitBreakerError } from "$lib/components/DataState.svelte";
   import { nullboilerUiRoutes } from "$lib/nullboiler/routes";
   import BoilerInstanceSelector from "$lib/components/nullboiler/BoilerInstanceSelector.svelte";
   import { Button } from "$lib/components/ui/button";
@@ -17,7 +18,7 @@
   let workflows = $state<any[]>([]);
   let loading = $state(true);
   let loadingMore = $state(false);
-  let error = $state<string | null>(null);
+  let error = $state<unknown>(null);
   let offline = $state(false);
 
   let filterStatus = $state("");
@@ -86,6 +87,12 @@
     );
   }
 
+  function errorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    if (typeof error === "string") return error;
+    return "";
+  }
+
   function boundedInt(raw: string, fallback: number, min: number, max: number): number {
     const value = Number.parseInt(raw || String(fallback), 10);
     if (!Number.isFinite(value)) return fallback;
@@ -129,8 +136,11 @@
       error = null;
       offline = false;
     } catch (e) {
-      const message = (e as Error).message;
-      if (isOfflineError(message)) {
+      const message = errorMessage(e);
+      if (isCircuitBreakerError(e)) {
+        offline = false;
+        error = e;
+      } else if (isOfflineError(message)) {
         offline = true;
         error = null;
         if (!append) {
@@ -140,7 +150,7 @@
         }
       } else {
         offline = false;
-        error = message;
+        error = e || message;
       }
     } finally {
       if (append) loadingMore = false;

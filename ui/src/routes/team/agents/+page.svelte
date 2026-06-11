@@ -3,6 +3,7 @@
   import { api } from "$lib/api/client";
   import { pollWhileVisible } from "$lib/poll";
   import AgentCard from "$lib/components/AgentCard.svelte";
+  import DataState, { type DataStateKind } from "$lib/components/DataState.svelte";
   import { type StatusDotStatus } from "$lib/components/StatusDot.svelte";
   import HireWizard from "$lib/components/HireWizard.svelte";
   import { Badge } from "$lib/components/ui/badge";
@@ -13,7 +14,7 @@
   type AgentInfo = Record<string, any>;
 
   let status = $state<any>(null);
-  let error = $state<string | null>(null);
+  let error = $state<unknown>(null);
   let loading = $state(false);
   let stopPolling: (() => void) | null = null;
 
@@ -55,6 +56,9 @@
 
   const runningCount = $derived(agentCards.filter((agent) => agent.status === "running").length);
   const stoppedCount = $derived(agentCards.filter((agent) => agent.status !== "running").length);
+  const agentsState = $derived<DataStateKind>(
+    error ? "error" : loading && agentCards.length === 0 ? "loading" : agentCards.length === 0 ? "empty" : "populated",
+  );
 
   async function refresh() {
     loading = true;
@@ -62,7 +66,7 @@
       status = await api.getStatus();
       error = null;
     } catch (e) {
-      error = (e as Error).message;
+      error = e;
     } finally {
       loading = false;
     }
@@ -138,12 +142,6 @@
     {/each}
   </nav>
 
-  {#if error}
-    <div class="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-      {error}
-    </div>
-  {/if}
-
   <section class="summary-grid" aria-label="Agent summary">
     <Badge variant="secondary" class="summary-chip">Running {runningCount}</Badge>
     <Badge variant="secondary" class="summary-chip">Stopped {stoppedCount}</Badge>
@@ -152,21 +150,26 @@
 
   <section class="content-grid">
     <div class="space-y-4">
-      {#if loading && agentCards.length === 0}
-        <div class="rounded-lg border bg-card px-4 py-4 text-sm text-muted-foreground">
-          Loading agents...
-        </div>
-      {:else if agentCards.length === 0}
-        <div class="rounded-lg border bg-card px-4 py-4 text-sm text-muted-foreground">
-          No NullClaw agents found.
-        </div>
-      {:else}
+      <DataState
+        state={agentsState}
+        {error}
+        loadingTitle="Loading agents"
+        loadingDescription="Fetching active NullClaw agent instances."
+        emptyTitle="No NullClaw staff found"
+        emptyDescription="Create a hire to add the first agent to this team."
+        emptyActionLabel="Create hire"
+        emptyActionHref="#hire"
+        emptyIcon="plus"
+        errorTitle="Unable to load agents"
+        retryLabel="Retry"
+        onRetry={() => void refresh()}
+      >
         <div class="agent-grid">
           {#each agentCards as agent (agent.name)}
             <AgentCard {...agent} />
           {/each}
         </div>
-      {/if}
+      </DataState>
     </div>
 
     <aside class="hire-panel" id="hire">

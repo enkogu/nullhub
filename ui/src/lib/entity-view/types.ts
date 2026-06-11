@@ -84,7 +84,7 @@ export type UniversalEntityViewProps = {
   views?: EntityViewDefinition[];
   defaultViewId?: string;
   loading?: boolean;
-  error?: string | null;
+  error?: unknown;
   emptyTitle?: string;
   emptyDescription?: string;
   refreshLabel?: string;

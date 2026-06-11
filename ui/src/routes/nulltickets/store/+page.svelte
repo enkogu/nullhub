@@ -14,7 +14,7 @@
   let browsedNamespace = $state("");
   let entries = $state<any[]>([]);
   let loading = $state(false);
-  let error = $state<string | null>(null);
+  let error = $state<unknown>(null);
 
   let selectedEntry = $state<{ key: string; value: any } | null>(null);
 
@@ -87,7 +87,7 @@
     try {
       entries = (await nullTicketsStoreApi.storeList(browsedNamespace, ticketsTarget())) || [];
     } catch (e) {
-      error = (e as Error).message;
+      error = e;
     } finally {
       loading = false;
     }
@@ -108,7 +108,7 @@
       entries = entries.filter((entry) => entryKey(entry) !== key);
       if (selectedEntry?.key === key) selectedEntry = null;
     } catch (e) {
-      error = (e as Error).message;
+      error = e;
     }
   }
 

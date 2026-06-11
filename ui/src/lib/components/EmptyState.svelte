@@ -22,6 +22,7 @@
 		icon = "inbox",
 		tone = "neutral",
 		loading = false,
+		titleAsHeading = true,
 		onAction,
 		onSecondaryAction,
 		class: className,
@@ -35,6 +36,7 @@
 		icon?: EmptyStateIcon;
 		tone?: EmptyStateTone;
 		loading?: boolean;
+		titleAsHeading?: boolean;
 		onAction?: () => void;
 		onSecondaryAction?: () => void;
 		class?: string;
@@ -47,6 +49,13 @@
 		if (value === "risk") return "bg-risk/10 text-risk";
 		return "bg-muted text-muted-foreground";
 	}
+
+	let loadingTitle = $derived(loading && title === "Nothing here yet" ? "Loading data" : title);
+	let loadingDescription = $derived(
+		loading && description === "Records will appear here once they are available."
+			? "Fetching the latest data."
+			: description,
+	);
 </script>
 
 <Card
@@ -55,8 +64,10 @@
 	aria-busy={loading}
 >
 	{#if loading}
-		<Skeleton class="size-11 rounded-full" aria-label="Loading empty state" />
-		<div class="flex w-full max-w-sm flex-col items-center gap-2">
+		<Skeleton class="size-11 rounded-full" aria-hidden="true" />
+		<div class="flex w-full max-w-sm flex-col items-center gap-2" role="status" aria-live="polite">
+			<p class="empty-state-title text-foreground text-base font-semibold">{loadingTitle}</p>
+			<p class="text-muted-foreground text-sm leading-6">{loadingDescription}</p>
 			<Skeleton class="h-5 w-40" />
 			<Skeleton class="h-4 w-full" />
 			<Skeleton class="h-4 w-2/3" />
@@ -72,7 +83,11 @@
 			{/if}
 		</div>
 		<div class="flex max-w-md flex-col items-center gap-1.5">
-			<h3 class="text-foreground text-base font-semibold">{title}</h3>
+			{#if titleAsHeading}
+				<h3 class="empty-state-title text-foreground text-base font-semibold">{title}</h3>
+			{:else}
+				<p class="empty-state-title text-foreground text-base font-semibold">{title}</p>
+			{/if}
 			<p class="text-muted-foreground text-sm leading-6">{description}</p>
 		</div>
 		{#if actionLabel || secondaryActionLabel}
