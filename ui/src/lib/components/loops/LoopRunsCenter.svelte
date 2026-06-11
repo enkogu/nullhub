@@ -7,44 +7,30 @@
   import { Card } from "$lib/components/ui/card";
   import { PageHeader } from "$lib/components/ui/page-header";
   import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
+  import LoopRunDetailPanel from "./LoopRunDetailPanel.svelte";
+  import {
+    detailWorkerInstance,
+    entryBadge,
+    entryBucket,
+    entryStatus,
+    entryTime,
+    loopName,
+    type LoopAgentResult as AgentResult,
+    type LoopRunDetailData as RunDetail,
+    type LoopRunDetailEntry as RunEntry,
+  } from "./loopRunDetail";
   import {
     attemptNumber,
-    badgeVariant,
     emptyLoopsState,
-    formatDuration,
     formatMs,
-    formatStatus,
     loadLoopsState,
-    rowBucket,
-    rowFailureReason,
-    rowTime,
-    taskTime,
     ticketsComponent,
-    workerId,
     type LoopsState,
     type TaskDetailCache,
   } from "$lib/loops/data";
-  import type { LoopArtifact, LoopRunEvent, LoopRunRow, LoopTask } from "$lib/loops/types";
+  import type { LoopRunRow } from "$lib/loops/types";
 
   type RunsFilter = "all" | "active" | "waiting" | "attention" | "completed";
-
-  type RunEntry = {
-    task: LoopTask;
-    run?: LoopRunRow["run"];
-    pipeline?: LoopRunRow["pipeline"];
-  };
-
-  type RunDetail = {
-    events: LoopRunEvent[];
-    artifacts: LoopArtifact[];
-  };
-
-  type AgentResult = {
-    instanceName: string;
-    sessionId: string;
-    content: string;
-    createdAt?: string;
-  };
 
   let status = $state<any>(null);
   let loopsState = $state<LoopsState>(emptyLoopsState());
@@ -92,16 +78,6 @@
     return [...rows, ...waiting];
   }
 
-  function entryBucket(entry: RunEntry): RunsFilter {
-    if (!entry.run) return "waiting";
-    const bucket = rowBucket(entry as LoopRunRow);
-    return bucket === "other" ? "completed" : bucket;
-  }
-
-  function entryTime(entry: RunEntry): number {
-    return entry.run ? rowTime(entry as LoopRunRow) : taskTime(entry.task);
-  }
-
   function filteredEntries(): RunEntry[] {
     return runEntries()
       .filter((entry) => !loopFilter || entry.task.pipeline_id === loopFilter)
@@ -128,63 +104,8 @@
     return entries[0];
   }
 
-  function entryStatus(entry: RunEntry): string {
-    if (!entry.run) return "waiting";
-    if (entry.task.dead_letter_reason) return "dead letter";
-    return formatStatus(entry.run.status);
-  }
-
-  function entryBadge(entry: RunEntry): "success" | "warning" | "destructive" | "muted" | "outline" {
-    if (!entry.run) return "warning";
-    if (entry.task.dead_letter_reason) return "destructive";
-    return badgeVariant(entry.run.status);
-  }
-
-  function loopName(entry: RunEntry): string {
-    return entry.pipeline?.name || entry.task.pipeline_id.slice(0, 8);
-  }
-
   function loopFilterName(): string {
     return loopsState.pipelines.find((pipeline) => pipeline.id === loopFilter)?.name || loopFilter.slice(0, 8);
-  }
-
-  function formatBytes(bytes?: number | null): string {
-    const value = Number(bytes || 0);
-    if (!value || !Number.isFinite(value)) return "";
-    if (value < 1024) return `${value} B`;
-    if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
-    return `${(value / (1024 * 1024)).toFixed(1)} MB`;
-  }
-
-  function eventLabel(event: LoopRunEvent): string {
-    if (event.kind === "transition") {
-      return `stage ${event.data?.from || "?"} → ${event.data?.to || "?"}`;
-    }
-    if (event.kind === "dispatch_started") return "agent dispatched";
-    if (event.kind === "dispatch_completed") {
-      const bytes = formatBytes(event.data?.output_bytes);
-      return bytes ? `agent finished · ${bytes} output` : "agent finished";
-    }
-    if (event.kind === "claimed" || event.kind === "lease_claimed") return "claimed by worker";
-    return formatStatus(event.kind);
-  }
-
-  function eventDetail(event: LoopRunEvent): string {
-    const worker = event.data?.worker_id;
-    const note = event.data?.error || event.data?.reason || event.data?.note;
-    return [worker, note].filter(Boolean).join(" · ");
-  }
-
-  function detailWorkerInstance(entry: RunEntry): string {
-    for (const event of detail.events) {
-      const worker = event.data?.worker_id;
-      if (typeof worker === "string" && worker.startsWith("nullclaw-")) {
-        return worker.slice("nullclaw-".length);
-      }
-    }
-    const agent = entry.run?.agent_id || "";
-    if (agent.startsWith("nullclaw-")) return agent.slice("nullclaw-".length);
-    return clawInstance();
   }
 
   function selectEntry(entry: RunEntry) {
@@ -233,7 +154,7 @@
 
   async function loadAgentResult(entry: RunEntry) {
     if (!entry.run?.id) return;
-    const instanceName = detailWorkerInstance(entry);
+    const instanceName = detailWorkerInstance(detail.events, entry, clawInstance());
     const cacheKey = `${instanceName}:${entry.task.id}`;
     if (agentResultCache.has(cacheKey)) {
       agentResult = agentResultCache.get(cacheKey) || null;
@@ -438,111 +359,15 @@
         </div>
       </Card>
 
-      <Card class="run-detail">
-        {#if !selectedEntry()}
-          <div class="empty-inline">Select a run to inspect it.</div>
-        {:else}
-          {@const entry = selectedEntry()!}
-          <div class="detail-head">
-            <h2>{entry.task.title}</h2>
-            <div class="detail-badges">
-              <Badge variant={entryBadge(entry)}>{entryStatus(entry)}</Badge>
-              {#if entry.run}
-                <Badge variant="outline">attempt {attemptNumber(entry as LoopRunRow)}</Badge>
-                <Badge variant="muted">{formatDuration(entry as LoopRunRow)}</Badge>
-              {/if}
-            </div>
-            <p class="detail-sub">
-              {loopName(entry)}
-              {#if entry.run}
-                · {workerId(entry as LoopRunRow)} · {formatMs(entryTime(entry))}
-              {:else}
-                · created {formatMs(entry.task.created_at_ms)}
-              {/if}
-            </p>
-          </div>
-
-          {#if entry.task.description}
-            <p class="detail-description">{entry.task.description}</p>
-          {/if}
-
-          {#if entry.run && entryBucket(entry) === "attention"}
-            <div class="alert alert-error detail-failure">{rowFailureReason(entry as LoopRunRow)}</div>
-          {/if}
-
-          {#if !entry.run}
-            <div class="alert alert-warning">
-              Waiting to be claimed. The worker picks up eligible tickets in priority order.
-            </div>
-          {/if}
-
-          {#if entry.run && entryBucket(entry) !== "active"}
-            <div class="detail-actions">
-              <Button size="sm" onclick={() => runAgain(entry)} disabled={actionLoading === "again"}>
-                {actionLoading === "again" ? "Creating" : "Run again"}
-              </Button>
-            </div>
-          {/if}
-
-          {#if entry.run}
-            <section class="detail-section">
-              <h3>Result</h3>
-              {#if agentResultLoading}
-                <p class="empty-inline">Loading agent result...</p>
-              {:else if agentResult}
-                <pre class="agent-result">{agentResult.content}</pre>
-                <p class="result-source">{agentResult.instanceName} · {agentResult.sessionId}</p>
-              {:else if agentResultError}
-                <p class="empty-inline">Agent result unavailable: {agentResultError}</p>
-              {:else}
-                <p class="empty-inline">No agent response recorded for this ticket yet.</p>
-              {/if}
-            </section>
-
-            <section class="detail-section">
-              <h3>Timeline</h3>
-              {#if detail.events.length === 0}
-                <p class="empty-inline">No events recorded for this run.</p>
-              {:else}
-                <ol class="timeline">
-                  {#each detail.events as event (event.id)}
-                    <li>
-                      <span class="timeline-time">{formatMs(event.ts_ms)}</span>
-                      <div class="timeline-body">
-                        <strong>{eventLabel(event)}</strong>
-                        {#if eventDetail(event)}
-                          <span>{eventDetail(event)}</span>
-                        {/if}
-                      </div>
-                    </li>
-                  {/each}
-                </ol>
-              {/if}
-            </section>
-
-            <section class="detail-section">
-              <h3>Artifacts</h3>
-              {#if detail.artifacts.length === 0}
-                <p class="empty-inline">No artifacts recorded for this run.</p>
-              {:else}
-                <ul class="artifact-list">
-                  {#each detail.artifacts as artifact (artifact.id)}
-                    <li>
-                      <Badge variant="outline">{formatStatus(artifact.kind)}</Badge>
-                      <span>{artifact.uri}{formatBytes(artifact.size_bytes) ? ` · ${formatBytes(artifact.size_bytes)}` : ""}</span>
-                    </li>
-                  {/each}
-                </ul>
-              {/if}
-            </section>
-
-            <details class="advanced">
-              <summary>Advanced</summary>
-              <pre>{JSON.stringify({ task: entry.task, run: entry.run, events: detail.events, artifacts: detail.artifacts }, null, 2)}</pre>
-            </details>
-          {/if}
-        {/if}
-      </Card>
+      <LoopRunDetailPanel
+        entry={selectedEntry()}
+        {detail}
+        {agentResult}
+        {agentResultLoading}
+        {agentResultError}
+        {actionLoading}
+        onRunAgain={(entry) => runAgain(entry)}
+      />
     </div>
   {/if}
 </div>
@@ -567,12 +392,6 @@
     border-color: rgb(167 243 208);
     background: rgb(236 253 245);
     color: rgb(4 120 87);
-  }
-
-  .alert-warning {
-    border-color: rgb(253 230 138);
-    background: rgb(255 251 235);
-    color: rgb(146 64 14);
   }
 
   .alert-error {
@@ -631,14 +450,6 @@
     padding: 0.5rem;
   }
 
-  :global(.run-detail) {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    gap: 1rem;
-    padding: 1rem;
-  }
-
   .table-wrap {
     overflow-x: auto;
   }
@@ -689,162 +500,4 @@
     white-space: nowrap;
   }
 
-  .detail-head {
-    display: flex;
-    flex-direction: column;
-    gap: 0.4rem;
-  }
-
-  .detail-head h2 {
-    margin: 0;
-    font-size: 1rem;
-    font-weight: 600;
-    line-height: 1.35;
-  }
-
-  .detail-badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-  }
-
-  .detail-sub {
-    margin: 0;
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.8125rem;
-  }
-
-  .detail-description {
-    margin: 0;
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.875rem;
-    line-height: 1.45;
-  }
-
-  .detail-failure {
-    font-size: 0.8125rem;
-  }
-
-  .detail-actions {
-    display: flex;
-    gap: 0.5rem;
-  }
-
-  .detail-section {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .detail-section h3 {
-    margin: 0;
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.75rem;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-
-  .agent-result {
-    margin: 0;
-    max-height: 18rem;
-    overflow: auto;
-    border: 1px solid var(--shadcn-border);
-    border-radius: calc(var(--shadcn-radius) - 2px);
-    padding: 0.75rem;
-    background: var(--shadcn-muted);
-    font-size: 0.8125rem;
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-
-  .result-source {
-    margin: 0;
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.75rem;
-  }
-
-  .timeline {
-    display: flex;
-    margin: 0;
-    flex-direction: column;
-    gap: 0.45rem;
-    padding: 0;
-    list-style: none;
-  }
-
-  .timeline li {
-    display: flex;
-    gap: 0.75rem;
-    font-size: 0.8125rem;
-  }
-
-  .timeline-time {
-    flex-shrink: 0;
-    width: 7.5rem;
-    color: var(--shadcn-muted-foreground);
-  }
-
-  .timeline-body {
-    display: flex;
-    min-width: 0;
-    flex-direction: column;
-    gap: 0.1rem;
-  }
-
-  .timeline-body strong {
-    font-weight: 500;
-  }
-
-  .timeline-body span {
-    color: var(--shadcn-muted-foreground);
-    word-break: break-word;
-  }
-
-  .artifact-list {
-    display: flex;
-    margin: 0;
-    flex-direction: column;
-    gap: 0.4rem;
-    padding: 0;
-    list-style: none;
-  }
-
-  .artifact-list li {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    font-size: 0.8125rem;
-  }
-
-  .artifact-list span {
-    overflow: hidden;
-    color: var(--shadcn-muted-foreground);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .advanced summary {
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.8125rem;
-    cursor: pointer;
-  }
-
-  .advanced pre {
-    margin: 0.5rem 0 0;
-    max-height: 20rem;
-    overflow: auto;
-    border: 1px solid var(--shadcn-border);
-    border-radius: calc(var(--shadcn-radius) - 2px);
-    padding: 0.75rem;
-    background: var(--shadcn-muted);
-    font-size: 0.75rem;
-  }
-
-  .empty-inline {
-    margin: 0;
-    color: var(--shadcn-muted-foreground);
-    font-size: 0.875rem;
-  }
 </style>
