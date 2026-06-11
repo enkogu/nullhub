@@ -160,6 +160,25 @@ test('global command palette shortcut opens shell navigation', async ({ page }) 
   expect(runtimeErrors).toEqual([]);
 });
 
+test('g h shortcut lands on canonical Home route and marks Home active', async ({ page }) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
+  await installNullHubFixtureRoutes(page);
+
+  await page.goto('/work');
+  await expect(page.getByRole('button', { name: /Operations Workspace - Active/ })).toBeVisible();
+  await expect(page).toHaveURL(/\/work(?:\?space=ops)?$/);
+  await page.keyboard.press('g');
+  await page.keyboard.press('h');
+
+  await expect(page).toHaveURL(/\/(?:\?space=ops)?$/);
+  const homeLink = page.getByLabel('Primary navigation').getByRole('link', { name: 'Home' });
+  await expect(homeLink).toHaveAttribute('aria-current', 'page');
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  await expect(page.getByText('No instances installed yet.')).toBeVisible();
+  expect(failedResponses).toEqual([]);
+  expect(runtimeErrors).toEqual([]);
+});
+
 test('explicit All spaces selection keeps product reads unscoped and visible in the sidebar', async ({ page }) => {
   const requests: string[] = [];
   await page.addInitScript(

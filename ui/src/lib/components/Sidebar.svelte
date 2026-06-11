@@ -45,7 +45,6 @@
 
   <div class="nav-section">
     <a href="/" class:active={currentPath === "/"}>System Status</a>
-    <a href="/dashboard" class:active={currentPath === "/dashboard"}>Dashboard</a>
     <a href="/install" class:active={currentPath === "/install"}
       >Install Component</a
     >

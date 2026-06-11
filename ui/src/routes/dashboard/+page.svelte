@@ -1,5 +1,1 @@
-<script lang="ts">
-  import LoopsWorkspace from "$lib/components/loops/LoopsWorkspace.svelte";
-</script>
-
-<LoopsWorkspace />
+<!-- Legacy /dashboard redirects to canonical Home in +page.ts. -->

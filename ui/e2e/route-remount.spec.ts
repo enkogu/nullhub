@@ -55,6 +55,10 @@ for (const [legacyPath, targetPath] of redirectCases) {
     const url = new URL(page.url());
     expect(`${url.pathname}${url.search}${url.hash}`).toBe(targetPath);
     await expect(page.locator('main.real-content')).toBeVisible();
+    if (legacyPath === '/dashboard') {
+      await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Installed loops' })).toHaveCount(0);
+    }
     expect(failedResponses).toEqual([]);
     expect(runtimeErrors).toEqual([]);
   });

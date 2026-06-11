@@ -44,7 +44,7 @@
 			title: "Home",
 			url: "/",
 			icon: LayoutDashboardIcon,
-			exact: ["/", "/dashboard"],
+			exact: ["/"],
 			shortcut: "g h",
 		},
 		{
