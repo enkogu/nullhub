@@ -101,7 +101,7 @@
   const TASK_DETAIL_PREFETCH_LIMIT = 12;
   const panelViewLabels: Record<PanelView, string> = {
     tasks: "Tasks",
-    pipelines: "Processes",
+    pipelines: "Pipelines",
     queue: "Queue",
     runs: "Runs",
     artifacts: "Artifacts",
@@ -1485,8 +1485,8 @@
         {/if}
 
         {#if panelView === "tasks"}
-          <Select bind:value={filterPipeline} aria-label="Filter by process" class="ph-field">
-            <option value="">All processes</option>
+          <Select bind:value={filterPipeline} aria-label="Filter by pipeline" class="ph-field">
+            <option value="">All pipelines</option>
             {#each pipelines as pipeline}
               <option value={pipelineId(pipeline)}>{pipelineName(pipeline)}</option>
             {/each}
@@ -1518,7 +1518,7 @@
         {#if panelView === "tasks" && workMode === "tasks"}
           <Button size="sm" onclick={() => (showCreateTask = true)}>+ New task</Button>
         {:else if panelView === "pipelines"}
-          <Button size="sm" onclick={() => (showCreateProcess = true)}>+ New process</Button>
+          <Button size="sm" onclick={() => (showCreateProcess = true)}>+ New pipeline</Button>
         {:else if panelView === "artifacts"}
           <Button size="sm" onclick={() => (showCreateArtifact = true)}>+ New artifact</Button>
         {/if}
@@ -1541,7 +1541,7 @@
               <strong>{tasks.length}</strong>
             </div>
             <div class="insight-card">
-              <span>Processes</span>
+              <span>Pipelines</span>
               <strong>{visibleProcessCount()}</strong>
             </div>
             <div class="insight-card">
@@ -1905,9 +1905,9 @@
       <div class="split-grid">
         <section class="split-list-pane">
           {#if loading && pipelines.length === 0}
-            <div class="empty-row">Loading processes…</div>
+            <div class="empty-row">Loading pipelines…</div>
           {:else if pipelines.length === 0}
-            <div class="empty-row">Create a process definition to populate this view.</div>
+            <div class="empty-row">Create a pipeline definition to populate this view.</div>
           {:else}
             <div class="list-stack">
               {#each pipelines as pipeline (pipelineId(pipeline))}

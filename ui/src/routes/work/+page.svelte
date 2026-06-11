@@ -1,11 +1,17 @@
 <script lang="ts">
-  import NullTicketsWorkspacePage from "$lib/components/nulltickets/NullTicketsWorkspacePage.svelte";
+  import { goto } from "$app/navigation";
+  import { onMount } from "svelte";
 
-  const views = ["tasks"] as const;
+  onMount(() => {
+    void goto("/work/today", { replaceState: true });
+  });
 </script>
 
-<NullTicketsWorkspacePage
-  title="Work Board"
-  initialView="tasks"
-  {views}
-/>
+<div class="work-redirect">Loading Work…</div>
+
+<style>
+  .work-redirect {
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.875rem;
+  }
+</style>

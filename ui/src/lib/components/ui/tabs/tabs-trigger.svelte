@@ -6,8 +6,10 @@
   let {
     value,
     class: className = "",
+    onclick,
     children,
-  }: { value: string; class?: string; children?: Snippet } = $props();
+    ...restProps
+  }: { value: string; class?: string; onclick?: (event: MouseEvent) => void; children?: Snippet } = $props();
 
   const ctx = getTabsCtx();
   const active = $derived(ctx.value() === value);
@@ -26,7 +28,11 @@
       : "border-transparent text-muted-foreground hover:text-foreground",
     className,
   )}
-  onclick={() => ctx.set(value)}
+  onclick={(event) => {
+    ctx.set(value);
+    onclick?.(event);
+  }}
+  {...restProps}
 >
   {@render children?.()}
 </button>

@@ -8,6 +8,7 @@
 	import ListChecksIcon from "@lucide/svelte/icons/list-checks";
 	import LogOutIcon from "@lucide/svelte/icons/log-out";
 	import PackagePlusIcon from "@lucide/svelte/icons/package-plus";
+	import PlayIcon from "@lucide/svelte/icons/play";
 	import RadioIcon from "@lucide/svelte/icons/radio";
 	import RepeatIcon from "@lucide/svelte/icons/repeat";
 	import Settings2Icon from "@lucide/svelte/icons/settings-2";
@@ -46,10 +47,10 @@
 		{
 			label: "Work",
 			items: [
-				{ title: "Board", url: "/work", icon: LayoutDashboardIcon, match: "exact" },
-				{ title: "Tasks", url: "/work/tasks", icon: ListChecksIcon, match: "prefix" },
-				{ title: "Planner", url: "/work/planner", icon: WorkflowIcon, match: "prefix" },
-				{ title: "Dependencies", url: "/work/dependencies", icon: BoxesIcon, match: "prefix" },
+				{ title: "Today", url: "/work/today", icon: LayoutDashboardIcon, match: "prefix" },
+				{ title: "Live", url: "/work/live", icon: PlayIcon, match: "prefix" },
+				{ title: "Results", url: "/work/results", icon: BoxesIcon, match: "prefix" },
+				{ title: "Activity", url: "/work/activity", icon: ListChecksIcon, match: "prefix" },
 				{ title: "Mission Control", url: "/work/mission-control", icon: ActivityIcon, match: "prefix" },
 			],
 		},
