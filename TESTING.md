@@ -1,5 +1,15 @@
 # Testing Strategy
 
+> **Supersession notice — policy owned elsewhere**
+> This file is **superseded for policy** by the parent monorepo's canonical
+> [`docs/specs/testing.md`](../../../docs/specs/testing.md). That spec is the
+> source of truth for required test layers, exact commands, gates, fixture
+> defaults, and evidence policy. **Use it for policy decisions.** The retained
+> role of this document is the nullhub-local **backend coverage map and
+> PR-sequencing reference**; it is not a substitute for the canonical spec.
+> If a command, flag, gate, or policy statement in this file diverges from
+> `docs/specs/testing.md`, the canonical spec wins.
+
 This document defines the path to bring NullHub's test discipline closer to NullClaw's while keeping each improvement shippable in small, isolated pull requests.
 
 The aim is not a single large testing rewrite. The aim is to improve confidence incrementally, with each PR standing on its own wherever possible.
@@ -340,6 +350,18 @@ Dependencies:
 
 ## Recommended Validation By Change Type
 
+> The commands below are **historical submodule-local quick checks**, retained
+> as the nullhub-local coverage map. The required gates, evidence, and
+> lifecycle smoke commands are owned by
+> [`docs/specs/testing.md`](../../../docs/specs/testing.md) and the table
+> there. When that spec lists a wrapper (for example
+> `apps/nullstack/nullhub/tests/test_backend.sh`, which already wraps the
+> unit and integration `zig build test` invocations) prefer the wrapper.
+>
+> Lifecycle smoke for nullhub must include the structured mission-control
+> smoke in addition to `test_e2e.sh`, per the runtime/lifecycle row of the
+> canonical matrix.
+
 Docs-only changes:
 
 ```bash
@@ -349,21 +371,22 @@ git diff --check
 Backend code changes:
 
 ```bash
-zig build test -Dembed-ui=false -Dbuild-ui=false --summary all
+bash tests/test_backend.sh
 ```
 
 Smoke or lifecycle changes:
 
 ```bash
-zig build test -Dembed-ui=false -Dbuild-ui=false --summary all
+bash tests/test_backend.sh
 bash tests/test_e2e.sh
+bash tests/test_mission_control_smoke.sh
 ```
 
 Frontend logic changes:
 
 ```bash
 npm --prefix ui test -- --run
-zig build test -Dembed-ui=false -Dbuild-ui=false --summary all
+bash tests/test_backend.sh
 ```
 
 If any validation is skipped, the PR description should say exactly what was skipped and why.
