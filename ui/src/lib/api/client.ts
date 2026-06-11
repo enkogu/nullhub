@@ -312,6 +312,12 @@ function withSelectedSpace(path: string): string {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+function withSelectedSpaceBody<T extends Record<string, unknown>>(data: T): T & { space_id?: string } {
+  const selectedSpaceId = selectedSpaceFromEnvironment();
+  if (!selectedSpaceId || data.space_id !== undefined || data.space !== undefined) return data;
+  return { ...data, space_id: selectedSpaceId };
+}
+
 function scopeRequestPath(path: string, method: string, options?: ApiRequestInit): string {
   if (!options?.spaceScoped && (method !== 'GET' || !isSpaceScopedGetPath(path))) return path;
   return withSelectedSpace(path);
@@ -795,9 +801,9 @@ export const api = {
   getSavedProviders: (reveal = false) =>
     request<any>(`/providers${reveal ? '?reveal=true' : ''}`),
   createSavedProvider: (data: { provider: string; api_key: string; model?: string; base_url?: string }) =>
-    request<any>('/providers', { method: 'POST', body: JSON.stringify(data) }),
+    request<any>('/providers', { method: 'POST', body: JSON.stringify(withSelectedSpaceBody(data)) }),
   updateSavedProvider: (id: string, data: { name?: string; api_key?: string; model?: string; base_url?: string }) =>
-    request<any>(`/providers/${id.replace('sp_', '')}`, { method: 'PUT', body: JSON.stringify(data) }),
+    request<any>(`/providers/${id.replace('sp_', '')}`, { method: 'PUT', body: JSON.stringify(withSelectedSpaceBody(data)) }),
   deleteSavedProvider: (id: string) =>
     request<any>(`/providers/${id.replace('sp_', '')}`, { method: 'DELETE' }),
   revalidateSavedProvider: (id: string) =>
@@ -812,9 +818,9 @@ export const api = {
   getSavedChannels: (reveal = false) =>
     request<any>(`/channels${reveal ? '?reveal=true' : ''}`),
   createSavedChannel: (data: { channel_type: string; account: string; config: Record<string, any> }) =>
-    request<any>('/channels', { method: 'POST', body: JSON.stringify(data) }),
+    request<any>('/channels', { method: 'POST', body: JSON.stringify(withSelectedSpaceBody(data)) }),
   updateSavedChannel: (id: string, data: { name?: string; account?: string; config?: Record<string, any> }) =>
-    request<any>(`/channels/${id.replace('sc_', '')}`, { method: 'PUT', body: JSON.stringify(data) }),
+    request<any>(`/channels/${id.replace('sc_', '')}`, { method: 'PUT', body: JSON.stringify(withSelectedSpaceBody(data)) }),
   deleteSavedChannel: (id: string) =>
     request<any>(`/channels/${id.replace('sc_', '')}`, { method: 'DELETE' }),
   revalidateSavedChannel: (id: string) =>

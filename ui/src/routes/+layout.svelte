@@ -4,13 +4,16 @@
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
+  import type { SpaceOption } from '$lib/components/AppSidebar.svelte';
   import GlobalAgentChatDrawer from '$lib/components/GlobalAgentChatDrawer.svelte';
   import * as Breadcrumb from '$lib/components/ui/breadcrumb/index.js';
   import { Button } from '$lib/components/ui/button';
   import { Separator } from '$lib/components/ui/separator/index.js';
   import * as Sidebar from '$lib/components/ui/sidebar/index.js';
+  import { ALL_SPACES_STORAGE_VALUE, SELECTED_SPACE_STORAGE_KEY, SPACE_QUERY_PARAM, selectedSpaceFromEnvironment, type Space } from '$lib/api/spaces';
   import { headerToolbar } from '$lib/headerToolbar';
   import { redirectToPreferredOrigin } from '$lib/nullhubAccess';
+  import { spacesStore } from '$lib/stores/spaces.svelte';
   import PanelRightCloseIcon from '@lucide/svelte/icons/panel-right-close';
   import PanelRightOpenIcon from '@lucide/svelte/icons/panel-right-open';
 
@@ -107,9 +110,93 @@
   let crumbs = $derived(routeCrumbs($page.url.pathname));
   let visibleCrumbs = $derived($headerToolbar?.crumbLabel ? [...crumbs, { label: $headerToolbar.crumbLabel }] : crumbs);
   let isLogoutRoute = $derived($page.url.pathname === '/logout');
+  let spacesResolved = $state(false);
+  let spacesLoadError = $state<string | null>(null);
+  const allSpacesOption: SpaceOption = {
+    id: ALL_SPACES_STORAGE_VALUE,
+    name: 'All spaces',
+    detail: 'Aggregate view',
+    initial: 'A',
+  };
+  let sidebarSpaces = $derived(spacesStore.spaces.length > 0 ? [allSpacesOption, ...spacesStore.spaces.map(spaceOption)] : undefined);
+  let activeSpaceId = $derived(spacesStore.selectedSpaceId ?? (spacesResolved ? ALL_SPACES_STORAGE_VALUE : undefined));
+
+  function humanLabel(value: string, fallback = 'Space'): string {
+    const text = value.trim().replace(/[-_]+/g, ' ');
+    return text ? text.charAt(0).toUpperCase() + text.slice(1) : fallback;
+  }
+
+  function spaceOption(space: Space): SpaceOption {
+    return {
+      id: space.id,
+      name: space.name || space.id,
+      detail: [humanLabel(space.kind), humanLabel(space.stage, '')].filter(Boolean).join(' - '),
+      initial: (space.name || space.id || 'S').trim().slice(0, 1).toUpperCase(),
+    };
+  }
+
+  function hasExplicitAllSpacesSelection(): boolean {
+    try {
+      const params = new URL(window.location.href).searchParams;
+      if (params.has(SPACE_QUERY_PARAM) && !String(params.get(SPACE_QUERY_PARAM) ?? '').trim()) return true;
+      return localStorage.getItem(SELECTED_SPACE_STORAGE_KEY) === ALL_SPACES_STORAGE_VALUE;
+    } catch {
+      return false;
+    }
+  }
+
+  function ensureSelectedSpace(spaces: Space[], preserveAllSpaces: boolean) {
+    if (spacesStore.isAllSelected && preserveAllSpaces) {
+      spacesStore.selectAll();
+      return;
+    }
+    if (spaces.length === 0) return;
+    if (spacesStore.selectedSpaceId && spaces.some((space) => space.id === spacesStore.selectedSpaceId)) {
+      spacesStore.selectSpace(spacesStore.selectedSpaceId);
+      return;
+    }
+    spacesStore.selectSpace(spaces[0].id);
+  }
+
+  async function loadSpacesForShell() {
+    spacesResolved = false;
+    spacesLoadError = null;
+    try {
+      const preserveAllSpaces = hasExplicitAllSpacesSelection();
+      ensureSelectedSpace(await spacesStore.load(), preserveAllSpaces);
+      spacesResolved = true;
+    } catch (error) {
+      console.error(error);
+      if (selectedSpaceFromEnvironment() !== undefined) {
+        spacesResolved = true;
+        return;
+      }
+      spacesLoadError = 'Unable to load workspaces.';
+    }
+  }
+
+  function handleSpaceChange(spaceId: string) {
+    if (spaceId === ALL_SPACES_STORAGE_VALUE) {
+      spacesStore.selectAll();
+      return;
+    }
+    spacesStore.selectSpace(spaceId);
+  }
+
+  async function handleCreateSpace() {
+    const name = window.prompt('New space name')?.trim();
+    if (!name) return;
+
+    try {
+      await spacesStore.createSpace({ name });
+    } catch (error) {
+      console.error(error);
+    }
+  }
 
   onMount(() => {
     void redirectToPreferredOrigin(window.location);
+    void loadSpacesForShell();
   });
 </script>
 
@@ -120,7 +207,7 @@
     </main>
   {:else}
     <Sidebar.Provider class="app-shell">
-      <AppSidebar />
+      <AppSidebar spaces={sidebarSpaces} {activeSpaceId} onSpaceChange={handleSpaceChange} onCreateSpace={handleCreateSpace} />
       <Sidebar.Inset>
         <header
           class="app-header flex h-16 shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"
@@ -199,7 +286,18 @@
           </div>
         </header>
         <main class="real-content">
-          {@render children()}
+          {#if spacesLoadError}
+            <div class="space-loading" role="alert">
+              <span>{spacesLoadError}</span>
+              <button type="button" onclick={() => void loadSpacesForShell()}>Retry</button>
+            </div>
+          {:else if spacesResolved}
+            {#key activeSpaceId ?? 'all'}
+              {@render children()}
+            {/key}
+          {:else}
+            <div class="space-loading" role="status" aria-live="polite">Loading workspace...</div>
+          {/if}
         </main>
       </Sidebar.Inset>
     </Sidebar.Provider>
@@ -234,6 +332,32 @@
     overflow: auto;
     padding: 1.5rem;
     background: var(--shadcn-background);
+  }
+
+  .space-loading {
+    display: grid;
+    gap: 0.75rem;
+    min-height: 12rem;
+    place-items: center;
+    color: var(--shadcn-muted-foreground);
+    font-size: 0.875rem;
+  }
+
+  .space-loading button {
+    height: 32px;
+    border: 1px solid var(--shadcn-border);
+    border-radius: 6px;
+    background: var(--shadcn-background);
+    color: var(--shadcn-foreground);
+    padding: 0 0.75rem;
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 650;
+    cursor: pointer;
+  }
+
+  .space-loading button:hover {
+    background: var(--shadcn-accent);
   }
 
   .shadcn-app :global([data-slot="sidebar-wrapper"]) {

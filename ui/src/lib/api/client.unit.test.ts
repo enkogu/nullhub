@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { api, nullBoilerApi, nullTicketsStoreApi } from './client';
-import { SELECTED_SPACE_STORAGE_KEY } from './spaces';
+import { ALL_SPACES_STORAGE_VALUE, SELECTED_SPACE_STORAGE_KEY } from './spaces';
 import {
   coreApiFixtureRoutes,
   statusFixture,
@@ -14,7 +14,7 @@ let fixture: InstalledApiFixture | null = null;
 const originalLocalStorage = globalThis.localStorage;
 
 function storageValue(spaceId: string | null) {
-  return spaceId === null ? '__all__' : spaceId;
+  return spaceId === null ? ALL_SPACES_STORAGE_VALUE : spaceId;
 }
 
 function installSelectedSpace(spaceId: string | null) {
@@ -171,5 +171,67 @@ describe('api client fake backend fixture', () => {
     await expect(api.getInstances()).resolves.toEqual({ instances: [] });
 
     expect(fixture.requests[0].path).toBe('/api/instances');
+  });
+
+  test('adds the selected space to saved provider and channel mutation bodies', async () => {
+    installSelectedSpace('ops');
+    fixture = installApiFixture([
+      {
+        method: 'POST',
+        path: '/api/providers',
+        handler: () => ({ body: { ok: true } }),
+      },
+      {
+        method: 'PUT',
+        path: '/api/providers/provider-1',
+        handler: () => ({ body: { ok: true } }),
+      },
+      {
+        method: 'POST',
+        path: '/api/channels',
+        handler: () => ({ body: { ok: true } }),
+      },
+      {
+        method: 'PUT',
+        path: '/api/channels/channel-1',
+        handler: () => ({ body: { ok: true } }),
+      },
+    ]);
+
+    await expect(api.createSavedProvider({ provider: 'openrouter', api_key: 'test-key' })).resolves.toEqual({ ok: true });
+    await expect(api.updateSavedProvider('sp_provider-1', { model: 'openai/gpt-5.5' })).resolves.toEqual({ ok: true });
+    await expect(api.createSavedChannel({ channel_type: 'telegram', account: 'ops', config: {} })).resolves.toEqual({ ok: true });
+    await expect(api.updateSavedChannel('sc_channel-1', { account: 'lab' })).resolves.toEqual({ ok: true });
+
+    expect(fixture.requests.map((request) => request.bodyJson)).toEqual([
+      { provider: 'openrouter', api_key: 'test-key', space_id: 'ops' },
+      { model: 'openai/gpt-5.5', space_id: 'ops' },
+      { channel_type: 'telegram', account: 'ops', config: {}, space_id: 'ops' },
+      { account: 'lab', space_id: 'ops' },
+    ]);
+  });
+
+  test('keeps saved provider and channel mutation bodies unscoped in All Spaces mode', async () => {
+    installSelectedSpace(null);
+    fixture = installApiFixture([
+      {
+        method: 'POST',
+        path: '/api/providers',
+        handler: () => ({ body: { ok: true } }),
+      },
+      {
+        method: 'POST',
+        path: '/api/channels',
+        handler: () => ({ body: { ok: true } }),
+      },
+    ]);
+
+    await expect(api.createSavedProvider({ provider: 'openrouter', api_key: 'test-key' })).resolves.toEqual({ ok: true });
+    await expect(api.createSavedChannel({ channel_type: 'telegram', account: 'ops', config: {} })).resolves.toEqual({ ok: true });
+
+    expect(fixture.requests.map((request) => request.bodyJson)).toEqual([
+      { provider: 'openrouter', api_key: 'test-key' },
+      { channel_type: 'telegram', account: 'ops', config: {} },
+    ]);
   });
 });

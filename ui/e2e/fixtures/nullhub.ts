@@ -1,6 +1,10 @@
 import type { Page, Route } from '@playwright/test';
 
 type JsonBody = Record<string, unknown> | unknown[];
+type NullHubFixtureOptions = {
+  requests?: string[];
+  spacesStatus?: number;
+};
 
 async function fulfillJson(route: Route, body: JsonBody, status = 200) {
   await route.fulfill({
@@ -49,6 +53,11 @@ const fixtureComponents = {
     },
   ],
 };
+
+const fixtureSpaces = [
+  { id: 'ops', name: 'Operations', kind: 'workspace', stage: 'active' },
+  { id: 'lab', name: 'Lab', kind: 'workspace', stage: 'paused' },
+];
 
 const fixtureSettings = {
   port: 19800,
@@ -123,7 +132,81 @@ const missionControlReplays = {
   count: 0,
 };
 
-export async function installNullHubFixtureRoutes(page: Page) {
+function requestPath(route: Route): string {
+  const url = new URL(route.request().url());
+  return `${url.pathname}${url.search}`;
+}
+
+function recordRequest(route: Route, options: NullHubFixtureOptions) {
+  options.requests?.push(requestPath(route));
+}
+
+async function jsonRoute(route: Route, options: NullHubFixtureOptions, body: JsonBody, status = 200) {
+  recordRequest(route, options);
+  await fulfillJson(route, body, status);
+}
+
+function fixtureProviders(space: string | null): JsonBody {
+  if (space === 'ops') {
+    return {
+      providers: [
+        {
+          id: 'ops-provider',
+          name: 'Ops Provider',
+          provider: 'openrouter',
+          model: 'openai/gpt-5.5',
+          base_url: '',
+          validated_at: '2026-06-11T00:00:00Z',
+          last_validation_at: '2026-06-11T00:00:00Z',
+          last_validation_ok: true,
+        },
+      ],
+    };
+  }
+  if (space === 'lab') {
+    return {
+      providers: [
+        {
+          id: 'lab-provider',
+          name: 'Lab Provider',
+          provider: 'openrouter',
+          model: 'openai/gpt-5.5-mini',
+          base_url: '',
+          validated_at: '2026-06-11T00:00:00Z',
+          last_validation_at: '2026-06-11T00:00:00Z',
+          last_validation_ok: true,
+        },
+      ],
+    };
+  }
+  return { providers: [] };
+}
+
+async function spacesRoute(route: Route, options: NullHubFixtureOptions, spaces: typeof fixtureSpaces) {
+  recordRequest(route, options);
+  if (options.spacesStatus && options.spacesStatus >= 400) {
+    await fulfillJson(route, { error: 'Spaces unavailable.' }, options.spacesStatus);
+    return;
+  }
+  if (route.request().method() === 'POST') {
+    const payload = route.request().postDataJSON() as { name?: string; kind?: string; stage?: string } | null;
+    const name = String(payload?.name ?? '').trim();
+    const created = {
+      id: name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-') || `space-${spaces.length + 1}`,
+      name: name || `Space ${spaces.length + 1}`,
+      kind: payload?.kind || 'workspace',
+      stage: payload?.stage || 'active',
+    };
+    spaces.push(created);
+    await fulfillJson(route, created, 201);
+    return;
+  }
+  await fulfillJson(route, { spaces });
+}
+
+export async function installNullHubFixtureRoutes(page: Page, options: NullHubFixtureOptions = {}) {
+  const spaces = fixtureSpaces.map((space) => ({ ...space }));
+
   await page.route('**/site.webmanifest', (route) =>
     fulfillJson(route, { name: 'NullHub', short_name: 'NullHub', start_url: '/', display: 'standalone' }),
   );
@@ -133,6 +216,8 @@ export async function installNullHubFixtureRoutes(page: Page) {
 
   await page.route('**/api/status', (route) => fulfillJson(route, fixtureStatus));
   await page.route('**/nullhub-api/status', (route) => fulfillJson(route, fixtureStatus));
+  await page.route('**/api/spaces', (route) => spacesRoute(route, options, spaces));
+  await page.route('**/nullhub-api/spaces', (route) => spacesRoute(route, options, spaces));
   await page.route('**/api/mission-control/state', (route) => fulfillJson(route, missionControlState));
   await page.route('**/api/mission-control/replays', (route) => fulfillJson(route, missionControlReplays));
   await page.route('**/api/components', (route) => fulfillJson(route, fixtureComponents));
@@ -141,10 +226,16 @@ export async function installNullHubFixtureRoutes(page: Page) {
   await page.route('**/nullhub-api/settings', (route) => fulfillJson(route, fixtureSettings));
   await page.route('**/api/service/status', (route) => fulfillJson(route, fixtureServiceStatus));
   await page.route('**/nullhub-api/service/status', (route) => fulfillJson(route, fixtureServiceStatus));
-  await page.route('**/api/providers**', (route) => fulfillJson(route, { providers: [] }));
-  await page.route('**/nullhub-api/providers**', (route) => fulfillJson(route, { providers: [] }));
-  await page.route('**/api/channels**', (route) => fulfillJson(route, { channels: [] }));
-  await page.route('**/nullhub-api/channels**', (route) => fulfillJson(route, { channels: [] }));
+  await page.route('**/api/instances**', (route) => jsonRoute(route, options, { instances: {} }));
+  await page.route('**/nullhub-api/instances**', (route) => jsonRoute(route, options, { instances: {} }));
+  await page.route('**/api/providers**', (route) =>
+    jsonRoute(route, options, fixtureProviders(new URL(route.request().url()).searchParams.get('space'))),
+  );
+  await page.route('**/nullhub-api/providers**', (route) =>
+    jsonRoute(route, options, fixtureProviders(new URL(route.request().url()).searchParams.get('space'))),
+  );
+  await page.route('**/api/channels**', (route) => jsonRoute(route, options, { channels: [] }));
+  await page.route('**/nullhub-api/channels**', (route) => jsonRoute(route, options, { channels: [] }));
   await page.route('**/api/nullboiler/runs**', (route) =>
     fulfillJson(route, { items: [], limit: 50, offset: 0, has_more: false }),
   );
