@@ -1,5 +1,6 @@
-import { redirect } from '@sveltejs/kit';
+import { redirect } from "@sveltejs/kit";
+import type { PageLoad } from "./$types";
 
-export const load = () => {
-  throw redirect(307, '/work/mission-control');
+export const load: PageLoad = ({ url }) => {
+  throw redirect(307, `/work/mission-control${url.search}${url.hash}`);
 };

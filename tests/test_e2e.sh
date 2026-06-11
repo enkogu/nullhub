@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_ROOT"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -8,7 +12,7 @@ NC='\033[0m'
 
 PASSED=0
 FAILED=0
-PORT=19800  # Use high port to avoid conflicts
+PORT="${NULLHUB_PORT:-19800}"  # Use high port to avoid conflicts
 BASE="http://127.0.0.1:$PORT"
 TEST_HOME=$(mktemp -d "${TMPDIR:-/tmp}/nullhub-e2e.XXXXXX")
 SERVER_LOG="$TEST_HOME/nullhub-server.log"
@@ -176,7 +180,7 @@ assert_status "GET /api/updates returns 200" "200" GET "$BASE/api/updates"
 echo ""
 echo "=== Settings API ==="
 assert_status "GET /api/settings returns 200" "200" GET "$BASE/api/settings"
-assert_status "PUT /api/settings returns 200" "200" PUT "$BASE/api/settings" '{"port":19800}'
+assert_status "PUT /api/settings returns 200" "200" PUT "$BASE/api/settings" "{\"port\":$PORT}"
 
 echo ""
 echo "=== Service API ==="

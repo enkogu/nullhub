@@ -35,7 +35,7 @@
     Object.entries((status?.instances?.nullclaw || {}) as Record<string, any>).map(([name, info]) => ({
       name,
       info,
-      href: `/instances/nullclaw/${encodeURIComponent(name)}`,
+      href: `/team/instances/nullclaw/${encodeURIComponent(name)}`,
     })),
   );
   const agentRecords = $derived(

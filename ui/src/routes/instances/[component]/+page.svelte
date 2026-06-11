@@ -3,8 +3,6 @@
   import { onDestroy, onMount } from "svelte";
   import { api } from "$lib/api/client";
   import { pollWhileVisible } from "$lib/poll";
-  import { nullboilerUiRoutes } from "$lib/nullboiler/routes";
-  import { nullticketsUiRoutes } from "$lib/nulltickets/routes";
   import { canStartInstanceStatus, canStopInstanceStatus } from "$lib/nullstack/instanceStatus";
   import { encodePathSegment, instanceRoute } from "$lib/nullstack/path";
   import {
@@ -31,7 +29,7 @@
     Object.entries(componentInstances).sort(([a], [b]) => a.localeCompare(b)),
   );
   let displayName = $derived(displayNameForComponent(component));
-  let installHref = $derived(`/install/${encodePathSegment(component)}`);
+  let installHref = $derived(`/market/install/${encodePathSegment(component)}`);
   let runningCount = $derived(
     instanceEntries.filter(([, info]) => info?.status === "running").length,
   );
@@ -118,16 +116,16 @@
   function componentActions(value: string): ComponentAction[] {
     if (value === "nullboiler") {
       return [
-        { label: "Dashboard", href: nullboilerUiRoutes.dashboard() },
-        { label: "Workflows", href: nullboilerUiRoutes.workflows() },
-        { label: "Runs", href: nullboilerUiRoutes.runs() },
+        { label: "Dashboard", href: "/orders/workflows" },
+        { label: "Workflows", href: "/orders/workflows" },
+        { label: "Runs", href: "/orders/workflows/runs" },
       ];
     }
     if (value === "nulltickets") {
-      return [{ label: "Store", href: nullticketsUiRoutes.store() }];
+      return [{ label: "Store", href: "/market/nulltickets/store" }];
     }
     if (value === "nullwatch") {
-      return [{ label: "Flight Recorder", href: "/nullwatch" }];
+      return [{ label: "Flight Recorder", href: "/system/observability" }];
     }
     return [];
   }

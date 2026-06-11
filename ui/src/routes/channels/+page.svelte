@@ -421,7 +421,7 @@
   </UniversalEntityView>
 
   {#if !hasNullclaw && channels.length === 0}
-    <a href="/install" class="link-btn">Install NullClaw</a>
+    <a href="/market" class="link-btn">Install NullClaw</a>
   {/if}
 </div>
 

@@ -3,7 +3,7 @@
   import '../shadcn.css';
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
-  import AppSidebar from '$lib/components/app-sidebar.svelte';
+  import AppSidebar from '$lib/components/AppSidebar.svelte';
   import GlobalAgentChatDrawer from '$lib/components/GlobalAgentChatDrawer.svelte';
   import * as Breadcrumb from '$lib/components/ui/breadcrumb/index.js';
   import { Button } from '$lib/components/ui/button';
@@ -18,54 +18,52 @@
   let agentChatOpen = $state(false);
 
   const routeTitles: { test: (path: string) => boolean; title: string; section?: string }[] = [
-    { test: (path) => path === '/', title: 'Work' },
-    { test: (path) => path === '/dashboard', title: 'Loops', section: 'Loops' },
+    { test: (path) => path === '/', title: 'Home' },
+    { test: (path) => path.startsWith('/inbox'), title: 'Inbox' },
     { test: (path) => path === '/work', title: 'Board', section: 'Work' },
     { test: (path) => path.startsWith('/work/tasks'), title: 'Tasks', section: 'Work' },
-    { test: (path) => path.startsWith('/work/processes'), title: 'Processes', section: 'Work' },
-    { test: (path) => path.startsWith('/work/task-flows'), title: 'Processes', section: 'Work' },
+    { test: (path) => path.startsWith('/work/processes'), title: 'Task Flows', section: 'Work' },
+    { test: (path) => path.startsWith('/work/task-flows'), title: 'Task Flows', section: 'Work' },
     { test: (path) => path.startsWith('/work/planner'), title: 'Planner', section: 'Work' },
     { test: (path) => path.startsWith('/work/dependencies'), title: 'Dependencies', section: 'Work' },
+    { test: (path) => path.startsWith('/work/dispatch/queue'), title: 'Dispatch Queue', section: 'Work' },
+    { test: (path) => path.startsWith('/work/dispatch/runs'), title: 'Dispatch Runs', section: 'Work' },
+    { test: (path) => path.startsWith('/work/dispatch/failures'), title: 'Dispatch Failures', section: 'Work' },
+    { test: (path) => path.startsWith('/work/dispatch/telemetry'), title: 'Dispatch Telemetry', section: 'Work' },
+    { test: (path) => path.startsWith('/work/dispatch'), title: 'Dispatch', section: 'Work' },
     { test: (path) => path.startsWith('/work/mission-control'), title: 'Mission Control', section: 'Work' },
-    { test: (path) => path.startsWith('/task-flows'), title: 'Processes', section: 'Work' },
-    { test: (path) => path.startsWith('/loops/marketplace'), title: 'Marketplace', section: 'Loops' },
-    { test: (path) => path.startsWith('/loops/library'), title: 'Gallery', section: 'Loops' },
-    { test: (path) => path.startsWith('/loops/runs'), title: 'Loop Runs', section: 'Loops' },
-    { test: (path) => path.startsWith('/loops'), title: 'Loops', section: 'Loops' },
-    { test: (path) => path.startsWith('/automations/workflows'), title: 'Workflows', section: 'Automations' },
-    { test: (path) => path.startsWith('/automations/runs'), title: 'Runs', section: 'Automations' },
-    { test: (path) => path.startsWith('/automations'), title: 'Automations', section: 'Automations' },
-    { test: (path) => path.startsWith('/agents/roles'), title: 'Roles', section: 'Agents' },
-    { test: (path) => path.startsWith('/agents/profiles'), title: 'Profiles', section: 'Agents' },
-    { test: (path) => path.startsWith('/agents'), title: 'Agents' },
-    { test: (path) => path.startsWith('/capabilities/skills'), title: 'Skills', section: 'Capabilities' },
-    { test: (path) => path.startsWith('/capabilities/mcp'), title: 'MCP', section: 'Capabilities' },
-    { test: (path) => path.startsWith('/capabilities/hooks'), title: 'Hooks', section: 'Capabilities' },
-    { test: (path) => path.startsWith('/capabilities/instructions'), title: 'Instructions', section: 'Capabilities' },
-    { test: (path) => path.startsWith('/capabilities/memory'), title: 'Memory', section: 'Capabilities' },
-    { test: (path) => path.startsWith('/capabilities/schedules'), title: 'Schedules', section: 'Capabilities' },
-    { test: (path) => path.startsWith('/capabilities'), title: 'Skills', section: 'Capabilities' },
-    { test: (path) => path === '/dispatch', title: 'Monitor', section: 'Dispatch' },
-    { test: (path) => path.startsWith('/dispatch/queue'), title: 'Queue', section: 'Dispatch' },
-    { test: (path) => path.startsWith('/dispatch/runs'), title: 'Runs', section: 'Dispatch' },
-    { test: (path) => path.startsWith('/dispatch/failures'), title: 'Failures', section: 'Dispatch' },
-    { test: (path) => path.startsWith('/dispatch/telemetry'), title: 'Telemetry', section: 'Dispatch' },
-    { test: (path) => path.startsWith('/artifacts'), title: 'Artifacts' },
-    { test: (path) => path.startsWith('/inventory/components'), title: 'Components', section: 'Inventory' },
-    { test: (path) => path.startsWith('/inventory/instances'), title: 'Instances', section: 'Inventory' },
-    { test: (path) => path.startsWith('/inventory/providers'), title: 'Providers', section: 'Inventory' },
-    { test: (path) => path.startsWith('/inventory/channels'), title: 'Channels', section: 'Inventory' },
-    { test: (path) => path.startsWith('/install'), title: 'Install Component' },
-    { test: (path) => path.startsWith('/providers'), title: 'Providers' },
-    { test: (path) => path.startsWith('/channels'), title: 'Channels' },
-    { test: (path) => path.startsWith('/configs'), title: 'Configs' },
-    { test: (path) => path.startsWith('/nullboiler/workflows'), title: 'Workflows', section: 'Automations' },
-    { test: (path) => path.startsWith('/nullboiler/runs'), title: 'Runs', section: 'Automations' },
-    { test: (path) => path.startsWith('/nullboiler'), title: 'Automations', section: 'Automations' },
-    { test: (path) => path.startsWith('/nulltickets/store'), title: 'Store' },
-    { test: (path) => path.startsWith('/nullwatch'), title: 'Observability' },
-    { test: (path) => path.startsWith('/report'), title: 'Report Issue' },
-    { test: (path) => path.startsWith('/settings'), title: 'Settings' },
+    { test: (path) => path.startsWith('/work/loops/runs'), title: 'Loop Runs', section: 'Work' },
+    { test: (path) => path.startsWith('/work/artifacts'), title: 'Artifacts', section: 'Work' },
+    { test: (path) => path.startsWith('/work/reports'), title: 'Reports', section: 'Work' },
+    { test: (path) => path.startsWith('/orders/loops/library'), title: 'Loop Library', section: 'Orders' },
+    { test: (path) => path.startsWith('/orders/loops'), title: 'Loops', section: 'Orders' },
+    { test: (path) => path.startsWith('/orders/task-flows'), title: 'Task Flows', section: 'Orders' },
+    { test: (path) => path.startsWith('/orders/workflows/runs'), title: 'Workflow Runs', section: 'Orders' },
+    { test: (path) => path.startsWith('/orders/workflows'), title: 'Workflows', section: 'Orders' },
+    { test: (path) => path.startsWith('/orders'), title: 'Orders' },
+    { test: (path) => path.startsWith('/team/agents/roles'), title: 'Roles', section: 'Team' },
+    { test: (path) => path.startsWith('/team/agents/profiles'), title: 'Profiles', section: 'Team' },
+    { test: (path) => path.startsWith('/team/agents'), title: 'Agents', section: 'Team' },
+    { test: (path) => path.startsWith('/team/capabilities/skills'), title: 'Skills', section: 'Team' },
+    { test: (path) => path.startsWith('/team/capabilities/mcp'), title: 'MCP', section: 'Team' },
+    { test: (path) => path.startsWith('/team/capabilities/hooks'), title: 'Hooks', section: 'Team' },
+    { test: (path) => path.startsWith('/team/capabilities/instructions'), title: 'Instructions', section: 'Team' },
+    { test: (path) => path.startsWith('/team/capabilities/memory'), title: 'Memory', section: 'Team' },
+    { test: (path) => path.startsWith('/team/capabilities/schedules'), title: 'Schedules', section: 'Team' },
+    { test: (path) => path.startsWith('/team/capabilities'), title: 'Capabilities', section: 'Team' },
+    { test: (path) => path.startsWith('/team/instances'), title: 'Instances', section: 'Team' },
+    { test: (path) => path.startsWith('/team'), title: 'Team' },
+    { test: (path) => path.startsWith('/market/install'), title: 'Install Component', section: 'Market' },
+    { test: (path) => path.startsWith('/market/components'), title: 'Components', section: 'Market' },
+    { test: (path) => path.startsWith('/market/loops'), title: 'Loop Marketplace', section: 'Market' },
+    { test: (path) => path.startsWith('/market/nulltickets/store'), title: 'Store', section: 'Market' },
+    { test: (path) => path.startsWith('/market'), title: 'Market' },
+    { test: (path) => path.startsWith('/system/providers'), title: 'Providers', section: 'System' },
+    { test: (path) => path.startsWith('/system/channels'), title: 'Channels', section: 'System' },
+    { test: (path) => path.startsWith('/system/configs'), title: 'Configs', section: 'System' },
+    { test: (path) => path.startsWith('/system/settings'), title: 'Settings', section: 'System' },
+    { test: (path) => path.startsWith('/system/observability'), title: 'Observability', section: 'System' },
+    { test: (path) => path.startsWith('/system'), title: 'System' },
   ];
 
   function decodeSegment(value: string): string {
@@ -77,17 +75,24 @@
   }
 
   function routeCrumbs(path: string): { label: string; href?: string }[] {
-    if (path.startsWith('/instances/')) {
-      const [, , component = '', name = ''] = path.split('/');
+    const instancePrefix = path.startsWith('/team/instances/')
+      ? '/team/instances'
+      : path.startsWith('/instances/')
+        ? '/instances'
+        : '';
+
+    if (instancePrefix) {
+      const [component = '', name = ''] = path.slice(instancePrefix.length + 1).split('/');
       if (component === 'nullclaw') {
         return name
-          ? [{ label: 'Agents', href: '/agents' }, { label: decodeSegment(name) }]
-          : [{ label: 'Agents' }];
+          ? [{ label: 'Team', href: '/team' }, { label: 'Agents', href: '/team/agents' }, { label: decodeSegment(name) }]
+          : [{ label: 'Team', href: '/team' }, { label: 'Agents' }];
       }
       const componentLabel = decodeSegment(component);
       const crumbs: { label: string; href?: string }[] = [
-        { label: 'Instances', href: '/' },
-        { label: componentLabel || 'Component', href: component ? `/instances/${component}` : undefined },
+        { label: 'Team', href: '/team' },
+        { label: 'Instances', href: '/team/instances' },
+        { label: componentLabel || 'Component', href: component ? `/team/instances/${component}` : undefined },
       ];
       if (name) crumbs.push({ label: decodeSegment(name) });
       return crumbs;

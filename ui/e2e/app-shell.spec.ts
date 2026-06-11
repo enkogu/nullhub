@@ -18,15 +18,13 @@ test('renders the app shell in fixture mode without console errors', async ({ pa
   await installNullHubFixtureRoutes(page);
   await page.goto('/');
 
-  await expect(page).toHaveURL(/\/work$/);
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('.shadcn-app')).toBeVisible();
   await expect(page.locator('main.real-content')).toBeVisible();
-  await expect(page.getByRole('link', { name: /NullHub Workspace/ })).toBeVisible();
-  await expect(page.locator('a[data-sidebar="menu-button"][href="/work"][data-size="default"]')).toHaveAttribute(
-    'data-active',
-    'true',
-  );
-  await expect(page.getByText('No NullTickets instances installed.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Local space Studio workspace/ })).toBeVisible();
+  await expect(page.getByLabel('Primary navigation').getByRole('link', { name: 'Home' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  await expect(page.getByText('No instances installed yet.')).toBeVisible();
 
   const shellText = (await page.locator('.shadcn-app').innerText()).trim();
   expect(shellText.length).toBeGreaterThan(80);

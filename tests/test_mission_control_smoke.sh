@@ -1,7 +1,89 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${NULLHUB_URL:-http://127.0.0.1:19802}"
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+cd "$REPO_ROOT"
+
+PORT="${NULLHUB_PORT:-19802}"
+BASE_URL="${NULLHUB_URL:-http://127.0.0.1:$PORT}"
+TEST_HOME=""
+SERVER_LOG=""
+SERVER_PID=""
+
+cleanup() {
+  if [ -n "${SERVER_PID:-}" ]; then
+    echo "Stopping server..."
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
+  if [ -n "${TEST_HOME:-}" ]; then
+    rm -rf "$TEST_HOME"
+  fi
+}
+trap cleanup EXIT
+
+server_is_running() {
+  if [ -z "${SERVER_PID:-}" ]; then
+    return 1
+  fi
+  kill -0 "$SERVER_PID" 2>/dev/null
+}
+
+fail_if_server_exited() {
+  context=$1
+  if server_is_running; then
+    return 0
+  fi
+
+  exit_code=0
+  set +e
+  wait "$SERVER_PID"
+  exit_code=$?
+  set -e
+
+  echo "FAIL: nullhub exited unexpectedly during $context (exit $exit_code)" >&2
+  if [ -f "$SERVER_LOG" ]; then
+    echo "--- nullhub server log ---" >&2
+    cat "$SERVER_LOG" >&2
+    echo "--- end nullhub server log ---" >&2
+  fi
+  exit 1
+}
+
+start_server_if_needed() {
+  if [ -n "${NULLHUB_URL:-}" ]; then
+    return 0
+  fi
+
+  TEST_HOME=$(mktemp -d "${TMPDIR:-/tmp}/nullhub-mission-smoke.XXXXXX")
+  SERVER_LOG="$TEST_HOME/nullhub-server.log"
+
+  echo "Building nullhub..."
+  zig build
+
+  echo "Starting nullhub on port $PORT..."
+  HOME="$TEST_HOME" ./zig-out/bin/nullhub serve --host 127.0.0.1 --port "$PORT" --no-open >"$SERVER_LOG" 2>&1 &
+  SERVER_PID=$!
+
+  echo "Waiting for server..."
+  for i in $(seq 1 30); do
+    fail_if_server_exited "startup"
+    if curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/health" 2>/dev/null | grep -q "200"; then
+      echo "Server ready after ${i} attempt(s)."
+      return 0
+    fi
+    sleep 0.25
+  done
+
+  echo "Server failed to start after 30 attempts" >&2
+  if [ -f "$SERVER_LOG" ]; then
+    cat "$SERVER_LOG" >&2
+  fi
+  exit 1
+}
+
+start_server_if_needed
 
 node - "$BASE_URL" <<'NODE'
 const base = process.argv[2];
