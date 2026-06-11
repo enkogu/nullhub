@@ -1,5 +1,11 @@
 # Testing Strategy
 
+> Superseded by `../../../docs/specs/testing.md` for repository-wide testing
+> policy, required gates, exact commands, and evidence standards. This file is
+> retained only as the nullhub-local backend coverage map and incremental PR
+> sequencing reference. Treat command snippets below as submodule-local examples
+> unless they match the canonical test matrix in `docs/specs/testing.md`.
+
 This document defines the path to bring NullHub's test discipline closer to NullClaw's while keeping each improvement shippable in small, isolated pull requests.
 
 The aim is not a single large testing rewrite. The aim is to improve confidence incrementally, with each PR standing on its own wherever possible.
