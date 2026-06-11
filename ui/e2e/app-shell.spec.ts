@@ -1,10 +1,10 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { installNullHubFixtureRoutes } from './fixtures/nullhub';
 
 const SELECTED_SPACE_STORAGE_KEY = 'nullhub:selected-space';
 const ALL_SPACES_STORAGE_VALUE = '__all__';
 
-test('renders the app shell in fixture mode without console errors', async ({ page }, testInfo) => {
+function collectRuntimeFailures(page: Page) {
   const runtimeErrors: string[] = [];
   const failedResponses: string[] = [];
 
@@ -17,6 +17,20 @@ test('renders the app shell in fixture mode without console errors', async ({ pa
   page.on('response', (response) => {
     if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`);
   });
+
+  return { runtimeErrors, failedResponses };
+}
+
+async function expectNonBlankShell(page: Page, label: string) {
+  await expect(page.locator('.shadcn-app')).toBeVisible();
+  await expect(page.locator('main.real-content')).toBeVisible();
+
+  const content = (await page.locator('main.real-content').innerText()).trim();
+  expect(content.length, `${label} should render nonblank content`).toBeGreaterThan(24);
+}
+
+test('renders the app shell in fixture mode without console errors', async ({ page }, testInfo) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
 
   await installNullHubFixtureRoutes(page);
   await page.goto('/');
@@ -36,6 +50,68 @@ test('renders the app shell in fixture mode without console errors', async ({ pa
   await page.screenshot({ path: screenshotPath, fullPage: true });
   console.log(`screenshot: ${screenshotPath}`);
 
+  expect(failedResponses).toEqual([]);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test('primary shell controls reach all product sections in fixture mode', async ({ page }, testInfo) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
+  const requests: string[] = [];
+  await installNullHubFixtureRoutes(page, { requests });
+
+  await page.goto('/');
+  const primaryNav = page.getByLabel('Primary navigation');
+
+  await primaryNav.getByRole('link', { name: 'Home' }).click();
+  await expect(page).toHaveURL(/\/$/);
+  await expectNonBlankShell(page, 'Home');
+
+  await primaryNav.getByRole('link', { name: 'Inbox' }).click();
+  await expect(page).toHaveURL(/\/inbox$/);
+  await expect(page.getByRole('heading', { name: 'Inbox' })).toBeVisible();
+  await expectNonBlankShell(page, 'Inbox');
+
+  await primaryNav.getByRole('link', { name: 'Work' }).click();
+  await expect(page).toHaveURL(/\/work$/);
+  await expectNonBlankShell(page, 'Work');
+
+  await primaryNav.getByRole('link', { name: 'Orders' }).click();
+  await expect(page).toHaveURL(/\/orders\/loops$/);
+  await expectNonBlankShell(page, 'Orders');
+
+  await primaryNav.getByRole('link', { name: 'Team' }).click();
+  await expect(page).toHaveURL(/\/team\/instances$/);
+  await expectNonBlankShell(page, 'Team');
+
+  await primaryNav.getByRole('link', { name: 'Market' }).click();
+  await expect(page).toHaveURL(/\/market$/);
+  await expect(page.getByRole('heading', { name: 'Component Catalog' })).toBeVisible();
+  await expectNonBlankShell(page, 'Market');
+
+  await primaryNav.getByRole('button', { name: 'System' }).click();
+  await page.getByRole('link', { name: 'Providers' }).click();
+  await expect(page).toHaveURL(/\/providers$/);
+  await expect(page.getByRole('heading', { name: 'Saved Providers' })).toBeVisible();
+  await expectNonBlankShell(page, 'System');
+
+  await page.getByRole('button', { name: /Operations Workspace - Active/ }).click();
+  await page.getByRole('menuitem', { name: /Lab Workspace - Paused/ }).click();
+  await expect(page).toHaveURL(/(?:\?|&)space=lab(?:&|$)/);
+  await expect(page.getByRole('button', { name: /Lab Workspace - Paused/ })).toBeVisible();
+
+  page.once('dialog', (dialog) => dialog.accept('Launch Room'));
+  await page.getByRole('button', { name: /Lab Workspace - Paused/ }).click();
+  await page.getByRole('menuitem', { name: 'New space' }).click();
+  await expect(page).toHaveURL(/(?:\?|&)space=launch-room(?:&|$)/);
+  await expect(page.getByRole('button', { name: /Launch Room Workspace - Active/ })).toBeVisible();
+
+  const screenshotPath = testInfo.outputPath('shell-all-sections-fixture.png');
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  console.log(`screenshot: ${screenshotPath}`);
+
+  expect(requests).toContain('/api/spaces');
+  expect(requests).toContain('/api/providers?space=ops');
+  expect(requests).toContain('/api/providers?space=lab');
   expect(failedResponses).toEqual([]);
   expect(runtimeErrors).toEqual([]);
 });
@@ -65,6 +141,7 @@ test('space switcher reloads product reads with the selected space scope', async
 });
 
 test('global command palette shortcut opens shell navigation', async ({ page }) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
   await installNullHubFixtureRoutes(page);
 
   await page.goto('/');
@@ -79,6 +156,8 @@ test('global command palette shortcut opens shell navigation', async ({ page }) 
   await page.getByLabel('Command search').fill('work');
   await page.keyboard.press('Enter');
   await expect(page).toHaveURL(/\/work$/);
+  expect(failedResponses).toEqual([]);
+  expect(runtimeErrors).toEqual([]);
 });
 
 test('explicit All spaces selection keeps product reads unscoped and visible in the sidebar', async ({ page }) => {

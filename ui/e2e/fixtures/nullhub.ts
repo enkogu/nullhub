@@ -86,7 +86,7 @@ const missionControlState = {
   title: 'Mission Control Smoke',
   status: 'idle',
   phase: 'idle',
-  headline: 'Mission control is ready.',
+  headline: 'Mission ready. Launch the local agent stack.',
   elapsed_ms: 0,
   progress: 0,
   active_run_id: null,

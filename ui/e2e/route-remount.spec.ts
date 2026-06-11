@@ -1,5 +1,22 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { installNullHubFixtureRoutes } from './fixtures/nullhub';
+
+function collectRuntimeFailures(page: Page) {
+  const runtimeErrors: string[] = [];
+  const failedResponses: string[] = [];
+
+  page.on('console', (message) => {
+    if (message.type() === 'error') runtimeErrors.push(message.text());
+  });
+  page.on('pageerror', (error) => {
+    runtimeErrors.push(error.message);
+  });
+  page.on('response', (response) => {
+    if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`);
+  });
+
+  return { runtimeErrors, failedResponses };
+}
 
 const redirectCases = [
   ['/dashboard', '/'],
@@ -30,6 +47,7 @@ const redirectCases = [
 
 for (const [legacyPath, targetPath] of redirectCases) {
   test(`redirects ${legacyPath} to ${targetPath}`, async ({ page }) => {
+    const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
     await installNullHubFixtureRoutes(page);
     await page.goto(legacyPath);
     await page.waitForURL((url) => `${url.pathname}${url.search}${url.hash}` === targetPath);
@@ -37,17 +55,13 @@ for (const [legacyPath, targetPath] of redirectCases) {
     const url = new URL(page.url());
     expect(`${url.pathname}${url.search}${url.hash}`).toBe(targetPath);
     await expect(page.locator('main.real-content')).toBeVisible();
+    expect(failedResponses).toEqual([]);
+    expect(runtimeErrors).toEqual([]);
   });
 }
 
 test('canonical IA routes render nonblank shell content in fixture mode', async ({ page }, testInfo) => {
-  const runtimeErrors: string[] = [];
-  page.on('console', (message) => {
-    if (message.type() === 'error') runtimeErrors.push(message.text());
-  });
-  page.on('pageerror', (error) => {
-    runtimeErrors.push(error.message);
-  });
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
 
   await installNullHubFixtureRoutes(page);
 
@@ -55,6 +69,7 @@ test('canonical IA routes render nonblank shell content in fixture mode', async 
     await page.goto(path);
     await expect(page.locator('.shadcn-app')).toBeVisible();
     await expect(page.locator('main.real-content')).toBeVisible();
+    await expect(page.locator('main.real-content')).not.toContainText('Loading workspace...');
 
     const text = (await page.locator('main.real-content').innerText()).trim();
     expect(text.length, `${path} should not render blank content`).toBeGreaterThan(24);
@@ -68,5 +83,6 @@ test('canonical IA routes render nonblank shell content in fixture mode', async 
   await expect(page.getByRole('heading', { name: 'Agents' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Hire agent' })).toBeVisible();
 
+  expect(failedResponses).toEqual([]);
   expect(runtimeErrors).toEqual([]);
 });
