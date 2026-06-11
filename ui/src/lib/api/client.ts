@@ -473,10 +473,11 @@ export const nullWatchApi = {
     request<any>(withQuery('/nullwatch/health', { nullhub_watch: params?.watch })),
   getNullWatchSummary: (params?: NullWatchTarget) =>
     request<any>(withQuery('/nullwatch/v1/summary', { nullhub_watch: params?.watch })),
-  getNullWatchRuns: (params?: NullWatchTarget & { run_id?: string; source?: string; operation?: string; status?: string; model?: string; tool_name?: string; verdict?: string; dataset?: string; limit?: number }) =>
+  getNullWatchRuns: (params?: NullWatchTarget & { run_id?: string; source?: string; operation?: string; status?: string; model?: string; tool_name?: string; verdict?: string; dataset?: string; limit?: number; space?: string }) =>
     request<any>(
       withQuery('/nullwatch/v1/runs', {
         nullhub_watch: params?.watch,
+        space: params?.space,
         run_id: params?.run_id,
         source: params?.source,
         operation: params?.operation,

@@ -10,6 +10,10 @@ type NullHubFixtureOptions = {
   loopCatalog?: JsonBody;
   loopCatalogStatus?: number;
   nullticketsPipelines?: Record<string, unknown>[];
+  nullticketsTasks?: Record<string, unknown>[];
+  nullboilerRuns?: Record<string, unknown>[];
+  nullwatchRuns?: Record<string, unknown>[];
+  instances?: Record<string, Record<string, unknown>>;
 };
 
 async function fulfillJson(route: Route, body: JsonBody, status = 200) {
@@ -322,7 +326,38 @@ async function eventsRoute(route: Route, options: NullHubFixtureOptions) {
   });
 }
 
-async function nullTicketsActionRoute(route: Route, options: NullHubFixtureOptions, pipelines: Record<string, unknown>[]) {
+function matchesFixtureSpace(record: Record<string, unknown>, space: string | null): boolean {
+  const recordSpace = String(record.space_id ?? record.spaceId ?? '').trim();
+  if (!space) return true;
+  return !recordSpace || recordSpace === space;
+}
+
+async function instancesRoute(route: Route, options: NullHubFixtureOptions) {
+  recordRequest(route, options);
+  const url = new URL(route.request().url());
+  const space = url.searchParams.get('space');
+  const source = (options.status || fixtureStatus) as Record<string, any>;
+  const sourceInstances = (options.instances || source.instances || {}) as Record<string, Record<string, unknown>>;
+  const instances: Record<string, Record<string, unknown>> = {};
+
+  for (const [component, componentInstances] of Object.entries(sourceInstances)) {
+    const filtered = Object.fromEntries(
+      Object.entries(componentInstances).filter(([, instance]) =>
+        matchesFixtureSpace((instance || {}) as Record<string, unknown>, space),
+      ),
+    );
+    if (Object.keys(filtered).length > 0) instances[component] = filtered;
+  }
+
+  await fulfillJson(route, { instances });
+}
+
+async function nullTicketsActionRoute(
+  route: Route,
+  options: NullHubFixtureOptions,
+  pipelines: Record<string, unknown>[],
+  tasks: Record<string, unknown>[],
+) {
   recordRequest(route, options);
   const url = new URL(route.request().url());
   const payload = route.request().postDataJSON() as { method?: string; path?: string; payload?: any } | null;
@@ -332,16 +367,29 @@ async function nullTicketsActionRoute(route: Route, options: NullHubFixtureOptio
   const instanceName = parts[3] || 'tickets';
 
   if (method === 'GET' && path === '/pipelines') {
+    const space = url.searchParams.get('space');
     const instancePipelines = pipelines.filter((pipeline) => {
       const pipelineInstance = String(pipeline.tickets_instance ?? pipeline.ticketsInstance ?? instanceName);
-      return pipelineInstance === instanceName;
+      return pipelineInstance === instanceName && matchesFixtureSpace(pipeline, space);
     });
     await fulfillJson(route, { pipelines: instancePipelines });
     return;
   }
 
   if (method === 'GET' && (path === '/tasks' || path.startsWith('/tasks?'))) {
-    await fulfillJson(route, { items: [] });
+    const space = url.searchParams.get('space');
+    const query = new URL(path, 'http://nulltickets.local').searchParams;
+    const limit = Number(query.get('limit') || '50');
+    const filteredTasks = tasks.filter((task) => matchesFixtureSpace(task, space));
+    await fulfillJson(route, { items: filteredTasks.slice(0, Number.isFinite(limit) ? limit : 50) });
+    return;
+  }
+
+  if (method === 'GET' && path.startsWith('/tasks/')) {
+    const space = url.searchParams.get('space');
+    const taskId = decodeURIComponent(path.split('/')[2] || '');
+    const task = tasks.find((item) => String(item.id || '') === taskId && matchesFixtureSpace(item, space));
+    await fulfillJson(route, task || { error: 'Task not found.' }, task ? 200 : 404);
     return;
   }
 
@@ -366,6 +414,7 @@ async function nullTicketsActionRoute(route: Route, options: NullHubFixtureOptio
 export async function installNullHubFixtureRoutes(page: Page, options: NullHubFixtureOptions = {}) {
   const spaces = fixtureSpaces.map((space) => ({ ...space }));
   const pipelines = (options.nullticketsPipelines || []).map((pipeline) => ({ ...pipeline }));
+  const tasks = (options.nullticketsTasks || []).map((task) => ({ ...task }));
 
   await page.route('**/site.webmanifest', (route) =>
     fulfillJson(route, { name: 'NullHub', short_name: 'NullHub', start_url: '/', display: 'standalone' }),
@@ -390,10 +439,12 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/nulltickets/store/loops.templates**', (route) => loopCatalogRoute(route, options));
   await page.route('**/api/events**', (route) => eventsRoute(route, options));
   await page.route('**/nullhub-api/events**', (route) => eventsRoute(route, options));
-  await page.route('**/api/instances**', (route) => jsonRoute(route, options, { instances: {} }));
-  await page.route('**/nullhub-api/instances**', (route) => jsonRoute(route, options, { instances: {} }));
-  await page.route('**/api/instances/nulltickets/*/tickets**', (route) => nullTicketsActionRoute(route, options, pipelines));
-  await page.route('**/nullhub-api/instances/nulltickets/*/tickets**', (route) => nullTicketsActionRoute(route, options, pipelines));
+  await page.route(/\/api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options));
+  await page.route(/\/nullhub-api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options));
+  await page.route('**/api/instances/nulltickets/*/tickets**', (route) => nullTicketsActionRoute(route, options, pipelines, tasks));
+  await page.route('**/nullhub-api/instances/nulltickets/*/tickets**', (route) =>
+    nullTicketsActionRoute(route, options, pipelines, tasks),
+  );
   await page.route('**/api/providers**', (route) =>
     jsonRoute(route, options, fixtureProviders(new URL(route.request().url()).searchParams.get('space'))),
   );
@@ -403,10 +454,24 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/api/channels**', (route) => jsonRoute(route, options, { channels: [] }));
   await page.route('**/nullhub-api/channels**', (route) => jsonRoute(route, options, { channels: [] }));
   await page.route('**/api/nullboiler/runs**', (route) =>
-    fulfillJson(route, { items: [], limit: 50, offset: 0, has_more: false }),
+    jsonRoute(route, options, {
+      items: (options.nullboilerRuns || []).filter((run) =>
+        matchesFixtureSpace(run, new URL(route.request().url()).searchParams.get('space')),
+      ),
+      limit: 50,
+      offset: 0,
+      has_more: false,
+    }),
   );
   await page.route('**/nullhub-api/nullboiler/runs**', (route) =>
-    fulfillJson(route, { items: [], limit: 50, offset: 0, has_more: false }),
+    jsonRoute(route, options, {
+      items: (options.nullboilerRuns || []).filter((run) =>
+        matchesFixtureSpace(run, new URL(route.request().url()).searchParams.get('space')),
+      ),
+      limit: 50,
+      offset: 0,
+      has_more: false,
+    }),
   );
   await page.route('**/api/nullboiler/workflows**', (route) => fulfillJson(route, { items: [] }));
   await page.route('**/nullhub-api/nullboiler/workflows**', (route) => fulfillJson(route, { items: [] }));
@@ -416,6 +481,18 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/nullwatch/v1/summary**', (route) =>
     fulfillJson(route, { totals: {}, status: 'empty' }),
   );
-  await page.route('**/api/nullwatch/v1/runs**', (route) => fulfillJson(route, { items: [] }));
-  await page.route('**/nullhub-api/nullwatch/v1/runs**', (route) => fulfillJson(route, { items: [] }));
+  await page.route('**/api/nullwatch/v1/runs**', (route) =>
+    jsonRoute(route, options, {
+      items: (options.nullwatchRuns || []).filter((run) =>
+        matchesFixtureSpace(run, new URL(route.request().url()).searchParams.get('space')),
+      ),
+    }),
+  );
+  await page.route('**/nullhub-api/nullwatch/v1/runs**', (route) =>
+    jsonRoute(route, options, {
+      items: (options.nullwatchRuns || []).filter((run) =>
+        matchesFixtureSpace(run, new URL(route.request().url()).searchParams.get('space')),
+      ),
+    }),
+  );
 }

@@ -33,6 +33,14 @@ export const appShellCommandSections: AppShellCommandSection[] = [
 		keywords: ["runs", "tasks", "artifacts", "results"],
 	},
 	{
+		key: "work-live",
+		title: "Work Live",
+		url: "/work/live",
+		detail: "Unified loop, workflow, and agent runs.",
+		shortcut: "L",
+		keywords: ["live", "runs", "agents", "workflows", "loops"],
+	},
+	{
 		key: "work-activity",
 		title: "Work Activity",
 		url: "/work/activity",

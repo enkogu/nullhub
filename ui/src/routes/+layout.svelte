@@ -32,6 +32,7 @@
     { test: (path) => path.startsWith('/work/task-flows'), title: 'Task Flows', section: 'Work' },
     { test: (path) => path.startsWith('/work/planner'), title: 'Planner', section: 'Work' },
     { test: (path) => path.startsWith('/work/dependencies'), title: 'Dependencies', section: 'Work' },
+    { test: (path) => path.startsWith('/work/live'), title: 'Live', section: 'Work' },
     { test: (path) => path.startsWith('/work/dispatch/queue'), title: 'Dispatch Queue', section: 'Work' },
     { test: (path) => path.startsWith('/work/dispatch/runs'), title: 'Dispatch Runs', section: 'Work' },
     { test: (path) => path.startsWith('/work/dispatch/failures'), title: 'Dispatch Failures', section: 'Work' },
