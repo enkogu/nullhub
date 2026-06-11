@@ -1,5 +1,13 @@
 # Testing Strategy
 
+> [!IMPORTANT]
+> Superseded for policy by the parent monorepo's canonical
+> [`docs/specs/testing.md`](../../../docs/specs/testing.md). Use that spec for
+> required test layers, exact commands, gates, and evidence policy. This file is
+> retained only as the nullhub-local backend coverage map and PR-sequencing
+> reference. If a command, flag, gate, or policy statement here differs from the
+> canonical spec, the canonical spec wins.
+
 This document defines the path to bring NullHub's test discipline closer to NullClaw's while keeping each improvement shippable in small, isolated pull requests.
 
 The aim is not a single large testing rewrite. The aim is to improve confidence incrementally, with each PR standing on its own wherever possible.
@@ -340,6 +348,10 @@ Dependencies:
 
 ## Recommended Validation By Change Type
 
+The commands below are historical submodule-local quick checks. For required
+validation and evidence, use the matrix in
+[`docs/specs/testing.md`](../../../docs/specs/testing.md).
+
 Docs-only changes:
 
 ```bash
@@ -349,14 +361,15 @@ git diff --check
 Backend code changes:
 
 ```bash
-zig build test -Dembed-ui=false -Dbuild-ui=false --summary all
+bash tests/test_backend.sh
 ```
 
 Smoke or lifecycle changes:
 
 ```bash
-zig build test -Dembed-ui=false -Dbuild-ui=false --summary all
+bash tests/test_backend.sh
 bash tests/test_e2e.sh
+bash tests/test_mission_control_smoke.sh
 ```
 
 Frontend logic changes:
