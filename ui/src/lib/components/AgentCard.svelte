@@ -57,15 +57,17 @@
     </div>
   </div>
 
-  <div class="grid gap-0 px-4 py-4 sm:grid-cols-2">
+  <div class={`grid gap-4 px-4 py-4 ${dailyCost ? "sm:grid-cols-2" : ""}`}>
     <div class="space-y-1">
       <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Current work</p>
       <p class="min-h-10 text-sm leading-5 text-foreground">{currentWork || "Idle"}</p>
     </div>
-    <div class="space-y-1 sm:text-right">
-      <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Daily cost</p>
-      <p class="text-sm font-medium text-foreground">{dailyCost || "$0.00/day"}</p>
-    </div>
+    {#if dailyCost}
+      <div class="space-y-1 sm:text-right">
+        <p class="text-xs font-medium uppercase tracking-wide text-muted-foreground">Daily cost</p>
+        <p class="text-sm font-medium text-foreground">{dailyCost}</p>
+      </div>
+    {/if}
   </div>
 
   <div class="flex flex-wrap items-center gap-2 border-t px-4 py-3">

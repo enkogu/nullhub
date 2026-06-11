@@ -4,6 +4,7 @@ type JsonBody = Record<string, unknown> | unknown[];
 type NullHubFixtureOptions = {
   requests?: string[];
   spacesStatus?: number;
+  status?: JsonBody;
 };
 
 async function fulfillJson(route: Route, body: JsonBody, status = 200) {
@@ -214,8 +215,8 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
     fulfillText(route, '<?xml version="1.0" encoding="utf-8"?><browserconfig></browserconfig>', 'application/xml'),
   );
 
-  await page.route('**/api/status', (route) => fulfillJson(route, fixtureStatus));
-  await page.route('**/nullhub-api/status', (route) => fulfillJson(route, fixtureStatus));
+  await page.route('**/api/status', (route) => fulfillJson(route, options.status || fixtureStatus));
+  await page.route('**/nullhub-api/status', (route) => fulfillJson(route, options.status || fixtureStatus));
   await page.route('**/api/spaces', (route) => spacesRoute(route, options, spaces));
   await page.route('**/nullhub-api/spaces', (route) => spacesRoute(route, options, spaces));
   await page.route('**/api/mission-control/state', (route) => fulfillJson(route, missionControlState));

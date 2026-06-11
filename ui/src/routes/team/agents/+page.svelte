@@ -49,7 +49,6 @@
         status: statusLabel(info),
         role: roleLabel(info),
         currentWork: currentWorkLabel(info),
-        dailyCost: dailyCostLabel(info),
         sourceKit: sourceKitLabel(info),
       })),
   );
@@ -94,15 +93,34 @@
     return typeof configRole === "string" && configRole.trim() ? configRole : "agent";
   }
 
-  function currentWorkLabel(info: AgentInfo): string {
-    if (statusLabel(info) !== "running") return "Idle";
-    const version = typeof info?.version === "string" && info.version.trim() ? info.version : "latest";
-    const port = Number(info?.port || 0) || 0;
-    return port > 0 ? `Running on ${version} - port ${port}` : `Running on ${version}`;
+  function firstText(...values: unknown[]): string {
+    for (const value of values) {
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+    return "";
   }
 
-  function dailyCostLabel(info: AgentInfo): string {
-    return statusLabel(info) === "running" ? "$0.00/day" : "$0.00/day";
+  function currentWorkLabel(info: AgentInfo): string {
+    return (
+      firstText(
+        info?.current_work,
+        info?.currentWork,
+        info?.current_task,
+        info?.currentTask,
+        info?.current_loop,
+        info?.currentLoop,
+        info?.active_loop,
+        info?.activeLoop,
+        info?.metadata?.current_work,
+        info?.metadata?.currentWork,
+        info?.metadata?.current_task,
+        info?.metadata?.currentTask,
+        info?.metadata?.current_loop,
+        info?.metadata?.currentLoop,
+        info?.metadata?.active_loop,
+        info?.metadata?.activeLoop,
+      ) || "Idle"
+    );
   }
 
   function sourceKitLabel(info: AgentInfo): string {

@@ -32,4 +32,5 @@ test("falls back to button mode when no href is provided", async () => {
 
   await screen.getByRole("button", { name: "Open" }).click();
   expect(onOpen).toHaveBeenCalledTimes(1);
+  expect(screen.container.textContent).not.toContain("$0.00/day");
 });

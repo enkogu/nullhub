@@ -15,7 +15,6 @@
     status: "running",
     role: "sales",
     currentWork: "Loop #41 is active",
-    dailyCost: "$1.20/day",
     sourceKit: "Outbound Sales",
     href: "/team/instances/nullclaw/sdr-agent",
   }}
@@ -27,8 +26,7 @@
     name: "Bookkeeper",
     status: "stopped",
     role: "finance",
-    currentWork: "Waiting for a new mandate",
-    dailyCost: "$0.40/day",
+    currentWork: "Idle",
     sourceKit: "Accounting",
   }}
 />

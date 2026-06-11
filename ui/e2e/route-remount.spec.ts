@@ -86,3 +86,36 @@ test('canonical IA routes render nonblank shell content in fixture mode', async 
   expect(failedResponses).toEqual([]);
   expect(runtimeErrors).toEqual([]);
 });
+
+test('team agents status payload does not synthesize work or cost values', async ({ page }) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
+  await installNullHubFixtureRoutes(page, {
+    status: {
+      ok: true,
+      version: 'playwright-fixture',
+      components: {},
+      instances: {
+        nullclaw: {
+          claw: {
+            status: 'running',
+            version: 'playwright-fixture',
+            port: 19801,
+          },
+        },
+      },
+    },
+  });
+
+  await page.goto('/team/agents');
+
+  const card = page.locator('.agent-card').filter({ hasText: 'claw' });
+  await expect(card).toBeVisible();
+  await expect(card).toContainText('Idle');
+  await expect(card).not.toContainText('Daily cost');
+  await expect(card).not.toContainText('$0.00/day');
+  await expect(card).not.toContainText('Running on playwright-fixture');
+  await expect(card).not.toContainText('port 19801');
+
+  expect(failedResponses).toEqual([]);
+  expect(runtimeErrors).toEqual([]);
+});
