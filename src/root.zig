@@ -10,6 +10,7 @@ pub const discovery = @import("discovery.zig");
 pub const downloader = @import("installer/downloader.zig");
 pub const durable_file = @import("core/durable_file.zig");
 pub const events_api = @import("api/events.zig");
+pub const event_producers_api = @import("api/event_producers.zig");
 pub const health = @import("supervisor/health.zig");
 pub const helpers = @import("api/helpers.zig");
 pub const instances_api = @import("api/instances.zig");
@@ -69,6 +70,7 @@ test {
     _ = downloader;
     _ = durable_file;
     _ = events_api;
+    _ = event_producers_api;
     _ = health;
     _ = helpers;
     _ = instances_api;

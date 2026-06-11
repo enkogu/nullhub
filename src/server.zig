@@ -25,6 +25,7 @@ const wizard_api = @import("api/wizard.zig");
 const providers_api = @import("api/providers.zig");
 const channels_api = @import("api/channels.zig");
 const events_api = @import("api/events.zig");
+const event_producers = @import("api/event_producers.zig");
 const spaces_api = @import("api/spaces.zig");
 const usage_api = @import("api/usage.zig");
 const report_api = @import("api/report.zig");
@@ -1878,6 +1879,17 @@ pub const Server = struct {
                 .boiler_url = selectBackendUrl(env_boiler_url, managed_boiler, requested_boiler),
                 .boiler_token = selectBackendToken(env_boiler_token, managed_boiler, requested_boiler),
             });
+            event_producers.emitNullBoilerTransition(
+                allocator,
+                self.state,
+                if (managed_boiler) |cfg| cfg.name else requested_boiler,
+                method,
+                target,
+                resp.status,
+                std_compat.time.milliTimestamp(),
+            ) catch |err| {
+                std.log.warn("failed to append nullboiler transition event: {s}", .{@errorName(err)});
+            };
             return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
         }
 
@@ -3209,6 +3221,57 @@ test "route /api/events requires query space" {
     const resp = ctx.route(std.testing.allocator, "GET", "/api/events", "");
     try std.testing.expectEqualStrings("400 Bad Request", resp.status);
     try std.testing.expectEqualStrings("{\"error\":\"space query is required\"}", resp.body);
+}
+
+test "route emits event for managed nullboiler workflow run" {
+    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var upstream = try proxy_api.TestUpstream.start(allocator, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}");
+    defer upstream.deinit();
+
+    var ctx = TestContext.init(allocator);
+    defer ctx.deinit(allocator);
+    try ctx.paths.ensureDirs();
+    try ctx.state.addInstance("nullboiler", "boiler-a", .{ .version = "1.0.0", .space_id = "ops" });
+
+    const inst_dir = try ctx.paths.instanceDir(allocator, "nullboiler", "boiler-a");
+    defer allocator.free(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
+
+    const config_path = try ctx.paths.instanceConfig(allocator, "nullboiler", "boiler-a");
+    defer allocator.free(config_path);
+    var file = try std_compat.fs.createFileAbsolute(config_path, .{ .truncate = true });
+    defer file.close();
+    const config = try std.fmt.allocPrint(allocator, "{{\"port\":{d}}}\n", .{upstream.ctx.server.listen_address.in.getPort()});
+    defer allocator.free(config);
+    try file.writeAll(config);
+
+    const key = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ "nullboiler", "boiler-a" });
+    try ctx.manager.instances.put(key, .{
+        .component = "nullboiler",
+        .name = "boiler-a",
+        .status = .running,
+        .port = upstream.ctx.server.listen_address.in.getPort(),
+    });
+
+    const resp = ctx.route(
+        allocator,
+        "POST",
+        "/api/nullboiler/workflows/wf-1/run?boiler_instance=boiler-a",
+        "{\"input\":{}}",
+    );
+    defer allocator.free(resp.body);
+
+    try std.testing.expectEqualStrings("200 OK", resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, upstream.request(), "POST /workflows/wf-1/run HTTP/1.1") != null);
+    const events = ctx.state.eventsList();
+    try std.testing.expectEqual(@as(usize, 1), events.len);
+    try std.testing.expectEqualStrings("ops", events[0].space_id);
+    try std.testing.expectEqualStrings("work.workflow.started", events[0].event_type);
+    try std.testing.expectEqualStrings("nullboiler", events[0].source);
+    try std.testing.expectEqualStrings("workflow", events[0].subject_type);
+    try std.testing.expectEqualStrings("wf-1", events[0].subject_id);
 }
 
 test "extractHeader finds Content-Length" {

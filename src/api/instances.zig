@@ -16,6 +16,8 @@ const managed_skills = @import("../managed_skills.zig");
 const manifest_mod = @import("../core/manifest.zig");
 const durable_file = @import("../core/durable_file.zig");
 const managed_cli = @import("managed_cli.zig");
+const event_producers = @import("event_producers.zig");
+const proxy_api = @import("proxy.zig");
 const nullclaw_web_channel = @import("../core/nullclaw_web_channel.zig");
 const nullclaw_gateway_config = @import("../core/nullclaw_gateway_config.zig");
 const query_api = @import("query.zig");
@@ -449,8 +451,20 @@ fn handleNullTicketsAction(
 
     const response_bytes = response_body.toOwnedSlice() catch return helpers.serverError();
     const status_code: u10 = @intFromEnum(result.status);
+    const status = actionStatus(status_code);
+    event_producers.emitNullTicketsTransition(
+        allocator,
+        s,
+        name,
+        http_method,
+        parsed.value.path,
+        status,
+        std_compat.time.milliTimestamp(),
+    ) catch |err| {
+        std.log.warn("failed to append nulltickets transition event: {s}", .{@errorName(err)});
+    };
     return .{
-        .status = actionStatus(status_code),
+        .status = status,
         .content_type = "application/json",
         .body = response_bytes,
     };
@@ -2261,6 +2275,9 @@ fn handleCronCreate(
     defer allocator.free(job_json);
 
     const response_body = std.fmt.allocPrint(allocator, "{{\"job\":{s}}}", .{job_json}) catch return helpers.serverError();
+    event_producers.emitCronScheduled(allocator, s, component, name, job_id, once, std_compat.time.milliTimestamp()) catch |err| {
+        std.log.warn("failed to append cron scheduled event: {s}", .{@errorName(err)});
+    };
     return jsonOk(response_body);
 }
 
@@ -2304,6 +2321,9 @@ fn handleCronCommandWithJob(
         "{{\"status\":\"{s}\",\"job\":{s}}}",
         .{ success_status, job_json },
     ) catch return helpers.serverError();
+    event_producers.emitCronJobAction(allocator, s, component, name, job_id, success_status, std_compat.time.milliTimestamp()) catch |err| {
+        std.log.warn("failed to append cron action event: {s}", .{@errorName(err)});
+    };
     return jsonOk(response_body);
 }
 
@@ -2395,6 +2415,9 @@ fn handleCronUpdate(
     defer allocator.free(job_json);
 
     const response_body = std.fmt.allocPrint(allocator, "{{\"status\":\"updated\",\"job\":{s}}}", .{job_json}) catch return helpers.serverError();
+    event_producers.emitCronJobAction(allocator, s, component, name, job_id, "updated", std_compat.time.milliTimestamp()) catch |err| {
+        std.log.warn("failed to append cron update event: {s}", .{@errorName(err)});
+    };
     return jsonOk(response_body);
 }
 
@@ -2431,6 +2454,9 @@ fn handleCronDelete(
     if (cronStoreHasJobId(&after, job_id)) return helpers.serverError();
 
     const response_body = std.fmt.allocPrint(allocator, "{{\"status\":\"deleted\",\"id\":\"{s}\"}}", .{job_id}) catch return helpers.serverError();
+    event_producers.emitCronJobAction(allocator, s, component, name, job_id, "deleted", std_compat.time.milliTimestamp()) catch |err| {
+        std.log.warn("failed to append cron delete event: {s}", .{@errorName(err)});
+    };
     return jsonOk(response_body);
 }
 
@@ -8763,6 +8789,61 @@ test "dispatch routes nulltickets tickets action to managed instances only" {
     try std.testing.expectEqualStrings("400 Bad Request", unsupported.status);
 }
 
+test "dispatch emits event for nulltickets run transition" {
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var state_fixture = try test_helpers.TempPaths.init(allocator);
+    defer state_fixture.deinit();
+    const state_path = try state_fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var s = state_mod.State.init(allocator, state_path);
+    defer s.deinit();
+    var mctx = TestManagerCtx.init(allocator);
+    defer mctx.deinit(allocator);
+
+    var upstream = try proxy_api.TestUpstream.start(allocator, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}");
+    defer upstream.deinit();
+
+    try s.addInstance("nulltickets", "tracker-a", .{ .version = "1.0.0", .space_id = "ops" });
+    const config = try std.fmt.allocPrint(
+        allocator,
+        "{{\"port\":{d},\"api_token\":\"admin-token\"}}",
+        .{upstream.ctx.server.listen_address.in.getPort()},
+    );
+    defer allocator.free(config);
+    try writeTestInstanceConfig(allocator, mctx.paths, "nulltickets", "tracker-a", config);
+    const key = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ "nulltickets", "tracker-a" });
+    try mctx.manager.instances.put(key, .{
+        .component = "nulltickets",
+        .name = "tracker-a",
+        .status = .running,
+        .port = upstream.ctx.server.listen_address.in.getPort(),
+    });
+
+    const resp = dispatch(
+        allocator,
+        &s,
+        &mctx.manager,
+        &mctx.mutex,
+        mctx.paths,
+        "POST",
+        "/api/instances/nulltickets/tracker-a/tickets",
+        "{\"method\":\"POST\",\"path\":\"/runs/run-1/transition\",\"payload\":{\"trigger\":\"complete\"},\"bearer_token\":\"lease-token\"}",
+    ).?;
+    defer allocator.free(resp.body);
+
+    try std.testing.expectEqualStrings("200 OK", resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, upstream.request(), "POST /runs/run-1/transition HTTP/1.1") != null);
+    const events = s.eventsList();
+    try std.testing.expectEqual(@as(usize, 1), events.len);
+    try std.testing.expectEqualStrings("ops", events[0].space_id);
+    try std.testing.expectEqualStrings("work.ticket.transitioned", events[0].event_type);
+    try std.testing.expectEqualStrings("nulltickets", events[0].source);
+    try std.testing.expectEqualStrings("ticket_run", events[0].subject_type);
+    try std.testing.expectEqualStrings("run-1", events[0].subject_id);
+}
+
 test "dispatch routes GET integration action for nullclaw nullwatch telemetry" {
     const allocator = std.testing.allocator;
     var state_fixture = try test_helpers.TempPaths.init(allocator);
@@ -10034,7 +10115,7 @@ test "dispatch routes cron detail and lifecycle actions" {
     var mctx = TestManagerCtx.init(allocator);
     defer mctx.deinit(allocator);
 
-    try s.addInstance("nullclaw", "my-agent", .{ .version = "1.0.7" });
+    try s.addInstance("nullclaw", "my-agent", .{ .version = "1.0.7", .space_id = "ops" });
     try writeTestCronStore(
         allocator,
         mctx.paths,
@@ -10152,6 +10233,19 @@ test "dispatch routes cron detail and lifecycle actions" {
     defer allocator.free(delete_resp.body);
     try std.testing.expectEqualStrings("200 OK", delete_resp.status);
     try std.testing.expect(std.mem.indexOf(u8, delete_resp.body, "\"status\":\"deleted\"") != null);
+
+    const events = s.eventsList();
+    try std.testing.expectEqual(@as(usize, 6), events.len);
+    try std.testing.expectEqualStrings("ops", events[0].space_id);
+    try std.testing.expectEqualStrings("work.cron.once_scheduled", events[0].event_type);
+    try std.testing.expectEqualStrings("work.cron.executed", events[1].event_type);
+    try std.testing.expectEqualStrings("work.cron.paused", events[2].event_type);
+    try std.testing.expectEqualStrings("work.cron.resumed", events[3].event_type);
+    try std.testing.expectEqualStrings("work.cron.updated", events[4].event_type);
+    try std.testing.expectEqualStrings("work.cron.deleted", events[5].event_type);
+    try std.testing.expectEqualStrings("cron", events[1].source);
+    try std.testing.expectEqualStrings("cron_job", events[1].subject_type);
+    try std.testing.expectEqualStrings("job-1", events[1].subject_id);
 }
 
 test "dispatch routes config mutation actions" {
