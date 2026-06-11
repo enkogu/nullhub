@@ -33,6 +33,14 @@ export const appShellCommandSections: AppShellCommandSection[] = [
 		keywords: ["runs", "tasks", "artifacts", "results"],
 	},
 	{
+		key: "work-activity",
+		title: "Work Activity",
+		url: "/work/activity",
+		detail: "Space chronicle of events, evidence, and agent updates.",
+		shortcut: "A",
+		keywords: ["activity", "events", "evidence", "chronicle"],
+	},
+	{
 		key: "orders",
 		title: "Orders",
 		url: "/orders",

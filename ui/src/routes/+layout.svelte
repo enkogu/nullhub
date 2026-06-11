@@ -37,6 +37,7 @@
     { test: (path) => path.startsWith('/work/dispatch/failures'), title: 'Dispatch Failures', section: 'Work' },
     { test: (path) => path.startsWith('/work/dispatch/telemetry'), title: 'Dispatch Telemetry', section: 'Work' },
     { test: (path) => path.startsWith('/work/dispatch'), title: 'Dispatch', section: 'Work' },
+    { test: (path) => path.startsWith('/work/activity'), title: 'Activity', section: 'Work' },
     { test: (path) => path.startsWith('/work/mission-control'), title: 'Mission Control', section: 'Work' },
     { test: (path) => path.startsWith('/work/loops/runs'), title: 'Loop Runs', section: 'Work' },
     { test: (path) => path.startsWith('/work/artifacts'), title: 'Artifacts', section: 'Work' },

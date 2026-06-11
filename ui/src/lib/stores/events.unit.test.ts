@@ -33,6 +33,14 @@ function createEventsApi(pages: EventListPage[]): EventsApi {
   };
 }
 
+function deferredPage() {
+  let resolve!: (page: EventListPage) => void;
+  const promise = new Promise<EventListPage>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe('events store', () => {
   test('loads a shared page of events and appends cursor pages', async () => {
     const api = createEventsApi([eventPage(2, '2'), eventPage(1)]);
@@ -102,6 +110,50 @@ describe('events store', () => {
 
     stopPolling();
     expect(stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('clears scoped events when polling starts for a new scope', async () => {
+    const firstPage = deferredPage();
+    const api: EventsApi = {
+      listEvents: vi.fn(() => firstPage.promise),
+      createEvent: vi.fn(),
+    };
+    const store = new EventsStore({ api, poller: vi.fn(() => vi.fn()) });
+    store.events = eventPage(9).events;
+    store.status = 'ready';
+
+    store.startPolling({ spaceId: 'lab', limit: 5 }, 2500);
+
+    expect(store.events).toEqual([]);
+    expect(store.status).toBe('loading');
+    expect(store.params).toEqual({ spaceId: 'lab', limit: 5 });
+
+    firstPage.resolve(eventPage(1));
+    await vi.waitFor(() => expect(store.events.map((event) => event.id)).toEqual([1]));
+  });
+
+  test('ignores stale event responses after a newer scoped request starts', async () => {
+    const firstPage = deferredPage();
+    const secondPage = deferredPage();
+    const api: EventsApi = {
+      listEvents: vi.fn()
+        .mockReturnValueOnce(firstPage.promise)
+        .mockReturnValueOnce(secondPage.promise),
+      createEvent: vi.fn(),
+    };
+    const store = new EventsStore({ api });
+
+    const first = store.refresh({ spaceId: 'ops' });
+    const second = store.refresh({ spaceId: 'lab' });
+
+    firstPage.resolve(eventPage(1));
+    await expect(first).resolves.toMatchObject({ events: [{ id: 1 }] });
+    expect(store.events).toEqual([]);
+
+    secondPage.resolve(eventPage(2));
+    await expect(second).resolves.toMatchObject({ events: [{ id: 2 }] });
+    expect(store.events.map((event) => event.id)).toEqual([2]);
+    expect(store.params).toEqual({ spaceId: 'lab' });
   });
 
   test('treats polling refresh failures as best-effort after recording error state', async () => {

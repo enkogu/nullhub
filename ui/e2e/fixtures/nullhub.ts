@@ -5,6 +5,8 @@ type NullHubFixtureOptions = {
   requests?: string[];
   spacesStatus?: number;
   status?: JsonBody;
+  events?: Record<string, unknown>[];
+  eventsStatus?: number;
   loopCatalog?: JsonBody;
   loopCatalogStatus?: number;
   nullticketsPipelines?: Record<string, unknown>[];
@@ -158,6 +160,51 @@ const fixtureLoopCatalog = [
   },
 ];
 
+const fixtureEvents = [
+  {
+    id: 3,
+    space_id: 'ops',
+    type: 'loop.review_requested',
+    source: 'nulltickets',
+    subject_type: 'loop_run',
+    subject_id: 'loop-3',
+    title: 'Review requested',
+    summary: 'Athena finished a support loop and needs approval.',
+    severity: 'warning',
+    evidence_ref: 'artifact://loop-3',
+    created_at_ms: 1_780_000_000_000,
+    payload: { agent: 'Athena' },
+  },
+  {
+    id: 2,
+    space_id: 'ops',
+    type: 'workflow.completed',
+    source: 'nullboiler',
+    subject_type: 'workflow_run',
+    subject_id: 'workflow-2',
+    title: 'Workflow completed',
+    summary: 'Iris delivered the onboarding workflow result.',
+    severity: 'success',
+    evidence_ref: 'artifact://workflow-2',
+    created_at_ms: 1_779_999_700_000,
+    payload: { agent: 'Iris' },
+  },
+  {
+    id: 1,
+    space_id: 'lab',
+    type: 'agent.note',
+    source: 'dispatcher',
+    subject_type: 'task',
+    subject_id: 'task-1',
+    title: 'Lab note captured',
+    summary: 'Lab space dispatcher recorded a note.',
+    severity: 'info',
+    evidence_ref: '',
+    created_at_ms: 1_779_999_500_000,
+    payload: { agent: 'Athena' },
+  },
+];
+
 function requestPath(route: Route): string {
   const url = new URL(route.request().url());
   return `${url.pathname}${url.search}`;
@@ -239,6 +286,42 @@ async function loopCatalogRoute(route: Route, options: NullHubFixtureOptions) {
   await fulfillJson(route, options.loopCatalog || fixtureLoopCatalog);
 }
 
+async function eventsRoute(route: Route, options: NullHubFixtureOptions) {
+  recordRequest(route, options);
+  if (options.eventsStatus && options.eventsStatus >= 400) {
+    await fulfillJson(route, { error: 'Events unavailable.' }, options.eventsStatus);
+    return;
+  }
+
+  const url = new URL(route.request().url());
+  const space = url.searchParams.get('space');
+  if (!space) {
+    await fulfillJson(route, { error: 'Events require a selected space.' }, 400);
+    return;
+  }
+  const source = url.searchParams.get('source');
+  const level = url.searchParams.get('severity');
+  const type = url.searchParams.get('type');
+  const subjectType = url.searchParams.get('subject_type');
+  const subjectId = url.searchParams.get('subject_id');
+  const limit = Number(url.searchParams.get('limit') || '50');
+  const events = (options.events || fixtureEvents).filter((event) => {
+    if (space && event.space_id !== space) return false;
+    if (source && event.source !== source) return false;
+    if (level && event.severity !== level) return false;
+    if (type && event.type !== type) return false;
+    if (subjectType && event.subject_type !== subjectType) return false;
+    if (subjectId && event.subject_id !== subjectId) return false;
+    return true;
+  });
+
+  await fulfillJson(route, {
+    events: events.slice(0, Number.isFinite(limit) ? limit : 50),
+    has_more: false,
+    next_cursor: null,
+  });
+}
+
 async function nullTicketsActionRoute(route: Route, options: NullHubFixtureOptions, pipelines: Record<string, unknown>[]) {
   recordRequest(route, options);
   const url = new URL(route.request().url());
@@ -305,6 +388,8 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/service/status', (route) => fulfillJson(route, fixtureServiceStatus));
   await page.route('**/api/nulltickets/store/loops.templates**', (route) => loopCatalogRoute(route, options));
   await page.route('**/nullhub-api/nulltickets/store/loops.templates**', (route) => loopCatalogRoute(route, options));
+  await page.route('**/api/events**', (route) => eventsRoute(route, options));
+  await page.route('**/nullhub-api/events**', (route) => eventsRoute(route, options));
   await page.route('**/api/instances**', (route) => jsonRoute(route, options, { instances: {} }));
   await page.route('**/nullhub-api/instances**', (route) => jsonRoute(route, options, { instances: {} }));
   await page.route('**/api/instances/nulltickets/*/tickets**', (route) => nullTicketsActionRoute(route, options, pipelines));
