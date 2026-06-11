@@ -55,6 +55,14 @@ export function emptyLoopsState(): LoopsState {
   return { pipelines: [], tasks: [], rows: [], queue: [], loops: [], detailError: "" };
 }
 
+function pipelinesFrom(result: unknown): LoopPipeline[] {
+  const value = result as { pipelines?: unknown; items?: unknown } | null;
+  if (Array.isArray(result)) return result as LoopPipeline[];
+  if (Array.isArray(value?.pipelines)) return value.pipelines as LoopPipeline[];
+  if (Array.isArray(value?.items)) return value.items as LoopPipeline[];
+  return [];
+}
+
 /**
  * Cache of task details keyed by `${id}:${updated_at_ms}`. Terminal tasks are
  * cached because their latest run can no longer change; non-terminal tasks are
@@ -132,7 +140,7 @@ export async function loadLoopsState(instance: string, cache: TaskDetailCache): 
   const state = emptyLoopsState();
 
   const pipelinesResult = await api.nullTicketsPipelines(ticketsComponent, instance);
-  state.pipelines = Array.isArray(pipelinesResult) ? pipelinesResult : [];
+  state.pipelines = pipelinesFrom(pipelinesResult);
 
   let listTasks: LoopTask[] = [];
   try {

@@ -10,6 +10,7 @@
   import { Label } from "$lib/components/ui/label";
   import { PageHeader } from "$lib/components/ui/page-header";
   import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
+  import { getSelectedTicketsInstance } from "$lib/nullstack/backendSelection";
   import LoopGalleryPanel from "$lib/components/loops/LoopGalleryPanel.svelte";
   import StartLoopDialog from "$lib/components/loops/StartLoopDialog.svelte";
   import {
@@ -101,7 +102,7 @@
   }
 
   function ticketsInstance(): string {
-    return tickets().instanceName || "tickets";
+    return getSelectedTicketsInstance() || tickets().instanceName || "tickets";
   }
 
   function activeRows(): LoopRunRow[] {
@@ -464,7 +465,7 @@
       {#if loopsState.loops.length === 0}
         <Card class="empty-panel">
           <strong>No loops installed yet</strong>
-          <span>Install a built-in loop from the Gallery or create a custom one to put agents to work.</span>
+          <span>Install a loop from the Marketplace or Gallery, or create a custom one to put agents to work.</span>
           <Button size="sm" onclick={() => (activeTab = "gallery")}>Open Gallery</Button>
         </Card>
       {:else}
@@ -591,7 +592,7 @@
       {#if loopsState.loops.length === 0}
         <Card class="empty-panel">
           <strong>No loops installed yet</strong>
-          <span>Install a built-in loop from the Gallery or create a custom one to put agents to work.</span>
+          <span>Install a loop from the Marketplace or Gallery, or create a custom one to put agents to work.</span>
           <Button size="sm" onclick={() => (activeTab = "gallery")}>Open Gallery</Button>
         </Card>
       {:else}

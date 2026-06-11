@@ -5,6 +5,9 @@ type NullHubFixtureOptions = {
   requests?: string[];
   spacesStatus?: number;
   status?: JsonBody;
+  loopCatalog?: JsonBody;
+  loopCatalogStatus?: number;
+  nullticketsPipelines?: Record<string, unknown>[];
 };
 
 async function fulfillJson(route: Route, body: JsonBody, status = 200) {
@@ -133,6 +136,28 @@ const missionControlReplays = {
   count: 0,
 };
 
+const fixtureLoopCatalog = [
+  {
+    key: 'support-triage',
+    value: {
+      slug: 'support-triage',
+      name: 'Support Triage',
+      category: 'Support',
+      machine: 'Support Machine',
+      tagline: 'Triage inbound support requests until each one has an owner.',
+      goal: 'Every new support request has a clear owner and next action.',
+      exit_condition: 'All incoming requests have an owner and next action.',
+      check_instruction: 'Check each request for owner and next action. Continue until none are missing.',
+      max_iterations: 4,
+      starter: {
+        title: 'Triage support inbox',
+        description: 'Review the latest support requests and assign owners.',
+        priority: 60,
+      },
+    },
+  },
+];
+
 function requestPath(route: Route): string {
   const url = new URL(route.request().url());
   return `${url.pathname}${url.search}`;
@@ -205,8 +230,59 @@ async function spacesRoute(route: Route, options: NullHubFixtureOptions, spaces:
   await fulfillJson(route, { spaces });
 }
 
+async function loopCatalogRoute(route: Route, options: NullHubFixtureOptions) {
+  recordRequest(route, options);
+  if (options.loopCatalogStatus && options.loopCatalogStatus >= 400) {
+    await fulfillJson(route, { error: 'Remote loop catalog unavailable.' }, options.loopCatalogStatus);
+    return;
+  }
+  await fulfillJson(route, options.loopCatalog || fixtureLoopCatalog);
+}
+
+async function nullTicketsActionRoute(route: Route, options: NullHubFixtureOptions, pipelines: Record<string, unknown>[]) {
+  recordRequest(route, options);
+  const url = new URL(route.request().url());
+  const payload = route.request().postDataJSON() as { method?: string; path?: string; payload?: any } | null;
+  const method = String(payload?.method || 'GET').toUpperCase();
+  const path = String(payload?.path || '');
+  const parts = url.pathname.split('/').filter(Boolean);
+  const instanceName = parts[3] || 'tickets';
+
+  if (method === 'GET' && path === '/pipelines') {
+    const instancePipelines = pipelines.filter((pipeline) => {
+      const pipelineInstance = String(pipeline.tickets_instance ?? pipeline.ticketsInstance ?? instanceName);
+      return pipelineInstance === instanceName;
+    });
+    await fulfillJson(route, { pipelines: instancePipelines });
+    return;
+  }
+
+  if (method === 'GET' && (path === '/tasks' || path.startsWith('/tasks?'))) {
+    await fulfillJson(route, { items: [] });
+    return;
+  }
+
+  if (method === 'POST' && path === '/pipelines') {
+    const draft = payload?.payload || {};
+    const name = String(draft.name || `pipeline-${pipelines.length + 1}`);
+    const created = {
+      id: name,
+      name,
+      definition: draft.definition || {},
+      tickets_instance: instanceName,
+      created_at_ms: Date.now(),
+    };
+    pipelines.push(created);
+    await fulfillJson(route, { pipeline: created }, 201);
+    return;
+  }
+
+  await fulfillJson(route, { error: 'Unsupported NullTickets fixture action.' }, 404);
+}
+
 export async function installNullHubFixtureRoutes(page: Page, options: NullHubFixtureOptions = {}) {
   const spaces = fixtureSpaces.map((space) => ({ ...space }));
+  const pipelines = (options.nullticketsPipelines || []).map((pipeline) => ({ ...pipeline }));
 
   await page.route('**/site.webmanifest', (route) =>
     fulfillJson(route, { name: 'NullHub', short_name: 'NullHub', start_url: '/', display: 'standalone' }),
@@ -227,8 +303,12 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/settings', (route) => fulfillJson(route, fixtureSettings));
   await page.route('**/api/service/status', (route) => fulfillJson(route, fixtureServiceStatus));
   await page.route('**/nullhub-api/service/status', (route) => fulfillJson(route, fixtureServiceStatus));
+  await page.route('**/api/nulltickets/store/loops.templates**', (route) => loopCatalogRoute(route, options));
+  await page.route('**/nullhub-api/nulltickets/store/loops.templates**', (route) => loopCatalogRoute(route, options));
   await page.route('**/api/instances**', (route) => jsonRoute(route, options, { instances: {} }));
   await page.route('**/nullhub-api/instances**', (route) => jsonRoute(route, options, { instances: {} }));
+  await page.route('**/api/instances/nulltickets/*/tickets**', (route) => nullTicketsActionRoute(route, options, pipelines));
+  await page.route('**/nullhub-api/instances/nulltickets/*/tickets**', (route) => nullTicketsActionRoute(route, options, pipelines));
   await page.route('**/api/providers**', (route) =>
     jsonRoute(route, options, fixtureProviders(new URL(route.request().url()).searchParams.get('space'))),
   );

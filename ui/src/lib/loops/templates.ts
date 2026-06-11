@@ -5,6 +5,7 @@ export type LoopTemplate = {
   name: string;
   category: string;
   machine: string;
+  source?: string;
   tagline: string;
   goal: string;
   exitCondition: string;
@@ -34,7 +35,7 @@ export function templateDefinition(template: LoopTemplate): Record<string, any> 
     loop: {
       slug: template.slug,
       version: 1,
-      source: "builtin",
+      source: template.source || "builtin",
       category: template.category,
       machine: template.machine,
       goal: template.goal,
