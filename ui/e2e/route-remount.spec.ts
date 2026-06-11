@@ -51,7 +51,7 @@ test('canonical IA routes render nonblank shell content in fixture mode', async 
 
   await installNullHubFixtureRoutes(page);
 
-  for (const path of ['/', '/inbox', '/work', '/orders/loops', '/orders/workflows/runs', '/team/instances', '/market', '/system/observability']) {
+  for (const path of ['/', '/inbox', '/work', '/orders/loops', '/orders/workflows/runs', '/team/agents', '/team/instances', '/market', '/system/observability']) {
     await page.goto(path);
     await expect(page.locator('.shadcn-app')).toBeVisible();
     await expect(page.locator('main.real-content')).toBeVisible();
@@ -63,6 +63,10 @@ test('canonical IA routes render nonblank shell content in fixture mode', async 
     await page.screenshot({ path: screenshotPath, fullPage: true });
     console.log(`screenshot: ${screenshotPath}`);
   }
+
+  await page.goto('/team/agents');
+  await expect(page.getByRole('heading', { name: 'Agents' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Hire agent' })).toBeVisible();
 
   expect(runtimeErrors).toEqual([]);
 });
