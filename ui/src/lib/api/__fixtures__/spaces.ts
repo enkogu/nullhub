@@ -13,9 +13,9 @@ const fixtureSpaceAggregates = {
       { id: 2, space_id: 'ops', status: 'pending' },
     ],
     events: [
-      { id: 10, space_id: 'ops', title: 'Ops run active' },
-      { id: 11, space_id: 'ops', title: 'Ops follow-up active' },
-      { id: 12, space_id: 'ops', title: 'Ops review active' },
+      { id: 10, space_id: 'ops', type: 'work.started', title: 'Ops run active', payload: { status: 'running' } },
+      { id: 11, space_id: 'ops', type: 'work.progress', title: 'Ops follow-up active', payload: { status: 'queued' } },
+      { id: 12, space_id: 'ops', type: 'work.failed', title: 'Ops review active', severity: 'warning' },
     ],
     usage: {
       totals: { total_cost_usd: 12.3456, total_tokens: 24000, requests: 24 },
@@ -26,7 +26,7 @@ const fixtureSpaceAggregates = {
   },
   lab: {
     approvals: [{ id: 3, space_id: 'lab', status: 'pending' }],
-    events: [{ id: 20, space_id: 'lab', title: 'Lab run active' }],
+    events: [{ id: 20, space_id: 'lab', type: 'work.started', title: 'Lab run active', payload: { status: 'running' } }],
     usage: {
       totals: { spend_usd: 1.25, total_tokens: 5000, requests: 5 },
       by_instance: [],

@@ -58,6 +58,12 @@ type ListLikeResponse = {
   events?: unknown;
 };
 
+type RawEventLike = {
+  type?: unknown;
+  severity?: unknown;
+  payload?: unknown;
+};
+
 type UsageTotals = {
   total_cost_usd?: unknown;
   cost_usd?: unknown;
@@ -131,6 +137,30 @@ function countList(raw: ListLikeResponse | unknown[] | null | undefined, key: 'a
   if (Array.isArray(raw)) return raw.length;
   const list = raw?.[key];
   return Array.isArray(list) ? list.length : 0;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim();
+}
+
+function eventStatus(raw: RawEventLike): string {
+  const payload = raw.payload && typeof raw.payload === 'object' ? (raw.payload as Record<string, unknown>) : {};
+  return stringValue(payload.status || payload.state || raw.severity).toLowerCase();
+}
+
+function eventLooksLive(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  const event = raw as RawEventLike;
+  const status = eventStatus(event);
+  if (['running', 'pending', 'queued', 'leased', 'in_progress', 'started', 'starting'].includes(status)) return true;
+  if (['warning', 'error', 'failed', 'blocked', 'stalled'].includes(status)) return true;
+  const type = stringValue(event.type).toLowerCase();
+  return type.endsWith('.started') || type.endsWith('.queued') || type.endsWith('.progress');
+}
+
+function countLiveEvents(raw: ListLikeResponse | unknown[] | null | undefined): number {
+  const list = Array.isArray(raw) ? raw : Array.isArray(raw?.events) ? raw.events : [];
+  return list.filter(eventLooksLive).length;
 }
 
 function numberValue(value: unknown): number | null {
@@ -207,7 +237,7 @@ export function createSpacesApi(request: RequestFn, withQuery: WithQueryFn) {
       return {
         spaceId,
         pendingCount: countList(approvals, 'approvals'),
-        liveCount: countList(events, 'events'),
+        liveCount: countLiveEvents(events),
         spendUsd: usageSpend(usage),
       };
     },
