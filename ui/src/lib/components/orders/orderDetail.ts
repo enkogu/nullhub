@@ -92,7 +92,7 @@ function payloadRecord(event: NullHubEvent): Record<string, unknown> {
 function nestedId(value: unknown): string {
   if (!value || typeof value !== 'object') return '';
   const record = value as Record<string, unknown>;
-  return clean(record.id ?? record.run_id ?? record.runId);
+  return clean(record.id ?? record.run_id ?? record.runId ?? record.run_ref ?? record.runRef);
 }
 
 export function orderEventRunId(event: NullHubEvent): string {
@@ -100,6 +100,8 @@ export function orderEventRunId(event: NullHubEvent): string {
   const candidates = [
     payload.run_id,
     payload.runId,
+    payload.run_ref,
+    payload.runRef,
     payload.workflow_run_id,
     payload.workflowRunId,
     payload.loop_run_id,

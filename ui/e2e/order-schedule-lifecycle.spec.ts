@@ -70,58 +70,28 @@ async function enactOrder(page: Page) {
   }, { id: orderId, space: spaceId });
 }
 
-function fireScheduleIfActive(input: {
-  orders: FixtureRecord[];
-  events: FixtureRecord[];
-  tasks: FixtureRecord[];
-  runId: string;
+async function fireSchedule(page: Page, input: {
+  runRef: string;
   title: string;
   nowMs: number;
-}): boolean {
-  const order = input.orders.find((entry) => entry.id === orderId && entry.space_id === spaceId);
-  if (!order || order.status !== 'active') return false;
-
-  const taskId = `task-${input.runId}`;
-  order.exec_count = Number(order.exec_count || 0) + 1;
-  order.updated_at_ms = input.nowMs;
-
-  input.events.unshift({
-    id: input.events.length + 10_000,
-    space_id: spaceId,
-    type: 'order.executed',
-    source: 'orders',
-    subject_type: 'order',
-    subject_id: orderId,
-    title: `${input.title} fired`,
-    summary: `Scheduled order created Work run ${input.runId} with artifact://${input.runId}.`,
-    severity: 'success',
-    evidence_ref: `artifact://${input.runId}`,
-    created_at_ms: input.nowMs,
-    payload: { run_id: input.runId, status: 'running', agent: 'Athena' },
-  });
-
-  input.tasks.unshift({
-    id: taskId,
-    pipeline_id: 'scheduled-orders',
-    stage: 'in_progress',
-    title: input.title,
-    description: `Work evidence created from scheduled order ${orderId}.`,
-    priority: 80,
-    created_at_ms: input.nowMs,
-    updated_at_ms: input.nowMs,
-    tickets_instance: 'tickets',
-    space_id: spaceId,
-    latest_run: {
-      id: input.runId,
-      task_id: taskId,
-      status: 'running',
-      agent_id: 'Athena',
-      attempt: 1,
-      started_at_ms: input.nowMs,
-    },
-  });
-
-  return true;
+}): Promise<FixtureRecord> {
+  return page.evaluate(async ({ id, space, runRef, title, nowMs }) => {
+    const response = await fetch(`/api/fixtures/schedule-fire?space=${encodeURIComponent(space)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        order_id: id,
+        run_ref: runRef,
+        title,
+        now_ms: nowMs,
+        component: 'nullclaw',
+        instance: 'Athena',
+        cron_job_id: `cron-${id}`,
+      }),
+    });
+    if (!response.ok) throw new Error(`schedule fire failed ${response.status}: ${await response.text()}`);
+    return response.json();
+  }, { id: orderId, space: spaceId, ...input });
 }
 
 test('E2E-38 scheduled order fires work evidence and pause blocks future runs', async ({ page }, testInfo) => {
@@ -195,16 +165,30 @@ test('E2E-38 scheduled order fires work evidence and pause blocks future runs', 
   await expect(page.getByLabel('Order facts').getByText('Active', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Suspend' })).toBeVisible();
 
-  expect(
-    fireScheduleIfActive({
-      orders,
-      events,
-      tasks,
-      runId: 'scheduled-order-run-1',
-      title: 'Customer escalation digest',
-      nowMs: nowMs + 5 * 60_000,
-    }),
-  ).toBe(true);
+  const firstFire = await fireSchedule(page, {
+    runRef: 'scheduled-order-run-1',
+    title: 'Customer escalation digest',
+    nowMs: nowMs + 5 * 60_000,
+  });
+  expect(firstFire).toMatchObject({
+    fired: true,
+    event: {
+      type: 'order.executed',
+      source: 'cron',
+      subject_type: 'order',
+      subject_id: orderId,
+      title: 'Order executed',
+      summary: 'A schedule order cron run completed.',
+      payload: {
+        component: 'nullclaw',
+        instance: 'Athena',
+        cron_job_id: `cron-${orderId}`,
+        run_ref: 'scheduled-order-run-1',
+        runRef: 'scheduled-order-run-1',
+      },
+    },
+  });
+  expect(firstFire.event.payload.run_id).toBeUndefined();
 
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Execution history' })).toBeVisible();
@@ -216,9 +200,10 @@ test('E2E-38 scheduled order fires work evidence and pause blocks future runs', 
 
   await page.goto('/work/activity?space=ops');
   await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();
-  const activityEvent = page.getByRole('article', { name: 'Customer escalation digest fired from Orders' });
+  const activityEvent = page.getByRole('article', { name: 'Order executed from Cron' });
   await expect(activityEvent).toBeVisible();
-  await expect(activityEvent).toContainText('artifact://scheduled-order-run-1');
+  await expect(activityEvent).toContainText('A schedule order cron run completed.');
+  await expect(activityEvent).toContainText('order.executed');
 
   await page.goto('/work/live?space=ops');
   await expect(page.getByRole('heading', { name: 'Live', exact: true })).toBeVisible();
@@ -234,23 +219,20 @@ test('E2E-38 scheduled order fires work evidence and pause blocks future runs', 
   await expect(page.getByLabel('Order facts').getByText('Suspended', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Resume' })).toBeVisible();
 
-  expect(
-    fireScheduleIfActive({
-      orders,
-      events,
-      tasks,
-      runId: 'scheduled-order-run-2',
+  await expect(
+    fireSchedule(page, {
+      runRef: 'scheduled-order-run-2',
       title: 'Second customer escalation digest',
       nowMs: nowMs + 10 * 60_000,
     }),
-  ).toBe(false);
+  ).resolves.toMatchObject({ fired: false, reason: 'order_not_active', order_status: 'suspended' });
 
   await page.goto('/work/live?space=ops');
   await expect(page.getByRole('article', { name: 'Customer escalation digest Loop run' })).toBeVisible();
   await expect(page.getByText('Second customer escalation digest')).toHaveCount(0);
 
   await page.goto('/work/activity?space=ops');
-  await expect(page.getByRole('article', { name: 'Customer escalation digest fired from Orders' })).toBeVisible();
+  await expect(page.getByRole('article', { name: 'Order executed from Cron' })).toBeVisible();
   await expect(page.getByText('Second customer escalation digest')).toHaveCount(0);
 
   const screenshotPath = testInfo.outputPath('order-schedule-lifecycle.png');
@@ -260,6 +242,7 @@ test('E2E-38 scheduled order fires work evidence and pause blocks future runs', 
   expect(requests).toContain('/api/orders?space=ops');
   expect(requests).toContain(`/api/orders/${orderId}/enact?space=ops`);
   expect(requests).toContain(`/api/orders/${orderId}/suspend?space=ops`);
+  expect(requests.filter((request) => request === '/api/fixtures/schedule-fire?space=ops')).toHaveLength(2);
   expect(requests).toContain(`/api/events?space=ops&subject_type=order&subject_id=${orderId}&limit=100`);
   expect(requests.some((request) => request.startsWith('/api/events?space=ops&limit='))).toBe(true);
   expect(
