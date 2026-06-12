@@ -58,6 +58,10 @@ async function fulfillText(route: Route, body: string, contentType: string) {
   });
 }
 
+function cloneFixture<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 const fixtureStatus = {
   ok: true,
   version: 'playwright-fixture',
@@ -1172,6 +1176,82 @@ async function marketExportRoute(route: Route, options: NullHubFixtureOptions, m
   }, 201);
 }
 
+async function wizardRoute(route: Route, options: NullHubFixtureOptions, status: Record<string, any>) {
+  recordRequest(route, options);
+  const url = new URL(route.request().url());
+  const match = url.pathname.match(/\/(?:api|nullhub-api)\/wizard\/([^/?]+)$/);
+  const component = decodeURIComponent(match?.[1] || '');
+
+  if (!component) {
+    await fulfillJson(route, { error: 'wizard component is required' }, 404);
+    return;
+  }
+
+  if (route.request().method() === 'GET') {
+    await fulfillJson(route, {
+      component,
+      version: 'playwright-fixture',
+      fields: ['instance_name', 'role', 'model', 'skills'],
+    });
+    return;
+  }
+
+  if (route.request().method() !== 'POST') {
+    await fulfillJson(route, { error: 'wizard method not allowed' }, 405);
+    return;
+  }
+
+  const payload = route.request().postDataJSON() as Record<string, unknown> | null;
+  const instanceName = String(payload?.instance_name || '').trim();
+  if (!instanceName) {
+    await fulfillJson(route, { error: 'instance_name is required' }, 422);
+    return;
+  }
+
+  const components = (status.components ||= {});
+  const instances = (status.instances ||= {});
+  const componentInstances = (instances[component] ||= {});
+  if (componentInstances[instanceName]) {
+    await fulfillJson(route, { error: 'instance already exists' }, 409);
+    return;
+  }
+
+  const role = String(payload?.role || 'agent').trim() || 'agent';
+  const model = String(payload?.model || 'google/gemma-4-31b-it:free').trim();
+  const createdCount = Object.keys(componentInstances).length + 1;
+  const instance = {
+    status: 'running',
+    version: String(payload?.version || 'playwright-fixture'),
+    port: 19800 + createdCount,
+    space_id: 'ops',
+    role,
+    profile: role,
+    launch_mode: 'gateway',
+    model,
+    skills: Array.isArray(payload?.skills) ? payload.skills : [],
+    current_work: 'Ready for first assignment',
+    current_runs: 0,
+    orders_as_executor: 0,
+    uptime_seconds: 0,
+    auto_start: true,
+  };
+  componentInstances[instanceName] = instance;
+  components[component] = {
+    ...(components[component] || {}),
+    status: 'running',
+    running: Object.values(componentInstances).filter((entry: any) => entry?.status === 'running').length,
+    total: Object.keys(componentInstances).length,
+  };
+
+  await fulfillJson(route, {
+    ok: true,
+    component,
+    instance_name: instanceName,
+    instance,
+    message: `Created ${instanceName}.`,
+  }, 201);
+}
+
 function matchesFixtureSpace(record: Record<string, unknown>, space: string | null): boolean {
   const recordSpace = String(record.space_id ?? record.spaceId ?? '').trim();
   if (!space) return true;
@@ -1183,11 +1263,11 @@ function matchesFixtureInstance(record: Record<string, unknown>, instanceName: s
   return !recordInstance || recordInstance === instanceName;
 }
 
-async function instancesRoute(route: Route, options: NullHubFixtureOptions) {
+async function instancesRoute(route: Route, options: NullHubFixtureOptions, status: Record<string, any>) {
   recordRequest(route, options);
   const url = new URL(route.request().url());
   const space = url.searchParams.get('space');
-  const source = (options.status || fixtureStatus) as Record<string, any>;
+  const source = status;
   const sourceInstances = (options.instances || source.instances || {}) as Record<string, Record<string, unknown>>;
   const instances: Record<string, Record<string, unknown>> = {};
 
@@ -1493,6 +1573,7 @@ async function instanceDetailRoute(route: Route, options: NullHubFixtureOptions)
 }
 
 export async function installNullHubFixtureRoutes(page: Page, options: NullHubFixtureOptions = {}) {
+  const status = cloneFixture((options.status || fixtureStatus) as Record<string, unknown>) as Record<string, any>;
   const spaces = fixtureSpaces.map((space) => ({ ...space }));
   const events = options.events || fixtureEvents.map((event) => ({ ...event, payload: { ...event.payload } }));
   const orders = options.orders || fixtureOrders.map((order) => ({ ...order }));
@@ -1512,8 +1593,10 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
     fulfillText(route, '<?xml version="1.0" encoding="utf-8"?><browserconfig></browserconfig>', 'application/xml'),
   );
 
-  await page.route('**/api/status', (route) => fulfillJson(route, options.status || fixtureStatus));
-  await page.route('**/nullhub-api/status', (route) => fulfillJson(route, options.status || fixtureStatus));
+  await page.route('**/api/status', (route) => fulfillJson(route, status));
+  await page.route('**/nullhub-api/status', (route) => fulfillJson(route, status));
+  await page.route(/\/api\/wizard\/[^/?]+(?:\?.*)?$/, (route) => wizardRoute(route, options, status));
+  await page.route(/\/nullhub-api\/wizard\/[^/?]+(?:\?.*)?$/, (route) => wizardRoute(route, options, status));
   await page.route('**/api/me/bootstrap', (route) => currentSessionRoute(route, options));
   await page.route('**/api/spaces', (route) => spacesRoute(route, options, spaces));
   await page.route('**/nullhub-api/spaces', (route) => spacesRoute(route, options, spaces));
@@ -1558,8 +1641,8 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   );
   await page.route('**/api/usage**', (route) => usageRoute(route, options));
   await page.route('**/nullhub-api/usage**', (route) => usageRoute(route, options));
-  await page.route(/\/api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options));
-  await page.route(/\/nullhub-api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options));
+  await page.route(/\/api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options, status));
+  await page.route(/\/nullhub-api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options, status));
   await page.route('**/api/instances/*/*/config**', (route) => instanceDetailRoute(route, options));
   await page.route('**/nullhub-api/instances/*/*/config**', (route) => instanceDetailRoute(route, options));
   await page.route('**/api/instances/*/*/provider-health**', (route) => instanceDetailRoute(route, options));
