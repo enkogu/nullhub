@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const std_compat = @import("compat");
 const managed_cli = @import("../api/managed_cli.zig");
 const durable_file = @import("../core/durable_file.zig");
+const order_safety = @import("../core/order_safety.zig");
 const orders_mod = @import("../core/orders.zig");
 const paths_mod = @import("../core/paths.zig");
 const state_mod = @import("../core/state.zig");
@@ -147,6 +148,8 @@ const MandateEvaluationResult = struct {
     matched_orders: usize = 0,
     executed: usize = 0,
     failed: usize = 0,
+    circuit_blocked: usize = 0,
+    safety_events: usize = 0,
     approvals_created: usize = 0,
     rearmed: usize = 0,
     completed: usize = 0,
@@ -309,6 +312,8 @@ pub const RunResult = struct {
     failed: usize = 0,
     approvals_created: usize = 0,
     skipped_idempotent: usize = 0,
+    circuit_blocked: usize = 0,
+    safety_events: usize = 0,
     mandates_rearmed: usize = 0,
     mandates_completed: usize = 0,
 };
@@ -435,6 +440,13 @@ pub fn runOnce(
 
             switch (parsed_spec.spec.tier) {
                 .t0 => {
+                    const safety_before = order_safety.evaluate(order, state.eventsList());
+                    if (safety_before.circuit_open) {
+                        try appendSafetyEvent(allocator, state, order, event, parsed_spec.spec, safety_before, "dispatcher.circuit_blocked", "Dispatcher circuit blocked", "Circuit breaker is open; automatic execution was skipped.", "error", now_ms);
+                        result.circuit_blocked += 1;
+                        mutated_state = true;
+                        continue;
+                    }
                     const outcome = try options.executors.execute(allocator, state, ctx);
                     if (outcome.succeeded) {
                         try appendDispatchRecord(allocator, state, order, event, parsed_spec.spec, null, "dispatcher.executed", now_ms);
@@ -443,6 +455,7 @@ pub fn runOnce(
                         try appendDispatchRecord(allocator, state, order, event, parsed_spec.spec, null, "dispatcher.failed", now_ms);
                         result.failed += 1;
                     }
+                    result.safety_events += try appendPostExecutionSafetyEvents(allocator, state, order, event, parsed_spec.spec, safety_before, outcome, now_ms);
                     mutated_state = true;
                 },
                 .t1, .t2 => {
@@ -462,6 +475,8 @@ pub fn runOnce(
         result.matched_orders += evaluation.matched_orders;
         result.executed += evaluation.executed;
         result.failed += evaluation.failed;
+        result.circuit_blocked += evaluation.circuit_blocked;
+        result.safety_events += evaluation.safety_events;
         result.approvals_created += evaluation.approvals_created;
         result.mandates_rearmed += evaluation.rearmed;
         result.mandates_completed += evaluation.completed;
@@ -629,6 +644,13 @@ fn evaluateMandateOrder(
 
     switch (spec.tier) {
         .t0 => {
+            const safety_before = order_safety.evaluate(order, state.eventsList());
+            if (safety_before.circuit_open) {
+                try appendSafetyEvent(allocator, state, order, synthetic_event, action_spec, safety_before, "dispatcher.circuit_blocked", "Dispatcher circuit blocked", "Circuit breaker is open; automatic execution was skipped.", "error", now_ms);
+                result.circuit_blocked += 1;
+                result.mutated_state = true;
+                return result;
+            }
             const outcome = try options.executors.execute(allocator, state, ctx);
             if (outcome.succeeded) {
                 try appendDispatchRecord(allocator, state, order, synthetic_event, action_spec, null, "dispatcher.executed", now_ms);
@@ -637,6 +659,7 @@ fn evaluateMandateOrder(
                 try appendDispatchRecord(allocator, state, order, synthetic_event, action_spec, null, "dispatcher.failed", now_ms);
                 result.failed += 1;
             }
+            result.safety_events += try appendPostExecutionSafetyEvents(allocator, state, order, synthetic_event, action_spec, safety_before, outcome, now_ms);
         },
         .t1, .t2 => {
             const approval = try ensureApproval(allocator, state, order, synthetic_event, action_spec, now_ms);
@@ -1162,6 +1185,141 @@ fn appendDispatchRecord(
     });
 }
 
+fn appendPostExecutionSafetyEvents(
+    allocator: std.mem.Allocator,
+    state: *state_mod.State,
+    order: orders_mod.Order,
+    event: state_mod.Event,
+    spec: TriggerSpec,
+    safety_before: order_safety.Summary,
+    outcome: ExecutionOutcome,
+    now_ms: i64,
+) !usize {
+    const safety_after = order_safety.evaluate(order, state.eventsList());
+    if (outcome.succeeded) {
+        if (!safety_before.probation) return 0;
+        if (safety_after.probation) {
+            try appendSafetyEvent(
+                allocator,
+                state,
+                order,
+                event,
+                spec,
+                safety_after,
+                "dispatcher.probation_progress",
+                "Dispatcher probation progress",
+                "Probationary automatic execution succeeded; more safe executions are required before this Order is clear.",
+                "info",
+                now_ms,
+            );
+            return 1;
+        }
+        try appendSafetyEvent(
+            allocator,
+            state,
+            order,
+            event,
+            spec,
+            safety_after,
+            "dispatcher.probation_cleared",
+            "Dispatcher probation cleared",
+            "Enough safe automatic executions completed; this Order is clear for automatic dispatch.",
+            "success",
+            now_ms,
+        );
+        return 1;
+    }
+
+    if (safety_after.consecutive_failures >= order_safety.failure_threshold) {
+        try appendSafetyEvent(
+            allocator,
+            state,
+            order,
+            event,
+            spec,
+            safety_after,
+            "dispatcher.circuit_opened",
+            "Dispatcher circuit opened",
+            "Repeated automatic execution failures opened the circuit breaker; future automatic runs will be skipped until the Order changes.",
+            "error",
+            now_ms,
+        );
+        return 1;
+    }
+
+    if (safety_before.probation) {
+        try appendSafetyEvent(
+            allocator,
+            state,
+            order,
+            event,
+            spec,
+            safety_after,
+            "dispatcher.probation_failed",
+            "Dispatcher probation failed",
+            "A probationary automatic execution failed; repeated failures will open the circuit breaker.",
+            "warning",
+            now_ms,
+        );
+        return 1;
+    }
+
+    return 0;
+}
+
+fn appendSafetyEvent(
+    allocator: std.mem.Allocator,
+    state: *state_mod.State,
+    order: orders_mod.Order,
+    event: state_mod.Event,
+    spec: TriggerSpec,
+    safety: order_safety.Summary,
+    event_type: []const u8,
+    title_prefix: []const u8,
+    summary: []const u8,
+    severity: []const u8,
+    now_ms: i64,
+) !void {
+    const opens_circuit = std.mem.eql(u8, event_type, "dispatcher.circuit_opened");
+    const effective_status = if (opens_circuit) "circuit_open" else safety.status;
+    const effective_circuit_open = safety.circuit_open or opens_circuit;
+    const payload = try std.json.Stringify.valueAlloc(allocator, .{
+        .order_id = order.id,
+        .trigger_event_id = event.id,
+        .tier = spec.tier.string(),
+        .action = spec.action.string(),
+        .target = spec.target orelse "",
+        .safety_status = effective_status,
+        .probation = safety.probation,
+        .circuit_open = effective_circuit_open,
+        .safe_executions = safety.safe_executions,
+        .required_safe_executions = safety.required_safe_executions,
+        .consecutive_failures = safety.consecutive_failures,
+        .failure_threshold = safety.failure_threshold,
+        .reset_event_id = safety.reset_event_id,
+        .last_success_event_id = safety.last_success_event_id,
+        .last_failure_event_id = safety.last_failure_event_id,
+        .circuit_opened_event_id = safety.circuit_opened_event_id,
+    }, .{});
+    defer allocator.free(payload);
+
+    const title = try std.fmt.allocPrint(allocator, "{s}: {s}", .{ title_prefix, order.title });
+    defer allocator.free(title);
+
+    _ = try state.addEvent(.{
+        .space_id = event.space_id,
+        .event_type = event_type,
+        .source = source,
+        .subject_type = "order",
+        .subject_id = order.id,
+        .title = title,
+        .summary = summary,
+        .severity = severity,
+        .payload_json = payload,
+        .created_at_ms = now_ms,
+    });
+}
+
 fn dispatchKey(allocator: std.mem.Allocator, order_id: []const u8, event_id: u64) ![]u8 {
     return std.fmt.allocPrint(allocator, "dispatcher:order:{s}:event:{d}", .{ order_id, event_id });
 }
@@ -1309,6 +1467,7 @@ const Recorder = struct {
     start_loop_count: usize = 0,
     start_workflow_count: usize = 0,
     run_agent_count: usize = 0,
+    succeeds: bool = true,
 
     fn executors(self: *Recorder) Executors {
         return .{
@@ -1325,23 +1484,27 @@ const Recorder = struct {
     }
 
     fn recordCreateTicket(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !ExecutionOutcome {
-        from(ptr).create_ticket_count += 1;
-        return .{ .succeeded = true };
+        const self = from(ptr);
+        self.create_ticket_count += 1;
+        return .{ .succeeded = self.succeeds };
     }
 
     fn recordStartLoop(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !ExecutionOutcome {
-        from(ptr).start_loop_count += 1;
-        return .{ .succeeded = true };
+        const self = from(ptr);
+        self.start_loop_count += 1;
+        return .{ .succeeded = self.succeeds };
     }
 
     fn recordStartWorkflow(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !ExecutionOutcome {
-        from(ptr).start_workflow_count += 1;
-        return .{ .succeeded = true };
+        const self = from(ptr);
+        self.start_workflow_count += 1;
+        return .{ .succeeded = self.succeeds };
     }
 
     fn recordRunAgent(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !ExecutionOutcome {
-        from(ptr).run_agent_count += 1;
-        return .{ .succeeded = true };
+        const self = from(ptr);
+        self.run_agent_count += 1;
+        return .{ .succeeded = self.succeeds };
     }
 };
 
@@ -1382,6 +1545,140 @@ test "dispatcher matches active trigger orders in event space" {
     try std.testing.expectEqual(@as(usize, 1), result.matched_orders);
     try std.testing.expectEqual(@as(usize, 1), result.executed);
     try std.testing.expectEqual(@as(usize, 1), recorder.create_ticket_count);
+}
+
+test "dispatcher keeps new automatic trigger orders in probation until enough safe executions pass" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    try fixture.paths.ensureDirs();
+
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    try createTriggerOrder(allocator, fixture.paths, "ops", "probation-order", "build.finished", "T0", "create_ticket");
+
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "build.finished",
+        .source = "test",
+        .title = "Build finished",
+        .created_at_ms = 200,
+    });
+
+    var recorder = Recorder{};
+    const first = try runOnce(allocator, fixture.paths, &state, 300, .{ .executors = recorder.executors() });
+    try std.testing.expectEqual(@as(usize, 1), first.executed);
+    try std.testing.expectEqual(@as(usize, 1), first.safety_events);
+    try std.testing.expectEqual(@as(usize, 1), recorder.create_ticket_count);
+
+    var order = try orders_mod.get(allocator, fixture.paths, "ops", "probation-order");
+    defer order.deinit(allocator);
+    const first_safety = order_safety.evaluate(order, state.eventsList());
+    try std.testing.expectEqualStrings("probation", first_safety.status);
+    try std.testing.expectEqual(@as(usize, 1), first_safety.safe_executions);
+
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "build.finished",
+        .source = "test",
+        .title = "Build finished again",
+        .created_at_ms = 400,
+    });
+
+    const second = try runOnce(allocator, fixture.paths, &state, 500, .{ .executors = recorder.executors() });
+    try std.testing.expectEqual(@as(usize, 1), second.executed);
+    try std.testing.expectEqual(@as(usize, 1), second.safety_events);
+    try std.testing.expectEqual(@as(usize, 2), recorder.create_ticket_count);
+
+    const second_safety = order_safety.evaluate(order, state.eventsList());
+    try std.testing.expectEqualStrings("clear", second_safety.status);
+    try std.testing.expectEqual(@as(usize, 2), second_safety.safe_executions);
+
+    var saw_progress = false;
+    var saw_cleared = false;
+    for (state.eventsList()) |event| {
+        if (std.mem.eql(u8, event.event_type, "dispatcher.probation_progress")) saw_progress = true;
+        if (std.mem.eql(u8, event.event_type, "dispatcher.probation_cleared")) {
+            saw_cleared = true;
+            try std.testing.expectEqualStrings("success", event.severity);
+            try std.testing.expect(std.mem.indexOf(u8, event.payload_json, "\"safety_status\":\"clear\"") != null);
+        }
+    }
+    try std.testing.expect(saw_progress);
+    try std.testing.expect(saw_cleared);
+}
+
+test "dispatcher opens circuit after repeated automatic failures and blocks later trigger events" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    try fixture.paths.ensureDirs();
+
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    try createTriggerOrder(allocator, fixture.paths, "ops", "breaker-order", "review.ready", "T0", "create_ticket");
+
+    var recorder = Recorder{ .succeeds = false };
+    var idx: usize = 0;
+    while (idx < order_safety.failure_threshold) : (idx += 1) {
+        _ = try state.addEvent(.{
+            .space_id = "ops",
+            .event_type = "review.ready",
+            .source = "test",
+            .title = "Review ready",
+            .created_at_ms = 200 + @as(i64, @intCast(idx)),
+        });
+        const result = try runOnce(allocator, fixture.paths, &state, 300 + @as(i64, @intCast(idx)), .{ .executors = recorder.executors() });
+        try std.testing.expectEqual(@as(usize, 1), result.matched_orders);
+        try std.testing.expectEqual(@as(usize, 0), result.executed);
+        try std.testing.expectEqual(@as(usize, 1), result.failed);
+        try std.testing.expectEqual(@as(usize, 1), result.safety_events);
+    }
+    try std.testing.expectEqual(order_safety.failure_threshold, recorder.create_ticket_count);
+
+    var order = try orders_mod.get(allocator, fixture.paths, "ops", "breaker-order");
+    defer order.deinit(allocator);
+    const open_safety = order_safety.evaluate(order, state.eventsList());
+    try std.testing.expectEqualStrings("circuit_open", open_safety.status);
+    try std.testing.expect(open_safety.circuit_open);
+    try std.testing.expectEqual(order_safety.failure_threshold, open_safety.consecutive_failures);
+
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "review.ready",
+        .source = "test",
+        .title = "Review ready after circuit",
+        .created_at_ms = 600,
+    });
+    const blocked = try runOnce(allocator, fixture.paths, &state, 700, .{ .executors = recorder.executors() });
+    try std.testing.expectEqual(@as(usize, 1), blocked.matched_orders);
+    try std.testing.expectEqual(@as(usize, 1), blocked.circuit_blocked);
+    try std.testing.expectEqual(@as(usize, 0), blocked.executed);
+    try std.testing.expectEqual(@as(usize, 0), blocked.failed);
+    try std.testing.expectEqual(order_safety.failure_threshold, recorder.create_ticket_count);
+
+    var saw_opened = false;
+    var saw_blocked = false;
+    for (state.eventsList()) |event| {
+        if (std.mem.eql(u8, event.event_type, "dispatcher.circuit_opened")) {
+            saw_opened = true;
+            try std.testing.expectEqualStrings("error", event.severity);
+            try std.testing.expect(std.mem.indexOf(u8, event.payload_json, "\"consecutive_failures\":3") != null);
+        }
+        if (std.mem.eql(u8, event.event_type, "dispatcher.circuit_blocked")) {
+            saw_blocked = true;
+            try std.testing.expectEqualStrings("error", event.severity);
+            try std.testing.expect(std.mem.indexOf(u8, event.payload_json, "\"circuit_open\":true") != null);
+        }
+    }
+    try std.testing.expect(saw_opened);
+    try std.testing.expect(saw_blocked);
 }
 
 test "dispatcher mandate completes when condition already holds" {

@@ -35,6 +35,7 @@ pub const nullboiler_api = @import("api/nullboiler.zig");
 pub const nulltickets_api = @import("api/nulltickets.zig");
 pub const nullwatch_api = @import("api/nullwatch.zig");
 pub const orders = @import("core/orders.zig");
+pub const order_safety = @import("core/order_safety.zig");
 pub const orders_api = @import("api/orders.zig");
 pub const policy_orders = @import("core/policy_orders.zig");
 pub const orchestrator = @import("installer/orchestrator.zig");
@@ -105,6 +106,7 @@ test {
     _ = nulltickets_api;
     _ = nullwatch_api;
     _ = orders;
+    _ = order_safety;
     _ = orders_api;
     _ = policy_orders;
     _ = orchestrator;

@@ -87,6 +87,12 @@ pub fn handleCreate(allocator: std.mem.Allocator, state: *state_mod.State, targe
 
     const title = stringField(root, "title") orelse event_type;
     const source = stringField(root, "source") orelse "api";
+    if (isReservedPublicSource(source)) {
+        return helpers.badRequest("{\"error\":\"reserved event source\"}");
+    }
+    if (isReservedPublicEventType(event_type)) {
+        return helpers.badRequest("{\"error\":\"reserved event type\"}");
+    }
     const subject_type = stringField(root, "subject_type") orelse "";
     const subject_id = stringField(root, "subject_id") orelse "";
     const summary = stringField(root, "summary") orelse "";
@@ -146,6 +152,18 @@ fn nonEmpty(value: ?[]const u8) ?[]const u8 {
     const raw = value orelse return null;
     if (raw.len == 0) return null;
     return raw;
+}
+
+fn isReservedPublicSource(source: []const u8) bool {
+    return std.mem.eql(u8, source, "nullhub") or
+        std.mem.eql(u8, source, "nullhub.dispatcher") or
+        std.mem.eql(u8, source, "cron");
+}
+
+fn isReservedPublicEventType(event_type: []const u8) bool {
+    return std.mem.startsWith(u8, event_type, "dispatcher.") or
+        std.mem.startsWith(u8, event_type, "order.") or
+        std.mem.startsWith(u8, event_type, "hub.lifecycle.");
 }
 
 fn stringField(root: std.json.ObjectMap, key: []const u8) ?[]const u8 {
@@ -358,4 +376,45 @@ test "events require query space and reject mismatched body space" {
         1000,
     );
     try std.testing.expectEqualStrings("400 Bad Request", mismatch.status);
+}
+
+test "public events reject internal safety sources and event types" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const path = try fixture.paths.state(allocator);
+    defer allocator.free(path);
+    var state = state_mod.State.init(allocator, path);
+    defer state.deinit();
+
+    const dispatcher_source = handleCreate(
+        allocator,
+        &state,
+        "/api/events?space=ops",
+        "{\"type\":\"work.finished\",\"source\":\"nullhub.dispatcher\",\"title\":\"Spoofed dispatcher source\"}",
+        1000,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", dispatcher_source.status);
+    try std.testing.expectEqualStrings("{\"error\":\"reserved event source\"}", dispatcher_source.body);
+
+    const dispatcher_type = handleCreate(
+        allocator,
+        &state,
+        "/api/events?space=ops",
+        "{\"type\":\"dispatcher.executed\",\"source\":\"api\",\"title\":\"Spoofed dispatcher event\"}",
+        1001,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", dispatcher_type.status);
+    try std.testing.expectEqualStrings("{\"error\":\"reserved event type\"}", dispatcher_type.body);
+
+    const order_type = handleCreate(
+        allocator,
+        &state,
+        "/api/events?space=ops",
+        "{\"type\":\"order.activated\",\"source\":\"api\",\"title\":\"Spoofed order event\"}",
+        1002,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", order_type.status);
+    try std.testing.expectEqualStrings("{\"error\":\"reserved event type\"}", order_type.body);
+    try std.testing.expectEqual(@as(usize, 0), state.eventsList().len);
 }
