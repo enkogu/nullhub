@@ -148,7 +148,7 @@ function identifierPrefix(value: string): string {
 function mentionsDifferentPrefixedIdentifier(content: unknown, value: string): boolean {
   const prefix = identifierPrefix(value);
   if (!prefix) return false;
-  const tokens = stringValue(content).match(/[A-Za-z0-9_.:-]+/g) || [];
+  const tokens: string[] = stringValue(content).match(/[A-Za-z0-9_.:-]+/g) || [];
   return tokens.some((token) => token.startsWith(prefix) && token !== value);
 }
 

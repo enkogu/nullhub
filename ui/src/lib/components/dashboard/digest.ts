@@ -162,6 +162,7 @@ export function aggregateUsageSpend(usage: DigestUsagePayload | null | undefined
     const scopedBuckets = sinceMs > 0 ? buckets.filter((bucket) => bucketStartMs(bucket) >= sinceMs) : buckets;
     const scopedCost = aggregateCost(scopedBuckets);
     if (scopedCost !== null) return scopedCost;
+    if (sinceMs > 0) return 0;
   }
   return costValue(usage?.totals) ?? aggregateCost(usage?.by_instance) ?? aggregateCost(usage?.by_model);
 }

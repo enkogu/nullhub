@@ -57,6 +57,7 @@
   let stopNeedsYouPolling: (() => void) | null = null;
   let stopRunningNowPolling: (() => void) | null = null;
   let stopDigestPolling: (() => void) | null = null;
+  let currentDigestSpaceId = $state<string | null | undefined>("__initial__");
 
   function digestStorageKey() {
     return `nullhub.home_digest.last_seen.${spacesStore.selectedSpaceId || "all"}`;
@@ -104,6 +105,7 @@
 
   async function refreshDigest() {
     try {
+      // Client v1: spend is global while events are space-scoped and capped at limit:100, so long absences can undercount events.
       const [eventsPage, usage] = await Promise.all([
         eventsApi.listEvents({ limit: 100, spaceId: spacesStore.selectedSpaceId }),
         api.getGlobalUsage("7d"),
@@ -119,10 +121,16 @@
     }
   }
 
+  $effect(() => {
+    const selectedSpaceId = spacesStore.selectedSpaceId;
+    if (currentDigestSpaceId === selectedSpaceId) return;
+    currentDigestSpaceId = selectedSpaceId;
+    digestLastSeenMs = readDigestLastSeen();
+  });
+
   onMount(() => {
     refreshTimer = setTimeout(() => void refresh(), 350);
     stopPolling = pollWhileVisible(refresh, 5000);
-    digestLastSeenMs = readDigestLastSeen();
     needsYouState = "loading";
     runningNowState = "loading";
     digestState = "loading";

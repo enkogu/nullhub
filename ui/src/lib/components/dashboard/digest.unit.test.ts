@@ -78,4 +78,18 @@ describe('Home digest aggregation', () => {
     );
     expect(aggregateUsageSpend({ by_instance: [{ total_cost_usd: 0.4 }, { cost_usd: 0.6 }] }, lastSeenMs)).toBe(1);
   });
+
+  test('returns zero for an empty scoped timeseries spend window', () => {
+    expect(
+      aggregateUsageSpend(
+        {
+          totals: { total_cost_usd: 5 },
+          by_instance: [{ total_cost_usd: 3 }],
+          by_model: [{ total_cost_usd: 2 }],
+          timeseries: [{ bucket_start: Math.floor((lastSeenMs - 60_000) / 1000), total_cost_usd: 0.75 }],
+        },
+        lastSeenMs,
+      ),
+    ).toBe(0);
+  });
 });
