@@ -92,6 +92,7 @@
     align="start"
   >
     {#snippet actions()}
+      <Button href={hrefWithSearch('/orders/new')} size="sm">New Order</Button>
       <Button href={hrefWithSearch('/orders/loops')} variant="outline" size="sm">Open Loops</Button>
       <Button href={hrefWithSearch('/orders/workflows')} variant="outline" size="sm">Open Workflows</Button>
     {/snippet}
