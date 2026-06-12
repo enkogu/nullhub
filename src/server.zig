@@ -2678,6 +2678,43 @@ fn writeUiModuleEntrypoint(allocator: std.mem.Allocator, module_dir: []const u8)
     try file.writeAll("export {};\n");
 }
 
+fn writeTestUsageLedger(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    component: []const u8,
+    name: []const u8,
+    provider: []const u8,
+    model: []const u8,
+    prompt_tokens: u64,
+    completion_tokens: u64,
+    total_tokens: u64,
+) !void {
+    const inst_dir = try paths.instanceDir(allocator, component, name);
+    defer allocator.free(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
+
+    const ledger_path = try std.fs.path.join(allocator, &.{ inst_dir, instances_api.TOKEN_USAGE_LEDGER_FILENAME });
+    defer allocator.free(ledger_path);
+    var ledger = try std_compat.fs.createFileAbsolute(ledger_path, .{ .truncate = true });
+    defer ledger.close();
+
+    var writer_buf: [512]u8 = undefined;
+    var fw = ledger.writer(&writer_buf);
+    const w = &fw.interface;
+    try w.print(
+        "{{\"ts\":{d},\"provider\":\"{s}\",\"model\":\"{s}\",\"prompt_tokens\":{d},\"completion_tokens\":{d},\"total_tokens\":{d},\"success\":true}}\n",
+        .{
+            std_compat.time.timestamp(),
+            provider,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+        },
+    );
+    try w.flush();
+}
+
 // --- Tests ---
 
 test "route GET /health returns 200 OK" {
@@ -3195,6 +3232,45 @@ test "route POST /api/components/refresh returns 200" {
     try std.testing.expectEqualStrings("200 OK", resp.status);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"ok\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"component_count\":4") != null);
+}
+
+test "route GET /api/usage filters totals by query space" {
+    const allocator = std.testing.allocator;
+    var ctx = TestContext.init(allocator);
+    defer ctx.deinit(allocator);
+    try ctx.paths.ensureDirs();
+
+    try ctx.state.addInstance("nullclaw", "ops-agent", .{ .version = "1.0.0", .space_id = "ops" });
+    try ctx.state.addInstance("nullclaw", "lab-agent", .{ .version = "1.0.0", .space_id = "lab" });
+
+    try writeTestUsageLedger(allocator, ctx.paths, "nullclaw", "ops-agent", "openrouter", "ops/model", 100, 50, 150);
+    try writeTestUsageLedger(allocator, ctx.paths, "nullclaw", "lab-agent", "openrouter", "lab/model", 7, 3, 10);
+
+    {
+        const resp = ctx.route(allocator, "GET", "/api/usage?window=all", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"total_tokens\":160") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"name\":\"ops-agent\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"name\":\"lab-agent\"") != null);
+    }
+
+    {
+        const resp = ctx.route(allocator, "GET", "/api/usage?window=all&space=ops", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"total_tokens\":150") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"name\":\"ops-agent\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"name\":\"lab-agent\"") == null);
+    }
+
+    {
+        const resp = ctx.route(allocator, "GET", "/api/usage?window=all&space=unknown", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"total_tokens\":0") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"by_instance\":[]") != null);
+    }
 }
 
 test "route POST and GET /api/events are space scoped and cursor paged" {

@@ -4,6 +4,7 @@ const state_mod = @import("../core/state.zig");
 const paths_mod = @import("../core/paths.zig");
 const helpers = @import("helpers.zig");
 const instances_api = @import("instances.zig");
+const spaces_api = @import("spaces.zig");
 
 const ApiResponse = helpers.ApiResponse;
 const appendEscaped = helpers.appendEscaped;
@@ -34,13 +35,15 @@ const TimeseriesBucket = struct {
     requests: u64 = 0,
 };
 
-/// GET /api/usage?window=24h|7d|30d|all
-/// Aggregates token usage across all instances.
+/// GET /api/usage?window=24h|7d|30d|all[&space=<id>]
+/// Aggregates token usage across all instances, optionally scoped to a Space.
 pub fn handleGlobalUsage(allocator: std.mem.Allocator, s: *state_mod.State, paths: paths_mod.Paths, target: []const u8) ApiResponse {
     const now_ts = std_compat.time.timestamp();
     const window = instances_api.parseUsageWindow(target);
     const min_ts = instances_api.usageWindowMinTs(window, now_ts);
     const use_hourly = instances_api.isShortUsageWindow(window);
+    const space_id = spaces_api.spaceQueryAlloc(allocator, target) catch return helpers.serverError();
+    defer if (space_id) |value| allocator.free(value);
 
     // ── Accumulators ────────────────────────────────────────────────────
     var model_map: std.StringHashMapUnmanaged(ModelAgg) = .{};
@@ -80,6 +83,8 @@ pub fn handleGlobalUsage(allocator: std.mem.Allocator, s: *state_mod.State, path
         var name_it = comp_entry.value_ptr.iterator();
         while (name_it.next()) |name_entry| {
             const name = name_entry.key_ptr.*;
+            const instance = name_entry.value_ptr.*;
+            if (!s.spaceMatches(instance.space_id, space_id)) continue;
 
             const inst_dir = paths.instanceDir(allocator, component, name) catch return helpers.serverError();
             defer allocator.free(inst_dir);
@@ -286,6 +291,7 @@ fn serializeResponse(
     ts_map: *std.AutoHashMapUnmanaged(i64, TimeseriesBucket),
 ) ApiResponse {
     var buf = std.array_list.Managed(u8).init(allocator);
+    errdefer buf.deinit();
 
     buf.appendSlice("{\"window\":\"") catch return helpers.serverError();
     appendEscaped(&buf, window) catch return helpers.serverError();
@@ -358,5 +364,6 @@ fn serializeResponse(
     buf.appendSlice("]") catch return helpers.serverError();
 
     buf.appendSlice("}") catch return helpers.serverError();
-    return helpers.jsonOk(buf.items);
+    const body = buf.toOwnedSlice() catch return helpers.serverError();
+    return helpers.jsonOk(body);
 }
