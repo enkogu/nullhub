@@ -61,3 +61,16 @@ test("keeps the left panel limited to product IA entries", async () => {
 
 	expect(screen.container.textContent).not.toContain("Command palette");
 });
+
+test("renders the producer Space switcher in the actual sidebar shell", async () => {
+	const screen = await render(AppSidebarFixture);
+
+	await screen.getByRole("button", { name: /Operations 2 pending/ }).click();
+
+	await expect.element(screen.getByRole("menuitem", { name: /All spaces/ })).toBeVisible();
+	await expect.element(screen.getByRole("menuitem", { name: /Operations active 2 pending 3 live \$12\.35 spend/ })).toBeVisible();
+	await expect.element(screen.getByRole("menuitem", { name: /Lab paused 1 pending 1 live \$1\.25 spend/ })).toBeVisible();
+
+	await screen.getByRole("menuitem", { name: /Lab paused 1 pending 1 live \$1\.25 spend/ }).click();
+	await expect.element(screen.getByRole("button", { name: /Lab 1 pending/ })).toBeVisible();
+});

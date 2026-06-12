@@ -2,14 +2,14 @@
 	import ActivityIcon from "@lucide/svelte/icons/activity";
 	import BotIcon from "@lucide/svelte/icons/bot";
 	import ChevronRightIcon from "@lucide/svelte/icons/chevron-right";
-	import ChevronsUpDownIcon from "@lucide/svelte/icons/chevrons-up-down";
 	import InboxIcon from "@lucide/svelte/icons/inbox";
 	import LayoutDashboardIcon from "@lucide/svelte/icons/layout-dashboard";
 	import ListChecksIcon from "@lucide/svelte/icons/list-checks";
 	import LogOutIcon from "@lucide/svelte/icons/log-out";
 	import PackagePlusIcon from "@lucide/svelte/icons/package-plus";
-	import PlusIcon from "@lucide/svelte/icons/plus";
 	import Settings2Icon from "@lucide/svelte/icons/settings-2";
+	import type { SpaceOverviewRowModel } from "$lib/components/SpaceOverviewRow.svelte";
+	import type { SpaceSwitcherState } from "$lib/components/team-switcher.svelte";
 
 	export type AppSidebarNavKey =
 		| "home"
@@ -128,12 +128,13 @@
 	import { page } from "$app/stores";
 	import { onMount } from "svelte";
 	import * as Collapsible from "$lib/components/ui/collapsible/index.js";
-	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 	import * as Sidebar from "$lib/components/ui/sidebar/index.js";
 	import { useSidebar } from "$lib/components/ui/sidebar/index.js";
 	import { api } from "$lib/api/client";
+	import { ALL_SPACES_STORAGE_VALUE } from "$lib/api/spaces";
 	import { pollWhileVisible } from "$lib/poll";
 	import { readLocalSessionUser } from "$lib/sessionState";
+	import SpaceSwitcher from "$lib/components/team-switcher.svelte";
 	import type { ComponentProps, Snippet } from "svelte";
 
 	type UserInfo = {
@@ -151,6 +152,9 @@
 		pollHubStatus = true,
 		spaces = fallbackSpaces,
 		activeSpaceId,
+		spaceRows,
+		spaceSwitcherState,
+		spaceSwitcherError = null,
 		onSpaceChange = () => {},
 		onCreateSpace = () => {},
 		...restProps
@@ -161,8 +165,11 @@
 		pollHubStatus?: boolean;
 		spaces?: SpaceOption[];
 		activeSpaceId?: string;
+		spaceRows?: SpaceOverviewRowModel[];
+		spaceSwitcherState?: SpaceSwitcherState;
+		spaceSwitcherError?: unknown;
 		onSpaceChange?: (spaceId: string) => void;
-		onCreateSpace?: () => void;
+		onCreateSpace?: () => void | Promise<void>;
 	} = $props();
 
 	let hubOk = $state(true);
@@ -178,7 +185,7 @@
 	});
 
 	let currentPath = $derived(activePath ?? $page.url.pathname);
-	let activeSpace = $derived(spaces.find((space) => space.id === selectedSpaceId) ?? spaces[0]);
+	let selectedSwitcherSpaceId = $derived(selectedSpaceId === ALL_SPACES_STORAGE_VALUE ? null : selectedSpaceId || null);
 	const sidebar = useSidebar();
 
 	$effect(() => {
@@ -230,6 +237,11 @@
 	function selectSpace(spaceId: string) {
 		selectedSpaceId = spaceId;
 		onSpaceChange(spaceId);
+	}
+
+	function selectAllSpaces() {
+		selectedSpaceId = ALL_SPACES_STORAGE_VALUE;
+		onSpaceChange(ALL_SPACES_STORAGE_VALUE);
 	}
 
 	function resetShortcutPrefix() {
@@ -292,56 +304,17 @@
 	<Sidebar.Header class="px-3 pb-2 pt-3">
 		<Sidebar.Menu>
 			<Sidebar.MenuItem>
-				<DropdownMenu.Root>
-					<DropdownMenu.Trigger>
-						{#snippet child({ props })}
-							<Sidebar.MenuButton
-								{...props}
-								size="lg"
-								tooltipContent={activeSpace?.name ?? "Space"}
-								class="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-							>
-								<div
-									class="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg"
-									aria-hidden="true"
-								>
-									{activeSpace?.initial ?? activeSpace?.name?.slice(0, 1) ?? "S"}
-								</div>
-								<div class="grid flex-1 text-start text-sm leading-tight">
-									<span class="truncate font-medium">{activeSpace?.name ?? "Space"}</span>
-									<span class="truncate text-xs">{activeSpace?.detail ?? "Workspace"}</span>
-								</div>
-								<ChevronsUpDownIcon class="ms-auto size-4" />
-							</Sidebar.MenuButton>
-						{/snippet}
-					</DropdownMenu.Trigger>
-					<DropdownMenu.Content
-						class="w-(--bits-dropdown-menu-anchor-width) min-w-56 rounded-lg"
-						align="start"
-						side={sidebar.isMobile ? "bottom" : "right"}
-						sideOffset={4}
-					>
-						<DropdownMenu.Label class="text-muted-foreground text-xs">Spaces</DropdownMenu.Label>
-						{#each spaces as space (space.id)}
-							<DropdownMenu.Item onSelect={() => selectSpace(space.id)} class="gap-2 p-2">
-								<div class="flex size-6 items-center justify-center rounded-md border">
-									<span class="text-xs font-medium">{space.initial ?? space.name.slice(0, 1)}</span>
-								</div>
-								<div class="grid flex-1 text-start text-sm leading-tight">
-									<span class="truncate font-medium">{space.name}</span>
-									<span class="truncate text-xs text-muted-foreground">{space.detail}</span>
-								</div>
-							</DropdownMenu.Item>
-						{/each}
-						<DropdownMenu.Separator />
-						<DropdownMenu.Item onSelect={onCreateSpace} class="gap-2 p-2">
-							<div class="flex size-6 items-center justify-center rounded-md border bg-transparent">
-								<PlusIcon class="size-4" />
-							</div>
-							<span class="text-muted-foreground font-medium">New space</span>
-						</DropdownMenu.Item>
-					</DropdownMenu.Content>
-				</DropdownMenu.Root>
+				<SpaceSwitcher
+					rows={spaceRows}
+					state={spaceSwitcherState}
+					error={spaceSwitcherError}
+					selectedSpaceId={selectedSwitcherSpaceId}
+					onSelectSpace={selectSpace}
+					onSelectAll={selectAllSpaces}
+					onCreateSpace={onCreateSpace}
+					contentSide={sidebar.isMobile ? "bottom" : "right"}
+					contentSideOffset={4}
+				/>
 			</Sidebar.MenuItem>
 		</Sidebar.Menu>
 	</Sidebar.Header>

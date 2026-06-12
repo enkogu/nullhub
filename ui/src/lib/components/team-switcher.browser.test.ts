@@ -44,11 +44,12 @@ test('drills down by selecting a Space row and supports returning to All spaces'
     props: { rows, state: 'ready', selectedSpaceId: null, defaultOpen: true, onSelectSpace, onSelectAll },
   });
 
-  await screen.getByRole('button', { name: 'Select Operations' }).click();
+  await screen.getByRole('menuitem', { name: /Operations active 2 pending 3 live \$12\.35 spend/ }).click();
   expect(onSelectSpace).toHaveBeenCalledWith('ops');
   await expect.element(screen.getByText('Operations').first()).toBeVisible();
 
-  await screen.getByRole('button', { name: 'All spaces' }).click();
+  await screen.getByRole('button', { name: /Operations 2 pending/ }).click();
+  await screen.getByRole('menuitem', { name: /All spaces/ }).click();
   expect(onSelectAll).toHaveBeenCalledTimes(1);
 });
 

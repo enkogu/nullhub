@@ -15,6 +15,9 @@
 	import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
 	import { cn } from "$lib/utils.js";
 
+	type DropdownSide = "top" | "right" | "bottom" | "left";
+	type DropdownAlign = "start" | "center" | "end";
+
 	let {
 		api = spacesApi,
 		rows,
@@ -26,6 +29,9 @@
 		onSelectSpace,
 		onSelectAll,
 		onCreateSpace,
+		contentSide = "bottom",
+		contentAlign = "start",
+		contentSideOffset = 6,
 		class: className,
 	}: {
 		api?: SpacesApi;
@@ -37,7 +43,10 @@
 		usageWindow?: "24h" | "7d" | "30d" | "all";
 		onSelectSpace?: (spaceId: string) => void;
 		onSelectAll?: () => void;
-		onCreateSpace?: () => void;
+		onCreateSpace?: () => void | Promise<void>;
+		contentSide?: DropdownSide;
+		contentAlign?: DropdownAlign;
+		contentSideOffset?: number;
 		class?: string;
 	} = $props();
 
@@ -86,11 +95,19 @@
 	function selectAll() {
 		localSelectedSpaceId = null;
 		onSelectAll?.();
+		open = false;
 	}
 
 	function selectSpace(spaceId: string) {
 		localSelectedSpaceId = spaceId;
 		onSelectSpace?.(spaceId);
+		open = false;
+	}
+
+	async function createSpace() {
+		await onCreateSpace?.();
+		open = false;
+		if (!rows) await loadOverviews();
 	}
 
 	onMount(() => {
@@ -106,7 +123,7 @@
 					{...props}
 					variant="ghost"
 					class="h-auto w-full justify-start gap-2 rounded-lg border bg-sidebar px-2 py-2 text-start data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-					aria-label="Switch Space"
+					aria-label={`${triggerTitle} ${triggerDetail}`}
 				>
 					<span class="bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 items-center justify-center rounded-lg">
 						{#if localSelectedSpaceId}
@@ -123,19 +140,23 @@
 				</Button>
 			{/snippet}
 		</DropdownMenu.Trigger>
-		<DropdownMenu.Content class="w-96 max-w-[calc(100vw-2rem)] rounded-lg p-2" align="start" sideOffset={6}>
+		<DropdownMenu.Content
+			class="w-96 max-w-[calc(100vw-2rem)] rounded-lg p-2"
+			align={contentAlign}
+			side={contentSide}
+			sideOffset={contentSideOffset}
+		>
 			<div class="space-y-2">
 				<div class="flex items-center justify-between gap-2 px-1">
 					<DropdownMenu.Label class="px-0 text-xs text-muted-foreground">Spaces</DropdownMenu.Label>
-					<Button variant="ghost" size="icon-sm" aria-label="Create Space" onclick={() => onCreateSpace?.()}>
-						<PlusIcon class="size-4" aria-hidden="true" />
-					</Button>
 				</div>
-				<Button
-					variant={localSelectedSpaceId === null ? "secondary" : "ghost"}
-					class="h-auto w-full justify-start rounded-md px-2 py-2 text-start"
+				<DropdownMenu.Item
+					onSelect={selectAll}
+					class={cn(
+						"h-auto w-full justify-start rounded-md px-2 py-2 text-start",
+						localSelectedSpaceId === null && "bg-secondary text-secondary-foreground",
+					)}
 					aria-current={localSelectedSpaceId === null ? "true" : undefined}
-					onclick={selectAll}
 				>
 					<span class="flex size-8 items-center justify-center rounded-md border bg-background">
 						<Globe2Icon class="size-4 text-muted-foreground" aria-hidden="true" />
@@ -144,7 +165,7 @@
 						<span class="truncate font-medium">All spaces</span>
 						<span class="truncate text-xs text-muted-foreground">Producer panel across every Space</span>
 					</span>
-				</Button>
+				</DropdownMenu.Item>
 				<DataState
 					state={dataState}
 					error={localError}
@@ -162,11 +183,19 @@
 							<SpaceOverviewRow
 								{row}
 								selected={row.space.id === localSelectedSpaceId}
+								asMenuItem
 								onSelect={selectSpace}
 							/>
 						{/each}
 					</div>
 				</DataState>
+				<DropdownMenu.Separator />
+				<DropdownMenu.Item onSelect={() => void createSpace()} class="gap-2 p-2">
+					<span class="flex size-6 items-center justify-center rounded-md border bg-transparent">
+						<PlusIcon class="size-4" aria-hidden="true" />
+					</span>
+					<span class="text-muted-foreground font-medium">New space</span>
+				</DropdownMenu.Item>
 			</div>
 		</DropdownMenu.Content>
 	</DropdownMenu.Root>

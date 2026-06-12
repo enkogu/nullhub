@@ -308,8 +308,8 @@ test('reloads /work/runs/[id] when NullTickets instance or Space changes', async
     '/work/loops/runs?tickets_instance=altickets&space=ops',
   );
 
-  await page.getByRole('button', { name: /Operations Workspace - Active/ }).click();
-  await page.getByRole('menuitem', { name: /Lab Workspace - Paused/ }).click();
+  await page.getByRole('button', { name: /Operations 3 pending/ }).click();
+  await page.getByRole('menuitem', { name: /Lab paused 0 pending 0 live Not reported spend/ }).click();
   await expect(page).toHaveURL(/(?:\?|&)space=lab(?:&|$)/);
   await expect(page.getByRole('heading', { name: 'Lab scoped inbox' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Alt instance inbox' })).toHaveCount(0);

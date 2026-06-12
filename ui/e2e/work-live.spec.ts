@@ -199,8 +199,8 @@ test('renders /work/live from loop, workflow, and agent sources', async ({ page 
     '/work/runs/loop-run-1?task_id=task-loop-1&tickets_instance=tickets&space=ops',
   );
 
-  await page.getByRole('button', { name: /Operations Workspace - Active/ }).click();
-  await page.getByRole('menuitem', { name: /Lab Workspace - Paused/ }).click();
+  await page.getByRole('button', { name: /Operations 3 pending/ }).click();
+  await page.getByRole('menuitem', { name: /Lab paused 0 pending 0 live Not reported spend/ }).click();
   await expect(page).toHaveURL(/(?:\?|&)space=lab(?:&|$)/);
   await expect(page.getByRole('article', { name: 'Lab-only task Loop run' })).toBeVisible();
   await expect(page.getByText('Triage support inbox')).toHaveCount(0);
@@ -209,8 +209,8 @@ test('renders /work/live from loop, workflow, and agent sources', async ({ page 
     '/work/runs/lab-loop-run-1?task_id=task-loop-1&tickets_instance=labtickets&space=lab',
   );
 
-  await page.getByRole('button', { name: /Lab Workspace - Paused/ }).click();
-  await page.getByRole('menuitem', { name: /Operations Workspace - Active/ }).click();
+  await page.getByRole('button', { name: /Lab 0 pending/ }).click();
+  await page.getByRole('menuitem', { name: /Operations active 3 pending 1 live Not reported spend/ }).click();
   await expect(page).toHaveURL(/(?:\?|&)space=ops(?:&|$)/);
   await expect(page.getByRole('article', { name: 'Triage support inbox Loop run' })).toBeVisible();
 

@@ -26,6 +26,7 @@ type NullHubFixtureOptions = {
   instanceConfig?: JsonBody;
   instanceUsage?: JsonBody;
   usage?: JsonBody;
+  usageBySpace?: Record<string, JsonBody>;
   usageStatus?: number;
 };
 
@@ -539,7 +540,8 @@ async function usageRoute(route: Route, options: NullHubFixtureOptions) {
     await fulfillJson(route, { error: 'Usage unavailable.' }, options.usageStatus);
     return;
   }
-  await fulfillJson(route, options.usage || fixtureGlobalUsage);
+  const space = new URL(route.request().url()).searchParams.get('space');
+  await fulfillJson(route, (space && options.usageBySpace?.[space]) || options.usage || fixtureGlobalUsage);
 }
 
 function matchesFixtureSpace(record: Record<string, unknown>, space: string | null): boolean {

@@ -41,7 +41,11 @@ test('renders /work/activity from the space-scoped events API', async ({ page },
   await page.screenshot({ path: screenshotPath, fullPage: true });
   console.log(`screenshot: ${screenshotPath}`);
 
-  expect(requests.filter((request) => request.startsWith('/api/events'))).toEqual(['/api/events?space=ops&limit=50']);
+  expect(requests.filter((request) => request.startsWith('/api/events'))).toEqual([
+    '/api/events?space=ops&limit=100',
+    '/api/events?space=lab&limit=100',
+    '/api/events?space=ops&limit=50',
+  ]);
   expect(failedResponses).toEqual([]);
   expect(runtimeErrors).toEqual([]);
 });
