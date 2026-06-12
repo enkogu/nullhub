@@ -106,7 +106,7 @@ test('primary shell controls reach all product sections in fixture mode', async 
 
   await primaryNav.getByRole('button', { name: 'System' }).click();
   await page.getByRole('link', { name: 'Providers' }).click();
-  await expect(page).toHaveURL(/\/providers$/);
+  await expect(page).toHaveURL(/\/system\/providers$/);
   await expect(page.getByRole('heading', { name: 'Saved Providers' })).toBeVisible();
   await expectNonBlankShell(page, 'System');
 
@@ -250,7 +250,7 @@ test('space deep links persist selection before sidebar navigation drops the que
   await page.getByRole('button', { name: 'System' }).click();
   await page.getByRole('link', { name: 'Channels' }).click();
 
-  await expect(page).toHaveURL(/\/channels$/);
+  await expect(page).toHaveURL(/\/system\/channels$/);
   await expect(page.getByRole('heading', { name: 'Saved Channels' })).toBeVisible();
   expect(requests.filter((request) => request.startsWith('/api/providers'))).toEqual(['/api/providers?space=lab']);
   await expect

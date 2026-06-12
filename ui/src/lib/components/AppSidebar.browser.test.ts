@@ -46,7 +46,7 @@ test("hides the inbox badge when the pending count is zero", async () => {
 
 test("marks System active without expanding it", async () => {
 	const screen = await render(AppSidebarFixture, {
-		activePath: "/settings",
+		activePath: "/system/settings",
 	});
 
 	const system = sidebarItem(screen.container, "system");
@@ -56,7 +56,7 @@ test("marks System active without expanding it", async () => {
 	expect(system.getAttribute("aria-expanded")).toBe("false");
 });
 
-test("renders Legacy collapsed above System and expands to the four VD-82 links", async () => {
+test("renders Legacy collapsed above System and expands to canonical bridge links", async () => {
 	const screen = await render(AppSidebarFixture);
 
 	const navItems = Array.from(screen.container.querySelectorAll<HTMLElement>("[data-app-sidebar-item]")).map((item) =>
@@ -72,10 +72,10 @@ test("renders Legacy collapsed above System and expands to the four VD-82 links"
 	expect(legacyTrigger?.getAttribute("aria-expanded")).toBe("true");
 
 	const expectedLinks = [
-		["Loops", "/loops"],
-		["Artifacts", "/artifacts"],
-		["Tickets", "/nulltickets"],
-		["Automations", "/automations"],
+		["Loops", "/orders/loops"],
+		["Artifacts", "/work/artifacts"],
+		["Tickets", "/orders/loops"],
+		["Automations", "/orders/workflows"],
 	] as const;
 
 	for (const [name, href] of expectedLinks) {
@@ -85,6 +85,32 @@ test("renders Legacy collapsed above System and expands to the four VD-82 links"
 		expect(element.getAttribute("href")).toBe(href);
 		expect(element.getAttribute("data-app-sidebar-legacy-link")).toBe(href);
 	}
+});
+
+test("renders System and footer links with canonical hrefs", async () => {
+	const screen = await render(AppSidebarFixture);
+
+	await screen.getByRole("button", { name: /System/ }).click();
+
+	const expectedLinks = [
+		["Providers", "/system/providers"],
+		["Channels", "/system/channels"],
+		["Usage", "/system/usage"],
+		["Settings", "/system/settings"],
+		["Observability", "/system/observability"],
+	] as const;
+
+	for (const [name, href] of expectedLinks) {
+		const link = screen.getByRole("link", { name }).first();
+		await expect.element(link).toBeVisible();
+		const element = await link.element();
+		expect(element.getAttribute("href")).toBe(href);
+	}
+
+	expect(screen.container.querySelector('a[href="/providers"]')).toBeNull();
+	expect(screen.container.querySelector('a[href="/channels"]')).toBeNull();
+	expect(screen.container.querySelector('a[href="/settings"]')).toBeNull();
+	expect(screen.container.querySelector('a[href="/nullwatch"]')).toBeNull();
 });
 
 test("does not expose non-navigation command surfaces in the left panel", async () => {

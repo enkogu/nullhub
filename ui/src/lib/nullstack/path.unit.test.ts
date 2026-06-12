@@ -3,7 +3,7 @@ import { instanceRoute, routePath, withQueryParam } from './path';
 
 describe('nullstack path helpers', () => {
   test('encodes instance route segments', () => {
-    expect(instanceRoute('null claw', 'agent/one')).toBe('/instances/null%20claw/agent%2Fone');
+    expect(instanceRoute('null claw', 'agent/one')).toBe('/team/instances/null%20claw/agent%2Fone');
   });
 
   test('updates query parameters without dropping the hash', () => {

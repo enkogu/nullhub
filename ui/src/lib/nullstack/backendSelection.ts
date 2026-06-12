@@ -60,7 +60,11 @@ function pathStartsWithAny(pathname: string, prefixes: string[]): boolean {
 function syncCurrentBoilerUrl(value: string) {
   const location = currentLocation();
   const history = currentHistory();
-  if (!location || !history || !pathStartsWithAny(location.pathname, ["/nullboiler", "/automations"])) return;
+  if (
+    !location ||
+    !history ||
+    !pathStartsWithAny(location.pathname, ["/orders/workflows", "/nullboiler", "/automations"])
+  ) return;
 
   const url = new URL(location.href);
   if (value) url.searchParams.set(BOILER_INSTANCE_QUERY_PARAM, value);
@@ -74,7 +78,15 @@ function syncCurrentTicketsUrl(value: string) {
   if (
     !location ||
     !history ||
-    !pathStartsWithAny(location.pathname, ["/nulltickets/store", "/work", "/dispatch", "/artifacts", "/task-flows"])
+    !pathStartsWithAny(location.pathname, [
+      "/orders/loops",
+      "/market/nulltickets/store",
+      "/nulltickets/store",
+      "/work",
+      "/dispatch",
+      "/artifacts",
+      "/task-flows",
+    ])
   ) return;
 
   const url = new URL(location.href);

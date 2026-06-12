@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MemoryPage from "../../../capabilities/memory/+page.svelte";
+  import CapabilitiesRegistry from "$lib/components/CapabilitiesRegistry.svelte";
 </script>
 
-<MemoryPage />
+<CapabilitiesRegistry kind="memory" title="Memory" />

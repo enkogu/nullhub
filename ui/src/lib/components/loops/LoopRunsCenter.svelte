@@ -8,6 +8,7 @@
   import { PageHeader } from "$lib/components/ui/page-header";
   import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
   import { getSelectedTicketsInstance } from "$lib/nullstack/backendSelection";
+  import { loopRoutes } from "$lib/loops/routes";
   import { spacesStore } from "$lib/stores/spaces.svelte";
   import LoopRunDetailPanel from "./LoopRunDetailPanel.svelte";
   import {
@@ -311,7 +312,7 @@
       <Button variant="outline" size="sm" onclick={() => loadAll()} disabled={refreshing}>
         {refreshing ? "Refreshing" : "Refresh"}
       </Button>
-      <Button size="sm" href="/loops">Open Loops</Button>
+      <Button size="sm" href={loopRoutes.definitions}>Open Loops</Button>
     {/snippet}
   </PageHeader>
 
@@ -345,13 +346,13 @@
     <Card class="empty-panel">
       <strong>Ticket store is offline</strong>
       <span>Loop runs are stored in NullTickets. Start the instance to inspect run history.</span>
-      <Button href="/inventory/instances" size="sm">Open Instances</Button>
+      <Button href={loopRoutes.teamInstances} size="sm">Open Instances</Button>
     </Card>
   {:else if filteredEntries().length === 0}
     <Card class="empty-panel">
       <strong>No runs in this view</strong>
       <span>Start a loop from the Loops page and run attempts will appear here.</span>
-      <Button href="/loops" size="sm">Open Loops</Button>
+      <Button href={loopRoutes.definitions} size="sm">Open Loops</Button>
     </Card>
   {:else}
     <div class="runs-grid">

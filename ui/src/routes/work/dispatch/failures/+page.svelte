@@ -1,5 +1,11 @@
 <script lang="ts">
-  import DispatchFailuresPage from "../../../dispatch/failures/+page.svelte";
+  import NullTicketsWorkspacePage from "$lib/components/nulltickets/NullTicketsWorkspacePage.svelte";
+
+  const views = ["queue", "tasks", "runs"] as const;
 </script>
 
-<DispatchFailuresPage />
+<NullTicketsWorkspacePage
+  title="Failures"
+  initialView="queue"
+  {views}
+/>

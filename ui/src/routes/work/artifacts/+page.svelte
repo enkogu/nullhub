@@ -1,5 +1,12 @@
 <script lang="ts">
-  import ArtifactsPage from "../../artifacts/+page.svelte";
+  import NullTicketsWorkspacePage from "$lib/components/nulltickets/NullTicketsWorkspacePage.svelte";
+
+  const views = ["artifacts"] as const;
 </script>
 
-<ArtifactsPage />
+<NullTicketsWorkspacePage
+  title="Artifacts"
+  initialView="artifacts"
+  initialArtifactScope="all"
+  {views}
+/>

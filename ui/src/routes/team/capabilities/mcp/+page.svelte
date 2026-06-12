@@ -1,5 +1,5 @@
 <script lang="ts">
-  import McpPage from "../../../capabilities/mcp/+page.svelte";
+  import CapabilitiesRegistry from "$lib/components/CapabilitiesRegistry.svelte";
 </script>
 
-<McpPage />
+<CapabilitiesRegistry kind="mcp" title="MCP" />

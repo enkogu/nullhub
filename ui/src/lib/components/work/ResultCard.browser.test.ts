@@ -52,7 +52,7 @@ test('app results open their app instance scoped to the space', async () => {
   const screen = await render(ResultCard, { props: { result: appResult, spaceId: 'ops', nowMs } });
 
   const link = screen.container.querySelector<HTMLAnchorElement>('a[aria-label="Open app Support Portal"]');
-  expect(link?.getAttribute('href')).toBe('/instances/nullclaw/support-portal?space=ops');
+  expect(link?.getAttribute('href')).toBe('/team/instances/nullclaw/support-portal?space=ops');
   await expect.element(screen.getByText('Open app')).toBeVisible();
 });
 

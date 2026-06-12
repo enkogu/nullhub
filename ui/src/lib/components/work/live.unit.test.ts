@@ -176,7 +176,7 @@ describe('live run adapters', () => {
       { boilerInstance: 'boiler-b' },
     )[0];
 
-    expect(workflow.href).toBe('/automations/runs/workflow-run-2?boiler_instance=boiler-b');
+    expect(workflow.href).toBe('/orders/workflows/runs/workflow-run-2?boiler_instance=boiler-b');
   });
 
   test('normalizes waiting tasks and agent events and supports filtering', () => {
