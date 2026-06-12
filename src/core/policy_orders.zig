@@ -7,11 +7,14 @@ const state_mod = @import("state.zig");
 const test_helpers = @import("../test_helpers.zig");
 
 pub const managed_orders_filename = "ORDERS.md";
+pub const managed_orders_bootstrap_filename = "CONFIG.md";
 pub const managed_orders_budget_bytes: usize = 24 * 1024;
 
 const overflow_warning =
     "\n\n> Warning: active policy Orders exceeded the 24 KB ORDERS.md budget. " ++
     "NullHub truncated this managed file; review or split policy Orders to restore complete prompt coverage.\n";
+const bootstrap_section_begin = "\n<!-- NULLHUB:MANAGED_POLICY_ORDERS:BEGIN -->\n";
+const bootstrap_section_end = "<!-- NULLHUB:MANAGED_POLICY_ORDERS:END -->\n";
 
 pub const RenderedManagedOrders = struct {
     bytes: []u8,
@@ -99,6 +102,7 @@ pub fn syncManagedOrdersForSpace(
         const orders_path = try std.fs.path.join(allocator, &.{ workspace_dir, managed_orders_filename });
         defer allocator.free(orders_path);
         try writeFileAtomically(allocator, orders_path, rendered.bytes);
+        try syncBootstrapPromptFile(allocator, workspace_dir, rendered.bytes);
         result.workspaces_updated += 1;
     }
 
@@ -219,12 +223,67 @@ fn writeFileAtomically(allocator: std.mem.Allocator, path: []const u8, bytes: []
     try durable_file.syncDirectory(dir_path);
 }
 
+fn syncBootstrapPromptFile(allocator: std.mem.Allocator, workspace_dir: []const u8, orders_bytes: []const u8) !void {
+    const config_path = try std.fs.path.join(allocator, &.{ workspace_dir, managed_orders_bootstrap_filename });
+    defer allocator.free(config_path);
+
+    const existing = std_compat.fs.readFileAbsolute(allocator, config_path, 1024 * 1024) catch |err| switch (err) {
+        error.FileNotFound => try allocator.dupe(u8, "# CONFIG.md\n"),
+        else => return err,
+    };
+    defer allocator.free(existing);
+
+    const updated = try renderBootstrapPromptFile(allocator, existing, orders_bytes);
+    defer allocator.free(updated);
+    try writeFileAtomically(allocator, config_path, updated);
+}
+
+fn renderBootstrapPromptFile(allocator: std.mem.Allocator, existing: []const u8, orders_bytes: []const u8) ![]u8 {
+    var base = std.array_list.Managed(u8).init(allocator);
+    errdefer base.deinit();
+
+    if (std.mem.indexOf(u8, existing, bootstrap_section_begin)) |begin_idx| {
+        try base.appendSlice(std_compat.mem.trimRight(u8, existing[0..begin_idx], " \t\r\n"));
+        if (std.mem.indexOfPos(u8, existing, begin_idx + bootstrap_section_begin.len, bootstrap_section_end)) |end_idx| {
+            const tail_start = end_idx + bootstrap_section_end.len;
+            const tail = std_compat.mem.trimLeft(u8, existing[tail_start..], " \t\r\n");
+            if (tail.len > 0) {
+                try base.appendSlice("\n\n");
+                try base.appendSlice(tail);
+            }
+        }
+    } else {
+        try base.appendSlice(std_compat.mem.trimRight(u8, existing, " \t\r\n"));
+    }
+
+    if (base.items.len > 0) try base.appendSlice("\n\n");
+    try base.appendSlice(bootstrap_section_begin);
+    try base.appendSlice("# Managed Policy Orders\n\n");
+    try base.appendSlice(
+        "NullHub mirrors active policy Orders here because NullClaw fingerprints and injects CONFIG.md during prompt bootstrap. " ++
+            "The source artifact is workspace/ORDERS.md.\n\n",
+    );
+    try base.appendSlice(orders_bytes);
+    if (!std.mem.endsWith(u8, orders_bytes, "\n")) try base.appendSlice("\n");
+    try base.appendSlice(bootstrap_section_end);
+
+    return base.toOwnedSlice();
+}
+
 fn readWorkspaceOrders(allocator: std.mem.Allocator, paths: paths_mod.Paths, instance_name: []const u8) ![]u8 {
     const workspace_dir = try paths.instanceWorkspaceDir(allocator, "nullclaw", instance_name);
     defer allocator.free(workspace_dir);
     const orders_path = try std.fs.path.join(allocator, &.{ workspace_dir, managed_orders_filename });
     defer allocator.free(orders_path);
     return try std_compat.fs.readFileAbsolute(allocator, orders_path, managed_orders_budget_bytes + 1);
+}
+
+fn readWorkspaceBootstrapOrders(allocator: std.mem.Allocator, paths: paths_mod.Paths, instance_name: []const u8) ![]u8 {
+    const workspace_dir = try paths.instanceWorkspaceDir(allocator, "nullclaw", instance_name);
+    defer allocator.free(workspace_dir);
+    const config_path = try std.fs.path.join(allocator, &.{ workspace_dir, managed_orders_bootstrap_filename });
+    defer allocator.free(config_path);
+    return try std_compat.fs.readFileAbsolute(allocator, config_path, managed_orders_budget_bytes + 4096);
 }
 
 fn ownedTestOrder(allocator: std.mem.Allocator, order: orders_mod.Order) !orders_mod.Order {
@@ -359,9 +418,58 @@ test "managed ORDERS.md sync updates matching nullclaw workspaces" {
     defer allocator.free(ops_orders);
     try std.testing.expect(std.mem.indexOf(u8, ops_orders, "Follow the ops escalation path") != null);
 
+    const ops_bootstrap = try readWorkspaceBootstrapOrders(allocator, fixture.paths, "ops-agent");
+    defer allocator.free(ops_bootstrap);
+    try std.testing.expect(std.mem.indexOf(u8, ops_bootstrap, "NULLHUB:MANAGED_POLICY_ORDERS:BEGIN") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ops_bootstrap, "NullClaw fingerprints and injects CONFIG.md") != null);
+    try std.testing.expect(std.mem.indexOf(u8, ops_bootstrap, "Escalate critical operations alerts immediately.") != null);
+
     const sales_workspace = try fixture.paths.instanceWorkspaceDir(allocator, "nullclaw", "sales-agent");
     defer allocator.free(sales_workspace);
     const sales_orders_path = try std.fs.path.join(allocator, &.{ sales_workspace, managed_orders_filename });
     defer allocator.free(sales_orders_path);
     try std.testing.expectError(error.FileNotFound, std_compat.fs.readFileAbsolute(allocator, sales_orders_path, 1024));
+}
+
+test "managed ORDERS.md bootstrap section is replaced without deleting local CONFIG.md content" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    try state.addInstance("nullclaw", "ops-agent", .{ .version = "dev-local", .space_id = "ops" });
+    const workspace_dir = try fixture.paths.instanceWorkspaceDir(allocator, "nullclaw", "ops-agent");
+    defer allocator.free(workspace_dir);
+    try std_compat.fs.makePathAbsolute(workspace_dir);
+    const config_path = try std.fs.path.join(allocator, &.{ workspace_dir, managed_orders_bootstrap_filename });
+    defer allocator.free(config_path);
+    try writeFileAtomically(allocator, config_path, "# CONFIG.md\n\nKeep this local note.\n\n" ++
+        bootstrap_section_begin ++
+        "stale policy text\n" ++
+        bootstrap_section_end ++
+        "\nTrailing local note.\n");
+
+    var order = try orders_mod.create(allocator, fixture.paths, "ops", .{
+        .id = "policy-review",
+        .title = "Require review",
+        .kind = "policy",
+        .content = "Every production change needs approval.",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer order.deinit(allocator);
+    var active = try orders_mod.transition(allocator, fixture.paths, "ops", "policy-review", .activate, 1100);
+    defer active.deinit(allocator);
+
+    _ = try syncManagedOrdersForSpace(allocator, fixture.paths, &state, "ops");
+
+    const updated = try std_compat.fs.readFileAbsolute(allocator, config_path, managed_orders_budget_bytes + 4096);
+    defer allocator.free(updated);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "Keep this local note.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "Trailing local note.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "stale policy text") == null);
+    try std.testing.expect(std.mem.indexOf(u8, updated, "Every production change needs approval.") != null);
 }

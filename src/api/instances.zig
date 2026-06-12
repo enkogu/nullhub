@@ -22,6 +22,9 @@ const proxy_api = @import("proxy.zig");
 const nullclaw_web_channel = @import("../core/nullclaw_web_channel.zig");
 const nullclaw_gateway_config = @import("../core/nullclaw_gateway_config.zig");
 const query_api = @import("query.zig");
+const spaces_api = @import("spaces.zig");
+const policy_orders = @import("../core/policy_orders.zig");
+const orders_mod = @import("../core/orders.zig");
 const test_helpers = @import("../test_helpers.zig");
 const instance_runtime = @import("instance_runtime.zig");
 
@@ -5122,22 +5125,30 @@ fn resolveImportBinaryVersion(allocator: std.mem.Allocator, paths: paths_mod.Pat
 const ImportRequest = struct {
     path: []const u8 = "",
     name: []const u8 = "",
+    space: []const u8 = "",
+    space_id: []const u8 = "",
 };
 
 const ParsedImportConfig = struct {
     instance_name: ?[]const u8 = null,
+    space: ?[]const u8 = null,
+    space_id: ?[]const u8 = null,
 };
 
 fn duplicateImportRequest(parsed: ImportRequest, allocator: std.mem.Allocator) !ImportRequest {
     return .{
         .path = try allocator.dupe(u8, parsed.path),
         .name = try allocator.dupe(u8, parsed.name),
+        .space = try allocator.dupe(u8, parsed.space),
+        .space_id = try allocator.dupe(u8, parsed.space_id),
     };
 }
 
 fn deinitImportRequest(allocator: std.mem.Allocator, req: ImportRequest) void {
     allocator.free(req.path);
     allocator.free(req.name);
+    allocator.free(req.space);
+    allocator.free(req.space_id);
 }
 
 fn loadImportRequest(allocator: std.mem.Allocator, body: []const u8) !ImportRequest {
@@ -5197,11 +5208,21 @@ fn readImportConfig(allocator: std.mem.Allocator, source_dir: []const u8) !Parse
             try allocator.dupe(u8, name)
         else
             null,
+        .space = if (parsed.value.space) |space|
+            try allocator.dupe(u8, space)
+        else
+            null,
+        .space_id = if (parsed.value.space_id) |space_id|
+            try allocator.dupe(u8, space_id)
+        else
+            null,
     };
 }
 
 fn deinitParsedImportConfig(allocator: std.mem.Allocator, cfg: ParsedImportConfig) void {
     if (cfg.instance_name) |name| allocator.free(name);
+    if (cfg.space) |space| allocator.free(space);
+    if (cfg.space_id) |space_id| allocator.free(space_id);
 }
 
 fn isFilesystemSafeImportName(name: []const u8) bool {
@@ -5253,6 +5274,18 @@ fn resolveImportInstanceName(
     if (cfg.instance_name) |name| return allocator.dupe(u8, name);
     if (req.path.len == 0) return allocator.dupe(u8, "default");
     return nextLocalImportName(allocator, s, component);
+}
+
+fn resolveImportSpaceId(req: ImportRequest, cfg: ParsedImportConfig) []const u8 {
+    if (req.space_id.len > 0) return req.space_id;
+    if (req.space.len > 0) return req.space;
+    if (cfg.space_id) |space_id| return space_id;
+    if (cfg.space) |space| return space;
+    return "";
+}
+
+fn policySyncSpaceId(space_id: []const u8) []const u8 {
+    return if (space_id.len > 0) space_id else "default";
 }
 
 fn invalidImportNameResponse(allocator: std.mem.Allocator, name: []const u8) ApiResponse {
@@ -5383,6 +5416,10 @@ pub fn handleImport(allocator: std.mem.Allocator, s: *state_mod.State, paths: pa
     if (!isFilesystemSafeImportName(instance_name) or s.getInstance(component, instance_name) != null) {
         return invalidImportNameResponse(allocator, instance_name);
     }
+    const import_space_id = resolveImportSpaceId(req, parsed_config);
+    if (import_space_id.len > 0 and !spaces_api.isValidSpaceId(import_space_id)) {
+        return badRequest("{\"error\":\"invalid space id\"}");
+    }
 
     // 2. Create instance directory structure
     const inst_dir = paths.instanceDir(allocator, component, instance_name) catch return helpers.serverError();
@@ -5419,6 +5456,7 @@ pub fn handleImport(allocator: std.mem.Allocator, s: *state_mod.State, paths: pa
         .verbose = false,
         .storage_mode = imported_standalone_storage_mode,
         .source_path = source_dir,
+        .space_id = import_space_id,
     }) catch {
         std_compat.fs.deleteFileAbsolute(inst_dir) catch {};
         return helpers.serverError();
@@ -5428,6 +5466,15 @@ pub fn handleImport(allocator: std.mem.Allocator, s: *state_mod.State, paths: pa
         std_compat.fs.deleteFileAbsolute(inst_dir) catch {};
         return helpers.serverError();
     };
+
+    if (std.mem.eql(u8, component, "nullclaw")) {
+        _ = policy_orders.syncManagedOrdersForSpace(allocator, paths, s, policySyncSpaceId(import_space_id)) catch {
+            _ = s.removeInstance(component, instance_name);
+            _ = s.save() catch {};
+            std_compat.fs.deleteFileAbsolute(inst_dir) catch {};
+            return helpers.serverError();
+        };
+    }
 
     const response_body = buildImportResponse(allocator, instance_name, source_dir) catch return helpers.serverError();
     return jsonOk(response_body);
@@ -6523,6 +6570,60 @@ test "handleImport reads instance_name from config when name omitted" {
     defer parsed.deinit();
     try std.testing.expectEqualStrings("from-config", parsed.value.instance);
     try std.testing.expect(s.getInstance("nullclaw", "from-config") != null);
+}
+
+test "handleImport syncs existing active policy Orders into matching nullclaw workspace" {
+    const allocator = std.testing.allocator;
+    var state_fixture = try test_helpers.TempPaths.init(allocator);
+    defer state_fixture.deinit();
+    const state_path = try state_fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var s = state_mod.State.init(allocator, state_path);
+    defer s.deinit();
+    var mctx = TestManagerCtx.init(allocator);
+    defer mctx.deinit(allocator);
+
+    try stageImportBinaryFixture(allocator, mctx.paths, "nullclaw");
+
+    var order = try orders_mod.create(allocator, mctx.paths, "ops", .{
+        .id = "policy-import",
+        .title = "Import receives policy",
+        .kind = "policy",
+        .content = "Imported agents must follow existing space policy.",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer order.deinit(allocator);
+    var active = try orders_mod.transition(allocator, mctx.paths, "ops", "policy-import", .activate, 1100);
+    defer active.deinit(allocator);
+
+    const source_dir = try createStandaloneImportSource(allocator, state_fixture, "policy-import-source", "{\"instance_name\":\"ops-import\",\"space_id\":\"ops\",\"gateway\":{\"port\":3000}}\n");
+    defer allocator.free(source_dir);
+    const body = try std.fmt.allocPrint(allocator, "{{\"path\":\"{s}\"}}", .{source_dir});
+    defer allocator.free(body);
+
+    const resp = handleImport(allocator, &s, mctx.paths, "nullclaw", body);
+    defer allocator.free(resp.body);
+
+    try std.testing.expectEqualStrings("200 OK", resp.status);
+    const entry = s.getInstance("nullclaw", "ops-import").?;
+    try std.testing.expectEqualStrings("ops", entry.space_id);
+
+    const workspace_dir = try std.fs.path.join(allocator, &.{ source_dir, "workspace" });
+    defer allocator.free(workspace_dir);
+    const orders_path = try std.fs.path.join(allocator, &.{ workspace_dir, policy_orders.managed_orders_filename });
+    defer allocator.free(orders_path);
+    const config_path = try std.fs.path.join(allocator, &.{ workspace_dir, policy_orders.managed_orders_bootstrap_filename });
+    defer allocator.free(config_path);
+
+    const orders_bytes = try std_compat.fs.readFileAbsolute(allocator, orders_path, policy_orders.managed_orders_budget_bytes + 1);
+    defer allocator.free(orders_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, "Imported agents must follow existing space policy.") != null);
+
+    const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, policy_orders.managed_orders_budget_bytes + 4096);
+    defer allocator.free(config_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "NULLHUB:MANAGED_POLICY_ORDERS:BEGIN") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "Imported agents must follow existing space policy.") != null);
 }
 
 test "handleImport auto generates local import name when config lacks one" {

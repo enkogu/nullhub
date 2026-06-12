@@ -570,12 +570,19 @@ test "orders API enact and suspend update managed ORDERS.md" {
     defer allocator.free(workspace_dir);
     const orders_path = try std.fs.path.join(allocator, &.{ workspace_dir, policy_orders.managed_orders_filename });
     defer allocator.free(orders_path);
+    const config_path = try std.fs.path.join(allocator, &.{ workspace_dir, policy_orders.managed_orders_bootstrap_filename });
+    defer allocator.free(config_path);
 
     {
         const bytes = try std_compat.fs.readFileAbsolute(allocator, orders_path, policy_orders.managed_orders_budget_bytes + 1);
         defer allocator.free(bytes);
         try std.testing.expect(std.mem.indexOf(u8, bytes, "Keep approvals moving") != null);
         try std.testing.expect(std.mem.indexOf(u8, bytes, "Escalate stale approvals.") != null);
+
+        const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, policy_orders.managed_orders_budget_bytes + 4096);
+        defer allocator.free(config_bytes);
+        try std.testing.expect(std.mem.indexOf(u8, config_bytes, "NULLHUB:MANAGED_POLICY_ORDERS:BEGIN") != null);
+        try std.testing.expect(std.mem.indexOf(u8, config_bytes, "Escalate stale approvals.") != null);
     }
 
     {
@@ -589,6 +596,11 @@ test "orders API enact and suspend update managed ORDERS.md" {
         defer allocator.free(bytes);
         try std.testing.expect(std.mem.indexOf(u8, bytes, "No active policy Orders.") != null);
         try std.testing.expect(std.mem.indexOf(u8, bytes, "Escalate stale approvals.") == null);
+
+        const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, policy_orders.managed_orders_budget_bytes + 4096);
+        defer allocator.free(config_bytes);
+        try std.testing.expect(std.mem.indexOf(u8, config_bytes, "No active policy Orders.") != null);
+        try std.testing.expect(std.mem.indexOf(u8, config_bytes, "Escalate stale approvals.") == null);
     }
 }
 

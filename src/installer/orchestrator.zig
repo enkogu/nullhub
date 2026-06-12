@@ -13,6 +13,8 @@ const fs_compat = @import("../fs_compat.zig");
 const launch_args_mod = @import("../core/launch_args.zig");
 const nullclaw_web_channel = @import("../core/nullclaw_web_channel.zig");
 const nullclaw_gateway_config = @import("../core/nullclaw_gateway_config.zig");
+const policy_orders = @import("../core/policy_orders.zig");
+const orders_mod = @import("../core/orders.zig");
 const manager_mod = @import("../supervisor/manager.zig");
 const ui_modules_mod = @import("ui_modules.zig");
 const managed_skills = @import("../managed_skills.zig");
@@ -339,13 +341,21 @@ pub fn install(
     var launch = launch_args_mod.resolve(allocator, launch_command, false) catch return error.StartFailed;
     defer launch.deinit();
     const effective_port = launch.effectiveHealthPort(runtime_port);
+    const install_space_id = resolveInstallSpaceId(allocator, opts.answers_json) catch {
+        setLastErrorDetail("invalid install space id");
+        return error.ConfigGenerationFailed;
+    };
+    defer allocator.free(install_space_id);
 
     persistAndStartInstance(
+        allocator,
+        p,
         s,
         opts.component,
         opts.instance_name,
         version,
         launch_command,
+        install_space_id,
         struct {
             fn call(
                 ctx: *anyopaque,
@@ -446,6 +456,54 @@ fn resolveRequestedPort(allocator: std.mem.Allocator, answers_json: []const u8) 
     return null;
 }
 
+fn resolveInstallSpaceId(allocator: std.mem.Allocator, answers_json: []const u8) ![]u8 {
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, answers_json, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    }) catch return allocator.dupe(u8, "");
+    defer parsed.deinit();
+    if (parsed.value != .object) return allocator.dupe(u8, "");
+
+    if (spaceIdValue(parsed.value.object.get("space_id") orelse parsed.value.object.get("space"))) |space_id| {
+        return duplicateValidSpaceId(allocator, space_id);
+    }
+    if (parsed.value.object.get("answers")) |answers| {
+        if (answers == .object) {
+            if (spaceIdValue(answers.object.get("space_id") orelse answers.object.get("space"))) |space_id| {
+                return duplicateValidSpaceId(allocator, space_id);
+            }
+        }
+    }
+    return allocator.dupe(u8, "");
+}
+
+fn spaceIdValue(value: ?std.json.Value) ?[]const u8 {
+    const raw = value orelse return null;
+    if (raw != .string) return null;
+    const trimmed = std.mem.trim(u8, raw.string, &std.ascii.whitespace);
+    return if (trimmed.len > 0) trimmed else null;
+}
+
+fn duplicateValidSpaceId(allocator: std.mem.Allocator, space_id: []const u8) ![]u8 {
+    if (!isValidSpaceId(space_id)) return error.InvalidSpaceId;
+    return allocator.dupe(u8, space_id);
+}
+
+fn isValidSpaceId(id: []const u8) bool {
+    if (id.len == 0 or id.len > 80) return false;
+    for (id) |byte| {
+        if ((byte >= 'a' and byte <= 'z') or
+            (byte >= 'A' and byte <= 'Z') or
+            (byte >= '0' and byte <= '9') or
+            byte == '-' or byte == '_' or byte == '.')
+        {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
 fn parsePortValue(value: std.json.Value) ?u16 {
     return switch (value) {
         .integer => |raw| if (raw >= 0 and raw <= 65535) @intCast(raw) else null,
@@ -456,11 +514,14 @@ fn parsePortValue(value: std.json.Value) ?u16 {
 }
 
 fn persistAndStartInstance(
+    allocator: std.mem.Allocator,
+    p: paths_mod.Paths,
     s: *state_mod.State,
     component: []const u8,
     name: []const u8,
     version: []const u8,
     launch_mode: []const u8,
+    space_id: []const u8,
     startFn: *const fn (
         ctx: *anyopaque,
         component: []const u8,
@@ -487,11 +548,20 @@ fn persistAndStartInstance(
         .auto_start = true,
         .launch_mode = launch_mode,
         .verbose = false,
+        .space_id = space_id,
     }) catch return error.StateError;
     s.save() catch {
         _ = s.removeInstance(component, name);
         return error.StateError;
     };
+
+    if (std.mem.eql(u8, component, "nullclaw")) {
+        _ = policy_orders.syncManagedOrdersForSpace(allocator, p, s, policySyncSpaceId(space_id)) catch {
+            _ = s.removeInstance(component, name);
+            s.save() catch return error.StateError;
+            return error.StateError;
+        };
+    }
 
     startFn(
         ctx,
@@ -509,6 +579,10 @@ fn persistAndStartInstance(
         s.save() catch return error.StateError;
         return error.StartFailed;
     };
+}
+
+fn policySyncSpaceId(space_id: []const u8) []const u8 {
+    return if (space_id.len > 0) space_id else "default";
 }
 
 pub fn findNextAvailablePort(
@@ -1797,11 +1871,14 @@ test "persistAndStartInstance rolls back state entry when start fails" {
     var dummy_ctx: u8 = 0;
 
     const start_result = persistAndStartInstance(
+        allocator,
+        fixture.paths,
         &s,
         "nullclaw",
         "demo",
         "1.0.0",
         "gateway",
+        "",
         struct {
             fn call(
                 _: *anyopaque,
@@ -1834,6 +1911,88 @@ test "persistAndStartInstance rolls back state entry when start fails" {
     var reloaded = try state_mod.State.load(allocator, state_path);
     defer reloaded.deinit();
     try std.testing.expect(reloaded.getInstance("nullclaw", "demo") == null);
+}
+
+test "persistAndStartInstance syncs existing active policy Orders before starting nullclaw" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var s = state_mod.State.init(allocator, state_path);
+    defer s.deinit();
+
+    var order = try orders_mod.create(allocator, fixture.paths, "ops", .{
+        .id = "policy-install",
+        .title = "Install receives policy",
+        .kind = "policy",
+        .content = "Newly installed agents must receive active policies.",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer order.deinit(allocator);
+    var active = try orders_mod.transition(allocator, fixture.paths, "ops", "policy-install", .activate, 1100);
+    defer active.deinit(allocator);
+
+    const inst_dir = try fixture.paths.instanceDir(allocator, "nullclaw", "demo");
+    defer allocator.free(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
+    const binary_path = try fixture.path(allocator, "fake-binary");
+    defer allocator.free(binary_path);
+    var dummy_ctx: u8 = 0;
+
+    try persistAndStartInstance(
+        allocator,
+        fixture.paths,
+        &s,
+        "nullclaw",
+        "demo",
+        "1.0.0",
+        "gateway",
+        "ops",
+        struct {
+            fn call(
+                _: *anyopaque,
+                _: []const u8,
+                _: []const u8,
+                _: []const u8,
+                _: []const []const u8,
+                _: u16,
+                _: []const u8,
+                _: []const u8,
+                _: []const u8,
+                _: []const u8,
+            ) anyerror!void {}
+        }.call,
+        @ptrCast(&dummy_ctx),
+        binary_path,
+        &.{"--help"},
+        0,
+        "/health",
+        inst_dir,
+        "",
+        "gateway",
+    );
+
+    const entry = s.getInstance("nullclaw", "demo").?;
+    try std.testing.expectEqualStrings("ops", entry.space_id);
+
+    const workspace_dir = try fixture.paths.instanceWorkspaceDir(allocator, "nullclaw", "demo");
+    defer allocator.free(workspace_dir);
+    const orders_path = try std.fs.path.join(allocator, &.{ workspace_dir, policy_orders.managed_orders_filename });
+    defer allocator.free(orders_path);
+    const config_path = try std.fs.path.join(allocator, &.{ workspace_dir, policy_orders.managed_orders_bootstrap_filename });
+    defer allocator.free(config_path);
+
+    const orders_bytes = try std_compat.fs.readFileAbsolute(allocator, orders_path, policy_orders.managed_orders_budget_bytes + 1);
+    defer allocator.free(orders_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, "Newly installed agents must receive active policies.") != null);
+
+    const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, policy_orders.managed_orders_budget_bytes + 4096);
+    defer allocator.free(config_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "NULLHUB:MANAGED_POLICY_ORDERS:BEGIN") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "Newly installed agents must receive active policies.") != null);
 }
 
 test "extractCustomProviders neutralizes custom fallback while preserving standard primary" {
