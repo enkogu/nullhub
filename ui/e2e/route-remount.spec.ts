@@ -53,7 +53,6 @@ const redirectCases = [
   ['/capabilities/instructions', '/team/capabilities/instructions'],
   ['/capabilities/memory', '/team/capabilities/memory'],
   ['/capabilities/schedules', '/team/capabilities/schedules'],
-  ['/team', '/team/instances'],
   ['/team/capabilities', '/team/capabilities/skills'],
   ['/instances/nullboiler', '/team/instances/nullboiler'],
   ['/instances/nullclaw/claw', '/team/instances/nullclaw/claw'],
@@ -66,12 +65,10 @@ const redirectCases = [
   ['/install/nullclaw', '/market/install/nullclaw'],
   ['/nulltickets', '/orders/loops'],
   ['/nulltickets/store', '/market/nulltickets/store'],
-  ['/orders', '/orders/loops'],
   ['/providers', '/system/providers'],
   ['/channels', '/system/channels'],
   ['/configs', '/system/configs'],
   ['/settings', '/system/settings'],
-  ['/system', '/system/settings'],
   ['/observability', '/system/observability'],
   ['/nullwatch?watch=watcher', '/system/observability?watch=watcher'],
   ['/artifacts', '/work/artifacts'],
@@ -124,7 +121,7 @@ test('canonical IA routes render nonblank shell content in fixture mode', async 
 
   await installNullHubFixtureRoutes(page);
 
-  for (const path of ['/', '/inbox', '/work', '/orders/loops', '/orders/workflows/runs', '/team/agents', '/team/instances', '/market', '/system/observability']) {
+  for (const path of ['/', '/inbox', '/work', '/orders', '/orders/loops', '/orders/workflows/runs', '/team', '/team/agents', '/team/instances', '/market', '/system', '/system/observability']) {
     await page.goto(path);
     await expect(page.locator('.shadcn-app')).toBeVisible();
     await expect(page.locator('main.real-content')).toBeVisible();
@@ -141,6 +138,63 @@ test('canonical IA routes render nonblank shell content in fixture mode', async 
   await page.goto('/team/agents');
   await expect(page.getByRole('heading', { name: 'Agents' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Hire agent' })).toBeVisible();
+
+  expect(failedResponses).toEqual([]);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test('section overview shells stay on canonical routes and expose panel links', async ({ page }, testInfo) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
+  await installNullHubFixtureRoutes(page);
+
+  const cases = [
+    {
+      path: '/team?space=ops',
+      heading: 'Team',
+      tabs: [
+        { name: 'Staff', links: ['Agents', 'Profiles', 'Roles'] },
+        { name: 'Runtime', links: ['Instances', 'NullClaw agents'] },
+        { name: 'Capabilities', links: ['Skills', 'MCP', 'Memory'] },
+      ],
+    },
+    {
+      path: '/orders?space=ops',
+      heading: 'Orders',
+      tabs: [
+        { name: 'Loops', links: ['Loops', 'Loop library'] },
+        { name: 'Workflows', links: ['Workflows', 'Workflow runs'] },
+        { name: 'Authoring', links: ['Task flows'] },
+      ],
+    },
+    {
+      path: '/system?space=ops',
+      heading: 'System',
+      tabs: [
+        { name: 'Access', links: ['Providers', 'Channels'] },
+        { name: 'Configuration', links: ['Settings', 'Configs'] },
+        { name: 'Operations', links: ['Usage', 'Observability'] },
+      ],
+    },
+  ];
+
+  for (const item of cases) {
+    await page.goto(item.path);
+    const url = new URL(page.url());
+    expect(url.pathname).toBe(pathOnly(item.path));
+    await expect(page.getByRole('heading', { name: item.heading })).toBeVisible();
+    await expect(page.locator('.header-breadcrumb').getByText(item.heading, { exact: true })).toBeVisible();
+    await expect(page.locator('[data-slot="section-overview"]')).toBeVisible();
+    for (const tab of item.tabs) {
+      await page.getByRole('tab', { name: tab.name }).click();
+      await expect(page.getByRole('tab', { name: tab.name })).toHaveAttribute('aria-selected', 'true');
+      for (const link of tab.links) {
+        await expect(page.getByRole('heading', { name: link }).first()).toBeVisible();
+      }
+    }
+    const screenshotPath = testInfo.outputPath(`section-overview-${item.heading.toLowerCase()}.png`);
+    await page.screenshot({ path: screenshotPath, fullPage: true });
+    console.log(`screenshot: ${screenshotPath}`);
+  }
 
   expect(failedResponses).toEqual([]);
   expect(runtimeErrors).toEqual([]);

@@ -90,11 +90,13 @@ test('primary shell controls reach all product sections in fixture mode', async 
   await expectNonBlankShell(page, 'Work');
 
   await primaryNav.getByRole('link', { name: 'Orders' }).click();
-  await expect(page).toHaveURL(/\/orders\/loops$/);
+  await expect(page).toHaveURL(/\/orders$/);
+  await expect(page.getByRole('heading', { name: 'Orders' })).toBeVisible();
   await expectNonBlankShell(page, 'Orders');
 
   await primaryNav.getByRole('link', { name: 'Team' }).click();
-  await expect(page).toHaveURL(/\/team\/instances$/);
+  await expect(page).toHaveURL(/\/team$/);
+  await expect(page.getByRole('heading', { name: 'Team' })).toBeVisible();
   await expectNonBlankShell(page, 'Team');
 
   await primaryNav.getByRole('link', { name: 'Market' }).click();
