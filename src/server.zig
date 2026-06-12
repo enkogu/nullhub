@@ -1691,6 +1691,10 @@ pub const Server = struct {
                 const resp = orders_api.handleUpdate(allocator, self.paths, self.state, target, order_id, body, std_compat.time.milliTimestamp());
                 return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
             }
+            if (std.mem.eql(u8, method, "DELETE")) {
+                const resp = orders_api.handleDelete(allocator, self.paths, self.state, target, order_id, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
             return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
         }
 
@@ -2709,6 +2713,15 @@ const TestContext = struct {
     }
 };
 
+fn expectFileNotFound(path: []const u8) !void {
+    if (std_compat.fs.openFileAbsolute(path, .{})) |file| {
+        file.close();
+        return error.ExpectedFileNotFound;
+    } else |err| {
+        try std.testing.expectEqual(error.FileNotFound, err);
+    }
+}
+
 fn writeUiModuleEntrypoint(allocator: std.mem.Allocator, module_dir: []const u8) !void {
     const module_path = try std.fs.path.join(allocator, &.{ module_dir, "module.js" });
     defer allocator.free(module_path);
@@ -3357,6 +3370,54 @@ test "route /api/orders CRUD transitions and emits events" {
     defer std.testing.allocator.free(doc_path);
     const doc_file = try std_compat.fs.openFileAbsolute(doc_path, .{});
     defer doc_file.close();
+}
+
+test "route DELETE /api/orders removes order document and emits event" {
+    var ctx = TestContext.init(std.testing.allocator);
+    defer ctx.deinit(std.testing.allocator);
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/orders?space=ops",
+            "{\"title\":\"Temporary order\",\"content\":\"# Temporary\\n\"}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const archive_resp = ctx.route(std.testing.allocator, "POST", "/api/orders/order-1/archive?space=ops", "");
+        defer std.testing.allocator.free(archive_resp.body);
+        try std.testing.expectEqualStrings("200 OK", archive_resp.status);
+
+        const still_readable = ctx.route(std.testing.allocator, "GET", "/api/orders/order-1?space=ops", "");
+        defer std.testing.allocator.free(still_readable.body);
+        try std.testing.expectEqualStrings("200 OK", still_readable.status);
+        try std.testing.expect(std.mem.indexOf(u8, still_readable.body, "\"status\":\"archived\"") != null);
+    }
+
+    {
+        const delete_resp = ctx.route(std.testing.allocator, "DELETE", "/api/orders/order-1?space=ops", "");
+        defer std.testing.allocator.free(delete_resp.body);
+        try std.testing.expectEqualStrings("200 OK", delete_resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, delete_resp.body, "\"status\":\"deleted\"") != null);
+    }
+
+    {
+        const missing = ctx.route(std.testing.allocator, "GET", "/api/orders/order-1?space=ops", "");
+        try std.testing.expectEqualStrings("404 Not Found", missing.status);
+    }
+
+    const doc_path = try ctx.paths.spaceOrderDoc(std.testing.allocator, "ops", "order-1");
+    defer std.testing.allocator.free(doc_path);
+    try expectFileNotFound(doc_path);
+
+    const events_resp = ctx.route(std.testing.allocator, "GET", "/api/events?space=ops&subject_type=order", "");
+    defer std.testing.allocator.free(events_resp.body);
+    try std.testing.expectEqualStrings("200 OK", events_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.deleted\"") != null);
 }
 
 test "route /api/approvals covers decide state transitions and feedback-required" {

@@ -214,6 +214,28 @@ pub fn handleSchedule(allocator: std.mem.Allocator, paths: paths_mod.Paths, stat
     return helpers.jsonOk(response);
 }
 
+pub fn handleDelete(allocator: std.mem.Allocator, paths: paths_mod.Paths, state: *state_mod.State, target: []const u8, order_id: []const u8, now_ms: i64) helpers.ApiResponse {
+    const space_id = requiredSpaceQueryAlloc(allocator, target) catch |err| switch (err) {
+        error.MissingSpace => return helpers.badRequest("{\"error\":\"space query is required\"}"),
+        error.InvalidSpace => return helpers.badRequest("{\"error\":\"invalid space id\"}"),
+        else => return helpers.serverError(),
+    };
+    defer allocator.free(space_id);
+
+    const order = orders.remove(allocator, paths, space_id, order_id) catch |err| switch (err) {
+        error.InvalidOrderId => return helpers.badRequest("{\"error\":\"invalid order id\"}"),
+        error.OrderNotFound => return helpers.notFound(),
+        else => return helpers.serverError(),
+    };
+    defer order.deinit(allocator);
+
+    appendOrderEvent(state, order, "order.deleted", "Order deleted", now_ms) catch return helpers.serverError();
+    state.save() catch return helpers.serverError();
+
+    const response = renderDelete(allocator, order) catch return helpers.serverError();
+    return helpers.jsonOk(response);
+}
+
 fn appendOrderEvent(state: *state_mod.State, order: orders.Order, event_type: []const u8, summary: []const u8, now_ms: i64) !void {
     const payload_json = "{}";
     _ = try state.addEvent(.{
@@ -314,6 +336,15 @@ fn appendOrderJson(buf: *std.array_list.Managed(u8), order: orders.Order) !void 
     try buf.appendSlice("}");
 }
 
+fn renderDelete(allocator: std.mem.Allocator, order: orders.Order) ![]const u8 {
+    var buf = std.array_list.Managed(u8).init(allocator);
+    errdefer buf.deinit();
+    try buf.appendSlice("{\"status\":\"deleted\",\"id\":\"");
+    try appendEscaped(&buf, order.id);
+    try buf.appendSlice("\"}");
+    return buf.toOwnedSlice();
+}
+
 fn appendFmt(buf: *std.array_list.Managed(u8), comptime fmt: []const u8, args: anytype) !void {
     const rendered = try std.fmt.allocPrint(buf.allocator, fmt, args);
     defer buf.allocator.free(rendered);
@@ -363,6 +394,49 @@ test "orders API creates updates schedules transitions and emits events" {
     try std.testing.expectEqualStrings("order.updated", events[1].event_type);
     try std.testing.expectEqualStrings("order.scheduled", events[2].event_type);
     try std.testing.expectEqualStrings("order.archived", events[7].event_type);
+}
+
+test "orders API deletes records without treating archive as delete" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    {
+        const resp = handleCreate(allocator, fixture.paths, &state, "/api/orders?space=ops", "{\"title\":\"Temporary order\"}", 1000);
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const archive_resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/order-1/archive?space=ops", "order-1", .archive, 1100);
+        defer allocator.free(archive_resp.body);
+        try std.testing.expectEqualStrings("200 OK", archive_resp.status);
+
+        const get_resp = handleGet(allocator, fixture.paths, "/api/orders/order-1?space=ops", "order-1");
+        defer allocator.free(get_resp.body);
+        try std.testing.expectEqualStrings("200 OK", get_resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, get_resp.body, "\"status\":\"archived\"") != null);
+    }
+
+    {
+        const delete_resp = handleDelete(allocator, fixture.paths, &state, "/api/orders/order-1?space=ops", "order-1", 1200);
+        defer allocator.free(delete_resp.body);
+        try std.testing.expectEqualStrings("200 OK", delete_resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, delete_resp.body, "\"status\":\"deleted\"") != null);
+
+        const missing_resp = handleGet(allocator, fixture.paths, "/api/orders/order-1?space=ops", "order-1");
+        try std.testing.expectEqualStrings("404 Not Found", missing_resp.status);
+    }
+
+    const events = state.eventsList();
+    try std.testing.expectEqual(@as(usize, 3), events.len);
+    try std.testing.expectEqualStrings("order.created", events[0].event_type);
+    try std.testing.expectEqualStrings("order.archived", events[1].event_type);
+    try std.testing.expectEqualStrings("order.deleted", events[2].event_type);
 }
 
 test "orders API rejects traversal space ids before writing files" {

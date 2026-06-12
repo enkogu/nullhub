@@ -411,6 +411,10 @@ const route_examples_orders = [_]ExampleSpec{
         .command = "nullhub api POST '/api/orders/order-1/activate?space=ops'",
         .description = "Activate an Order and emit an order.activated event.",
     },
+    .{
+        .command = "nullhub api DELETE '/api/orders/order-1?space=ops'",
+        .description = "Delete an Order document and derived table row.",
+    },
 };
 
 const route_examples_instances = [_]ExampleSpec{
@@ -859,6 +863,19 @@ const routes = [_]RouteSpec{
         .query_params = order_query_params[0..],
         .body = "Payload with schedule.",
         .response = "Updated Order record.",
+    },
+    .{
+        .id = "orders.delete",
+        .method = "DELETE",
+        .path_template = "/api/orders/{id}",
+        .category = "orders",
+        .summary = "Delete one durable Order. This removes the file-backed document; archive is a separate status transition.",
+        .destructive = true,
+        .auth_mode = "optional_bearer",
+        .path_params = order_id_params[0..],
+        .query_params = order_query_params[0..],
+        .response = "Deletion acknowledgement with deleted Order id.",
+        .examples = route_examples_orders[3..],
     },
     .{
         .id = "orders.transition",
@@ -1811,6 +1828,8 @@ test "jsonAlloc includes stable route metadata" {
     defer std.testing.allocator.free(json);
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"meta.routes.get\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"orders.delete\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"method\": \"DELETE\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "/api/instances/{component}/{name}") != null);
 }
 

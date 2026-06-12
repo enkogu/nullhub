@@ -292,6 +292,44 @@ pub fn schedule(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: 
     });
 }
 
+pub fn remove(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []const u8, order_id: []const u8) StoreError!Order {
+    if (!isValidOrderId(order_id)) return error.InvalidOrderId;
+    var table = try loadTable(allocator, paths, space_id);
+    defer table.deinit();
+
+    var found_idx: ?usize = null;
+    for (table.orders, 0..) |order, idx| {
+        if (std.mem.eql(u8, order.id, order_id)) {
+            found_idx = idx;
+            break;
+        }
+    }
+    const idx = found_idx orelse return error.OrderNotFound;
+
+    var removed = try cloneOrder(allocator, table.orders[idx]);
+    errdefer removed.deinit(allocator);
+
+    const orders = try allocator.alloc(Order, table.orders.len - 1);
+    {
+        var filled: usize = 0;
+        errdefer {
+            for (orders[0..filled]) |owned| owned.deinit(allocator);
+            allocator.free(orders);
+        }
+        for (table.orders, 0..) |existing, copy_idx| {
+            if (copy_idx == idx) continue;
+            orders[filled] = try cloneOrder(allocator, existing);
+            filled += 1;
+        }
+    }
+
+    var replacement = LoadedTable{ .allocator = allocator, .orders = orders };
+    defer replacement.deinit();
+    try saveAll(allocator, paths, space_id, replacement.orders);
+
+    return removed;
+}
+
 pub fn renderMarkdown(allocator: std.mem.Allocator, order: Order) ![]const u8 {
     var buf = std.array_list.Managed(u8).init(allocator);
     errdefer buf.deinit();
@@ -390,6 +428,54 @@ const ParsedFrontmatter = struct {
 };
 
 fn loadTable(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []const u8) StoreError!LoadedTable {
+    var docs = try loadMarkdownDocs(allocator, paths, space_id);
+    if (docs.orders.len > 0) return docs;
+    docs.deinit();
+
+    return loadJsonTable(allocator, paths, space_id);
+}
+
+fn loadMarkdownDocs(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []const u8) StoreError!LoadedTable {
+    const orders_dir = try paths.spaceOrdersDir(allocator, space_id);
+    defer allocator.free(orders_dir);
+
+    var dir = std_compat.fs.openDirAbsolute(orders_dir, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return .{ .allocator = allocator, .orders = &.{} },
+        else => return err,
+    };
+    defer dir.close();
+
+    var parsed_orders = std.array_list.Managed(Order).init(allocator);
+    errdefer {
+        for (parsed_orders.items) |order| order.deinit(allocator);
+        parsed_orders.deinit();
+    }
+
+    var it = dir.iterate();
+    while (try it.next()) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
+
+        const doc_path = try std.fs.path.join(allocator, &.{ orders_dir, entry.name });
+        defer allocator.free(doc_path);
+
+        const file = try std_compat.fs.openFileAbsolute(doc_path, .{});
+        defer file.close();
+        const bytes = try file.readToEndAlloc(allocator, 4 * 1024 * 1024);
+        defer allocator.free(bytes);
+
+        var order = try parseMarkdown(allocator, bytes);
+        errdefer order.deinit(allocator);
+        if (!isValidOrderId(order.id)) return error.InvalidOrderId;
+        if (!std.mem.eql(u8, order.space_id, space_id)) return error.InvalidSpaceId;
+        try parsed_orders.append(order);
+    }
+
+    std.mem.sort(Order, parsed_orders.items, {}, orderIdLessThan);
+    return .{ .allocator = allocator, .orders = try parsed_orders.toOwnedSlice() };
+}
+
+fn loadJsonTable(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []const u8) StoreError!LoadedTable {
     const table_path = try paths.spaceOrdersTable(allocator, space_id);
     defer allocator.free(table_path);
 
@@ -429,6 +515,7 @@ fn saveAll(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []con
         defer allocator.free(markdown);
         try writeFileAtomically(allocator, doc_path, markdown);
     }
+    try deleteStaleMarkdownDocs(allocator, orders_dir, orders);
 
     const table_path = try paths.spaceOrdersTable(allocator, space_id);
     defer allocator.free(table_path);
@@ -437,6 +524,40 @@ fn saveAll(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []con
     });
     defer allocator.free(table_bytes);
     try writeFileAtomically(allocator, table_path, table_bytes);
+}
+
+fn deleteStaleMarkdownDocs(allocator: std.mem.Allocator, orders_dir: []const u8, orders: []const Order) !void {
+    var dir = std_compat.fs.openDirAbsolute(orders_dir, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer dir.close();
+
+    var it = dir.iterate();
+    while (try it.next()) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".md")) continue;
+        const id = entry.name[0 .. entry.name.len - ".md".len];
+        if (!isValidOrderId(id) or containsOrderId(orders, id)) continue;
+
+        const doc_path = try std.fs.path.join(allocator, &.{ orders_dir, entry.name });
+        defer allocator.free(doc_path);
+        std_compat.fs.deleteFileAbsolute(doc_path) catch |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        };
+    }
+}
+
+fn containsOrderId(orders: []const Order, id: []const u8) bool {
+    for (orders) |order| {
+        if (std.mem.eql(u8, order.id, id)) return true;
+    }
+    return false;
+}
+
+fn orderIdLessThan(_: void, left: Order, right: Order) bool {
+    return std.mem.order(u8, left.id, right.id) == .lt;
 }
 
 fn ownedOrder(allocator: std.mem.Allocator, order: Order) !Order {
@@ -567,6 +688,15 @@ fn writeFileAtomically(allocator: std.mem.Allocator, path: []const u8, bytes: []
     try durable_file.syncDirectory(dir_path);
 }
 
+fn expectFileNotFound(path: []const u8) !void {
+    if (std_compat.fs.openFileAbsolute(path, .{})) |file| {
+        file.close();
+        return error.ExpectedFileNotFound;
+    } else |err| {
+        try std.testing.expectEqual(error.FileNotFound, err);
+    }
+}
+
 test "orders CRUD persists table and markdown document" {
     const allocator = std.testing.allocator;
     var fixture = try test_helpers.TempPaths.init(allocator);
@@ -609,6 +739,103 @@ test "orders CRUD persists table and markdown document" {
     const bytes = try doc_file.readToEndAlloc(allocator, 64 * 1024);
     defer allocator.free(bytes);
     try std.testing.expect(std.mem.indexOf(u8, bytes, "status: \"draft\"") != null);
+}
+
+test "orders reads markdown documents before derived orders table" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+
+    const created = try create(allocator, fixture.paths, "ops", .{
+        .title = "JSON title",
+        .summary = "Stale table summary.",
+        .kind = "policy",
+        .content = "# Original\n",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer created.deinit(allocator);
+
+    const doc_first = try ownedOrder(allocator, .{
+        .id = created.id,
+        .space_id = "ops",
+        .title = "Markdown title",
+        .summary = "Markdown summary.",
+        .kind = "mandate",
+        .status = "active",
+        .schedule = "event:queue.changed",
+        .doc_path = created.doc_path,
+        .content = "# Markdown body\nThis edit bypassed orders.json.\n",
+        .created_at_ms = created.created_at_ms,
+        .updated_at_ms = 2000,
+    });
+    defer doc_first.deinit(allocator);
+
+    const doc_path = try fixture.paths.spaceOrderDoc(allocator, "ops", created.id);
+    defer allocator.free(doc_path);
+    const markdown = try renderMarkdown(allocator, doc_first);
+    defer allocator.free(markdown);
+    try writeFileAtomically(allocator, doc_path, markdown);
+
+    const listed = try list(allocator, fixture.paths, "ops");
+    defer {
+        for (listed) |order| order.deinit(allocator);
+        allocator.free(listed);
+    }
+    try std.testing.expectEqual(@as(usize, 1), listed.len);
+    try std.testing.expectEqualStrings("Markdown title", listed[0].title);
+    try std.testing.expectEqualStrings("active", listed[0].status);
+
+    const loaded = try get(allocator, fixture.paths, "ops", created.id);
+    defer loaded.deinit(allocator);
+    try std.testing.expectEqualStrings("Markdown summary.", loaded.summary);
+    try std.testing.expectEqualStrings("# Markdown body\nThis edit bypassed orders.json.\n", loaded.content);
+
+    const updated = try update(allocator, fixture.paths, "ops", created.id, .{
+        .summary = "Updated from markdown source.",
+        .updated_at_ms = 3000,
+    });
+    defer updated.deinit(allocator);
+    try std.testing.expectEqualStrings("Markdown title", updated.title);
+    try std.testing.expectEqualStrings("Updated from markdown source.", updated.summary);
+    try std.testing.expectEqualStrings("# Markdown body\nThis edit bypassed orders.json.\n", updated.content);
+}
+
+test "orders remove deletes markdown document and derived table row" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+
+    const created = try create(allocator, fixture.paths, "ops", .{
+        .title = "Delete me",
+        .content = "# Delete me\n",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer created.deinit(allocator);
+
+    const archived = try transition(allocator, fixture.paths, "ops", created.id, .archive, 1100);
+    defer archived.deinit(allocator);
+    try std.testing.expectEqualStrings("archived", archived.status);
+
+    const still_present = try get(allocator, fixture.paths, "ops", created.id);
+    defer still_present.deinit(allocator);
+    try std.testing.expectEqualStrings("archived", still_present.status);
+
+    const removed = try remove(allocator, fixture.paths, "ops", created.id);
+    defer removed.deinit(allocator);
+    try std.testing.expectEqualStrings(created.id, removed.id);
+    try std.testing.expectEqualStrings("archived", removed.status);
+
+    try std.testing.expectError(error.OrderNotFound, get(allocator, fixture.paths, "ops", created.id));
+
+    const doc_path = try fixture.paths.spaceOrderDoc(allocator, "ops", created.id);
+    defer allocator.free(doc_path);
+    try expectFileNotFound(doc_path);
+
+    const loaded = try list(allocator, fixture.paths, "ops");
+    defer allocator.free(loaded);
+    try std.testing.expectEqual(@as(usize, 0), loaded.len);
 }
 
 test "orders create returns clean error when table save fails" {
