@@ -95,6 +95,11 @@ pub const Paths = struct {
         return std.fs.path.join(allocator, &.{ self.root, "spaces", space_id, "orders", filename });
     }
 
+    /// `{root}/spaces/{space_id}/charter.md`
+    pub fn spaceCharterDoc(self: Paths, allocator: std.mem.Allocator, space_id: []const u8) ![]const u8 {
+        return std.fs.path.join(allocator, &.{ self.root, "spaces", space_id, "charter.md" });
+    }
+
     /// `{root}/spaces/{space_id}/market/library`
     pub fn spacePackageLibraryDir(self: Paths, allocator: std.mem.Allocator, space_id: []const u8) ![]const u8 {
         return std.fs.path.join(allocator, &.{ self.root, "spaces", space_id, "market", "library" });

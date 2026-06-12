@@ -524,6 +524,48 @@ test "integration harness covers spaces CRUD and scoped instance list" {
     }
 }
 
+test "integration harness covers charter GET PUT and per-space file storage" {
+    var server = try IntegrationServer.start(std.testing.allocator);
+    defer server.deinit();
+
+    {
+        const resp = try server.fetch(.{ .path = "/api/charter?space=ops" });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"space_id\":\"ops\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"stage\":\"draft\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"autonomy_defaults\":\"T1\"") != null);
+    }
+
+    {
+        const resp = try server.fetch(.{
+            .path = "/api/charter?space=ops",
+            .method = .PUT,
+            .body = "{\"stage\":\"alpha\",\"mission\":\"Keep integration work moving.\",\"autonomy_bounds\":\"Ask before spend.\",\"autonomy_defaults\":\"T1\",\"metrics\":\"green tests\"}",
+        });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"stage\":\"alpha\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "Keep integration work moving.") != null);
+    }
+
+    {
+        const resp = try server.fetch(.{ .path = "/api/charter?space=ops" });
+        defer resp.deinit(std.testing.allocator);
+        try std.testing.expectEqual(std.http.Status.ok, resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"metrics\":\"green tests\"") != null);
+    }
+
+    const root = try server.nullhubRoot();
+    defer std.testing.allocator.free(root);
+    const doc_path = try std.fs.path.join(std.testing.allocator, &.{ root, "spaces", "ops", "charter.md" });
+    defer std.testing.allocator.free(doc_path);
+    const doc = try std_compat.fs.readFileAbsolute(std.testing.allocator, doc_path, 1024 * 1024);
+    defer std.testing.allocator.free(doc);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "## Autonomy Bounds") != null);
+    try std.testing.expect(std.mem.indexOf(u8, doc, "Ask before spend.") != null);
+}
+
 test "integration harness covers event append filters and cursor pagination" {
     var server = try IntegrationServer.start(std.testing.allocator);
     defer server.deinit();

@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const std_compat = @import("compat");
 const component_cli = @import("component_cli.zig");
+const charter_mod = @import("charter.zig");
 const durable_file = @import("durable_file.zig");
 const orders_mod = @import("orders.zig");
 const paths_mod = @import("paths.zig");
@@ -53,6 +54,15 @@ pub fn renderManagedOrders(
     space_id: []const u8,
     all_orders: []const orders_mod.Order,
 ) !RenderedManagedOrders {
+    return renderManagedOrdersWithCharter(allocator, space_id, all_orders, null);
+}
+
+pub fn renderManagedOrdersWithCharter(
+    allocator: std.mem.Allocator,
+    space_id: []const u8,
+    all_orders: []const orders_mod.Order,
+    space_charter: ?charter_mod.Charter,
+) !RenderedManagedOrders {
     var buf = std.array_list.Managed(u8).init(allocator);
     errdefer buf.deinit();
 
@@ -65,6 +75,14 @@ pub fn renderManagedOrders(
     try appendInlineBudgeted(&buf, space_id, &overflowed);
     try appendBudgeted(&buf, "`\n\n", &overflowed);
     try appendBudgeted(&buf, "Only Orders with `kind: policy` and `status: active` are included.\n\n", &overflowed);
+
+    if (space_charter) |charter| {
+        if (charterIsConfigured(charter)) {
+            try appendCharterSection(&buf, charter, &overflowed);
+        }
+    }
+
+    try appendBudgeted(&buf, "## Active Policy Orders\n\n", &overflowed);
 
     for (all_orders) |order| {
         if (!isActivePolicyOrder(order)) continue;
@@ -96,8 +114,10 @@ pub fn syncManagedOrdersForSpace(
         for (loaded) |order| order.deinit(allocator);
         allocator.free(loaded);
     }
+    const space_charter = try charter_mod.loadOrDefault(allocator, paths, space_id);
+    defer space_charter.deinit(allocator);
 
-    const rendered = try renderManagedOrders(allocator, space_id, loaded);
+    const rendered = try renderManagedOrdersWithCharter(allocator, space_id, loaded, space_charter);
     defer rendered.deinit(allocator);
 
     var result = SyncResult{
@@ -180,6 +200,47 @@ pub fn appendUnsupportedBootstrapEvent(
 
 fn isActivePolicyOrder(order: orders_mod.Order) bool {
     return std.mem.eql(u8, order.status, "active") and std.ascii.eqlIgnoreCase(order.kind, "policy");
+}
+
+fn charterIsConfigured(charter: charter_mod.Charter) bool {
+    return !std.mem.eql(u8, charter.stage, charter_mod.default_stage) or
+        charter.mission.len > 0 or
+        charter.autonomy_bounds.len > 0 or
+        !std.mem.eql(u8, charter.autonomy_defaults, charter_mod.default_autonomy_defaults) or
+        charter.metrics.len > 0;
+}
+
+fn appendCharterSection(
+    buf: *std.array_list.Managed(u8),
+    charter: charter_mod.Charter,
+    overflowed: *bool,
+) !void {
+    try appendBudgeted(buf, "## Space Charter\n\n", overflowed);
+    try appendBudgeted(buf, "- Stage: `", overflowed);
+    try appendInlineBudgeted(buf, charter.stage, overflowed);
+    try appendBudgeted(buf, "`\n", overflowed);
+    try appendBudgeted(buf, "- Source: `", overflowed);
+    try appendInlineBudgeted(buf, charter.doc_path, overflowed);
+    try appendBudgeted(buf, "`\n", overflowed);
+    try appendBudgeted(buf, "- Autonomy defaults: ", overflowed);
+    try appendInlineBudgeted(buf, charter.autonomy_defaults, overflowed);
+    try appendBudgeted(buf, "\n\n", overflowed);
+
+    if (charter.mission.len > 0) {
+        try appendBudgeted(buf, "Mission:\n", overflowed);
+        try appendBudgeted(buf, charter.mission, overflowed);
+        try appendBudgeted(buf, "\n\n", overflowed);
+    }
+    if (charter.autonomy_bounds.len > 0) {
+        try appendBudgeted(buf, "Autonomy bounds:\n", overflowed);
+        try appendBudgeted(buf, charter.autonomy_bounds, overflowed);
+        try appendBudgeted(buf, "\n\n", overflowed);
+    }
+    if (charter.metrics.len > 0) {
+        try appendBudgeted(buf, "Metrics:\n", overflowed);
+        try appendBudgeted(buf, charter.metrics, overflowed);
+        try appendBudgeted(buf, "\n\n", overflowed);
+    }
 }
 
 fn appendOrderSection(
@@ -655,6 +716,31 @@ test "managed ORDERS.md compilation includes only active policy orders" {
     try std.testing.expect(std.mem.indexOf(u8, rendered.bytes, "approval is older than one hour") != null);
     try std.testing.expect(std.mem.indexOf(u8, rendered.bytes, "Suspended policy") == null);
     try std.testing.expect(std.mem.indexOf(u8, rendered.bytes, "Active non-policy order") == null);
+}
+
+test "managed ORDERS.md compilation injects configured Space Charter" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+
+    var space_charter = try charter_mod.put(allocator, fixture.paths, "ops", .{
+        .stage = "alpha",
+        .mission = "Keep operations reliable.",
+        .autonomy_bounds = "Ask before deleting customer data.",
+        .autonomy_defaults = "T1 by default.",
+        .metrics = "incident count and cycle time",
+    });
+    defer space_charter.deinit(allocator);
+
+    const rendered = try renderManagedOrdersWithCharter(allocator, "ops", &.{}, space_charter);
+    defer rendered.deinit(allocator);
+
+    try std.testing.expectEqual(@as(usize, 0), rendered.active_count);
+    try std.testing.expect(std.mem.indexOf(u8, rendered.bytes, "## Space Charter") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered.bytes, "Stage: `alpha`") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered.bytes, "Keep operations reliable.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered.bytes, "T1 by default.") != null);
+    try std.testing.expect(std.mem.indexOf(u8, rendered.bytes, "No active policy Orders.") != null);
 }
 
 test "managed ORDERS.md budget guard truncates with overflow warning" {

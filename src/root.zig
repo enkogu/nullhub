@@ -4,6 +4,8 @@ pub const api_cli = @import("api_cli.zig");
 pub const approvals_api = @import("api/approvals.zig");
 pub const approval_notify_api = @import("api/approval_notify.zig");
 pub const builder = @import("installer/builder.zig");
+pub const charter = @import("core/charter.zig");
+pub const charter_api = @import("api/charter.zig");
 pub const cli = @import("cli.zig");
 pub const component_cli = @import("core/component_cli.zig");
 pub const components_api = @import("api/components.zig");
@@ -72,6 +74,8 @@ test {
     _ = approvals_api;
     _ = approval_notify_api;
     _ = builder;
+    _ = charter;
+    _ = charter_api;
     _ = cli;
     _ = component_cli;
     _ = components_api;

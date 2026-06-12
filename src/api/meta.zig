@@ -139,6 +139,13 @@ const required_order_space_query = ParamSpec{
     .description = "Selected Space id. Order reads and writes are always space-scoped.",
 };
 
+const required_charter_space_query = ParamSpec{
+    .name = "space",
+    .location = "query",
+    .required = true,
+    .description = "Selected Space id. Charter reads and writes are always space-scoped.",
+};
+
 const required_market_space_query = ParamSpec{
     .name = "space",
     .location = "query",
@@ -365,6 +372,7 @@ const reveal_query_params = [_]ParamSpec{reveal_query};
 const space_query_params = [_]ParamSpec{space_query};
 const event_query_params = [_]ParamSpec{ required_event_space_query, event_type_query, event_source_query, event_subject_type_query, event_subject_id_query, event_severity_query, event_limit_query, event_cursor_query };
 const order_query_params = [_]ParamSpec{required_order_space_query};
+const charter_query_params = [_]ParamSpec{required_charter_space_query};
 const market_query_params = [_]ParamSpec{required_market_space_query};
 const reveal_space_query_params = [_]ParamSpec{ reveal_query, space_query };
 const logs_query_params = [_]ParamSpec{ lines_query, log_source_query };
@@ -423,6 +431,17 @@ const route_examples_orders = [_]ExampleSpec{
     .{
         .command = "nullhub api DELETE '/api/orders/order-1?space=ops'",
         .description = "Delete an Order document and derived table row.",
+    },
+};
+
+const route_examples_charter = [_]ExampleSpec{
+    .{
+        .command = "nullhub api GET '/api/charter?space=ops' --pretty",
+        .description = "Read the Space Charter mission, autonomy defaults, stage, bounds, and metrics.",
+    },
+    .{
+        .command = "nullhub api PUT '/api/charter?space=ops' --body '{\"stage\":\"alpha\",\"mission\":\"Keep operations moving\",\"autonomy_defaults\":\"T1\",\"autonomy_bounds\":\"Ask before external spend\",\"metrics\":\"cycle time\"}'",
+        .description = "Replace the file-backed Space Charter and refresh managed policy bootstrap files.",
     },
 };
 
@@ -960,6 +979,29 @@ const routes = [_]RouteSpec{
         .query_params = order_query_params[0..],
         .response = "Updated Order record.",
         .examples = route_examples_orders[2..],
+    },
+    .{
+        .id = "charter.get",
+        .method = "GET",
+        .path_template = "/api/charter",
+        .category = "charter",
+        .summary = "Read one Space Charter from tenant product storage.",
+        .auth_mode = "optional_bearer",
+        .query_params = charter_query_params[0..],
+        .response = "Charter record with stage, mission, autonomy bounds, autonomy defaults, metrics, and doc_path.",
+        .examples = route_examples_charter[0..1],
+    },
+    .{
+        .id = "charter.put",
+        .method = "PUT",
+        .path_template = "/api/charter",
+        .category = "charter",
+        .summary = "Replace one Space Charter and refresh managed policy bootstrap files.",
+        .auth_mode = "optional_bearer",
+        .query_params = charter_query_params[0..],
+        .body = "Charter payload with stage, mission, autonomy_bounds, autonomy_defaults, and metrics.",
+        .response = "Updated Charter record.",
+        .examples = route_examples_charter[1..],
     },
     .{
         .id = "providers.list",
@@ -1904,6 +1946,8 @@ test "jsonAlloc includes stable route metadata" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.installed.get\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.export.post\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.library.get\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"charter.get\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"charter.put\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"orders.delete\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"method\": \"DELETE\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "/api/instances/{component}/{name}") != null);
@@ -1915,6 +1959,9 @@ test "textAlloc renders grouped route list" {
 
     try std.testing.expect(std.mem.indexOf(u8, text, "[meta]") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "[market]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "[charter]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/charter") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "PUT /api/charter") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/market/catalog") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/market/installed") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "POST /api/market/export") != null);
