@@ -12,6 +12,7 @@
   import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
   import { getSelectedTicketsInstance } from "$lib/nullstack/backendSelection";
   import { loopRoutes } from "$lib/loops/routes";
+  import { promotedLoopOrderInput, promotedOrderHref } from "$lib/loops/promoteOrder";
   import { spacesStore } from "$lib/stores/spaces.svelte";
   import LoopGalleryPanel from "$lib/components/loops/LoopGalleryPanel.svelte";
   import { detailHref } from "$lib/components/loops/loopRunDetail";
@@ -57,6 +58,8 @@
   let refreshing = $state(false);
   let error = $state("");
   let message = $state("");
+  let promotedOrderLink = $state("");
+  let promotedOrderTitle = $state("");
   let startDialogOpen = $state(false);
   let startPreselectedId = $state("");
   let customDialogOpen = $state(false);
@@ -281,6 +284,34 @@
     await loadAll({ quiet: true });
   }
 
+  function promoteActionKey(loop: LoopSummary): string {
+    return `promote:${loop.pipeline.id}`;
+  }
+
+  async function promoteLoopToOrder(loop: LoopSummary) {
+    const spaceId = spacesStore.selectedSpaceId;
+    error = "";
+    message = "";
+    promotedOrderLink = "";
+    promotedOrderTitle = "";
+    if (!spaceId) {
+      error = "Select a Space before promoting a Loop to an Order.";
+      return;
+    }
+
+    actionLoading = promoteActionKey(loop);
+    try {
+      const order = await api.createOrder(promotedLoopOrderInput(loop, spaceId));
+      promotedOrderLink = promotedOrderHref(order, spaceId);
+      promotedOrderTitle = order.title;
+      message = `Order draft created for ${loop.pipeline.name || order.title}.`;
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      actionLoading = "";
+    }
+  }
+
   async function installTemplate(template: LoopTemplate) {
     installingSlug = template.slug;
     error = "";
@@ -373,7 +404,14 @@
     <div class="alert alert-error">{error}</div>
   {/if}
   {#if message}
-    <div class="alert alert-success">{message}</div>
+    <div class="alert alert-success success-banner">
+      <span>{message}</span>
+      {#if promotedOrderLink}
+        <Button variant="outline" size="sm" href={promotedOrderLink}>
+          Open {promotedOrderTitle || "draft"}
+        </Button>
+      {/if}
+    </div>
   {/if}
 
   {#if systemIssue()}
@@ -498,6 +536,14 @@
               <div class="loop-actions">
                 <Button size="sm" onclick={() => openStartDialog(loop)}>Start</Button>
                 <Button variant="outline" size="sm" href={loopRoutes.runs({ loop: loop.pipeline.id })}>Runs</Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onclick={() => promoteLoopToOrder(loop)}
+                  disabled={actionLoading === promoteActionKey(loop)}
+                >
+                  {actionLoading === promoteActionKey(loop) ? "Promoting" : "Promote to Order"}
+                </Button>
               </div>
             </Card>
           {/each}
@@ -630,6 +676,14 @@
               <div class="loop-actions">
                 <Button size="sm" onclick={() => openStartDialog(loop)}>Start</Button>
                 <Button variant="outline" size="sm" href={loopRoutes.runs({ loop: loop.pipeline.id })}>Runs</Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onclick={() => promoteLoopToOrder(loop)}
+                  disabled={actionLoading === promoteActionKey(loop)}
+                >
+                  {actionLoading === promoteActionKey(loop) ? "Promoting" : "Promote to Order"}
+                </Button>
               </div>
             </Card>
           {/each}
@@ -707,6 +761,17 @@
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
+  }
+
+  .success-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .success-banner span {
+    min-width: 0;
   }
 
   .system-banner div {
@@ -882,6 +947,7 @@
 
   .loop-actions {
     display: flex;
+    flex-wrap: wrap;
     margin-top: auto;
     gap: 0.5rem;
   }
