@@ -16,6 +16,7 @@ type NullHubFixtureOptions = {
   nullticketsTasks?: Record<string, unknown>[];
   nullticketsRunEvents?: Record<string, unknown>[];
   nullticketsArtifacts?: Record<string, unknown>[];
+  nullticketsStatus?: number;
   nullclawHistorySessions?: Record<string, unknown>[];
   nullclawHistoryMessages?: Record<string, Record<string, unknown>[]>;
   nullclawHistoryStatus?: number;
@@ -577,8 +578,13 @@ async function nullTicketsActionRoute(
   options: NullHubFixtureOptions,
   pipelines: Record<string, unknown>[],
   tasks: Record<string, unknown>[],
+  artifacts: Record<string, unknown>[],
 ) {
   recordRequest(route, options);
+  if (options.nullticketsStatus && options.nullticketsStatus >= 400) {
+    await fulfillJson(route, { error: 'NullTickets unavailable.' }, options.nullticketsStatus);
+    return;
+  }
   const url = new URL(route.request().url());
   const payload = route.request().postDataJSON() as { method?: string; path?: string; payload?: any } | null;
   const method = String(payload?.method || 'GET').toUpperCase();
@@ -641,6 +647,15 @@ async function nullTicketsActionRoute(
       (item) => String(item.id || '') === taskId && matchesFixtureInstance(item, instanceName) && matchesFixtureSpace(item, space),
     );
     await fulfillJson(route, task || { error: 'Task not found.' }, task ? 200 : 404);
+    return;
+  }
+
+  if (method === 'GET' && (path === '/artifacts' || path.startsWith('/artifacts?'))) {
+    const space = url.searchParams.get('space');
+    const query = new URL(path, 'http://nulltickets.local').searchParams;
+    const limit = Number(query.get('limit') || '50');
+    const filteredArtifacts = artifacts.filter((artifact) => matchesFixtureSpace(artifact, space));
+    await fulfillJson(route, { items: filteredArtifacts.slice(0, Number.isFinite(limit) ? limit : 50) });
     return;
   }
 
@@ -792,6 +807,7 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   const spaces = fixtureSpaces.map((space) => ({ ...space }));
   const pipelines = (options.nullticketsPipelines || []).map((pipeline) => ({ ...pipeline }));
   const tasks = (options.nullticketsTasks || []).map((task) => ({ ...task }));
+  const artifacts = (options.nullticketsArtifacts || []).map((artifact) => ({ ...artifact }));
 
   await page.route('**/site.webmanifest', (route) =>
     fulfillJson(route, { name: 'NullHub', short_name: 'NullHub', start_url: '/', display: 'standalone' }),
@@ -849,9 +865,11 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/instances/*/*/cron**', (route) => instanceDetailRoute(route, options));
   await page.route('**/api/instances/*/*/docs**', (route) => instanceDetailRoute(route, options));
   await page.route('**/nullhub-api/instances/*/*/docs**', (route) => instanceDetailRoute(route, options));
-  await page.route('**/api/instances/nulltickets/*/tickets**', (route) => nullTicketsActionRoute(route, options, pipelines, tasks));
+  await page.route('**/api/instances/nulltickets/*/tickets**', (route) =>
+    nullTicketsActionRoute(route, options, pipelines, tasks, artifacts),
+  );
   await page.route('**/nullhub-api/instances/nulltickets/*/tickets**', (route) =>
-    nullTicketsActionRoute(route, options, pipelines, tasks),
+    nullTicketsActionRoute(route, options, pipelines, tasks, artifacts),
   );
   await page.route('**/api/providers**', (route) =>
     jsonRoute(route, options, fixtureProviders(new URL(route.request().url()).searchParams.get('space'))),
