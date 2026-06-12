@@ -4,6 +4,7 @@ const durable_file = @import("../core/durable_file.zig");
 const orders = @import("../core/orders.zig");
 const paths_mod = @import("../core/paths.zig");
 const state_mod = @import("../core/state.zig");
+const approvals_api = @import("approvals.zig");
 const helpers = @import("helpers.zig");
 
 const appendEscaped = helpers.appendEscaped;
@@ -85,6 +86,31 @@ pub fn beforeDelete(
     return removeCron(allocator, paths, api, order);
 }
 
+pub fn beforeCronRun(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    state: *state_mod.State,
+    component: []const u8,
+    instance: []const u8,
+    cron_job_id: []const u8,
+    now_ms: i64,
+) ?helpers.ApiResponse {
+    const space_id = instanceSpace(state, component, instance);
+    var link = (findLinkByCronJob(allocator, paths, space_id, component, instance, cron_job_id) catch return helpers.serverError()) orelse return null;
+    defer link.deinit(allocator);
+
+    const order = orders.get(allocator, paths, link.space_id, link.order_id) catch |err| switch (err) {
+        error.InvalidOrderId, error.OrderNotFound => return null,
+        else => return helpers.serverError(),
+    };
+    defer order.deinit(allocator);
+
+    const tier = scheduleExecutionTier(order);
+    if (tier == .t0) return null;
+
+    return requireScheduleApproval(allocator, state, link, order, tier, now_ms);
+}
+
 pub fn emitExecutedForCronRun(
     allocator: std.mem.Allocator,
     paths: paths_mod.Paths,
@@ -95,34 +121,34 @@ pub fn emitExecutedForCronRun(
     run_ref: []const u8,
     now_ms: i64,
 ) !void {
-    if (run_ref.len == 0) return;
-
     const space_id = instanceSpace(state, component, instance);
     var link = (try findLinkByCronJob(allocator, paths, space_id, component, instance, cron_job_id)) orelse return;
     defer link.deinit(allocator);
 
-    if (std.mem.eql(u8, link.last_run_ref, run_ref)) return;
+    const has_new_run_ref = run_ref.len > 0 and !std.mem.eql(u8, link.last_run_ref, run_ref);
 
-    const payload_json = try std.json.Stringify.valueAlloc(allocator, .{
-        .component = component,
-        .instance = instance,
-        .cron_job_id = cron_job_id,
-        .run_ref = run_ref,
-    }, .{});
-    defer allocator.free(payload_json);
+    if (has_new_run_ref) {
+        const payload_json = try std.json.Stringify.valueAlloc(allocator, .{
+            .component = component,
+            .instance = instance,
+            .cron_job_id = cron_job_id,
+            .run_ref = run_ref,
+        }, .{});
+        defer allocator.free(payload_json);
 
-    _ = try state.addEvent(.{
-        .space_id = link.space_id,
-        .event_type = "order.executed",
-        .source = "cron",
-        .subject_type = "order",
-        .subject_id = link.order_id,
-        .title = "Order executed",
-        .summary = "A schedule order cron run completed.",
-        .severity = "success",
-        .payload_json = payload_json,
-        .created_at_ms = now_ms,
-    });
+        _ = try state.addEvent(.{
+            .space_id = link.space_id,
+            .event_type = "order.executed",
+            .source = "cron",
+            .subject_type = "order",
+            .subject_id = link.order_id,
+            .title = "Order executed",
+            .summary = "A schedule order cron run completed.",
+            .severity = "success",
+            .payload_json = payload_json,
+            .created_at_ms = now_ms,
+        });
+    }
 
     try upsertLink(allocator, paths, .{
         .order_id = link.order_id,
@@ -130,11 +156,11 @@ pub fn emitExecutedForCronRun(
         .component = link.component,
         .instance = link.instance,
         .cron_job_id = link.cron_job_id,
-        .last_run_ref = run_ref,
+        .last_run_ref = if (has_new_run_ref) run_ref else link.last_run_ref,
         .created_at_ms = link.created_at_ms,
         .updated_at_ms = now_ms,
     });
-    try state.save();
+    if (has_new_run_ref) try state.save();
 }
 
 fn ensureCronActive(
@@ -273,6 +299,151 @@ fn instanceSpace(state: *state_mod.State, component: []const u8, instance: []con
         if (entry.space_id.len > 0) return entry.space_id;
     }
     return "default";
+}
+
+const ExecutionTier = enum {
+    t0,
+    t1,
+    t2,
+
+    fn string(self: ExecutionTier) []const u8 {
+        return switch (self) {
+            .t0 => "T0",
+            .t1 => "T1",
+            .t2 => "T2",
+        };
+    }
+};
+
+fn requireScheduleApproval(
+    allocator: std.mem.Allocator,
+    state: *state_mod.State,
+    link: Link,
+    order: orders.Order,
+    tier: ExecutionTier,
+    now_ms: i64,
+) ?helpers.ApiResponse {
+    const target_ref = std.fmt.allocPrint(allocator, "order:{s}:space:{s}:cron:{s}", .{ link.order_id, link.space_id, link.cron_job_id }) catch return helpers.serverError();
+    defer allocator.free(target_ref);
+
+    if (latestApprovalForTarget(state, link.space_id, target_ref)) |approval| {
+        if (approval.created_at_ms >= link.updated_at_ms) {
+            if (std.mem.eql(u8, approval.status, "approved")) return null;
+            if (std.mem.eql(u8, approval.status, "pending")) {
+                return approvalRequiredResponse(allocator, approval, tier);
+            }
+            return approvalBlockedResponse(allocator, approval, tier);
+        }
+    }
+
+    const title = std.fmt.allocPrint(allocator, "Approve {s}", .{order.title}) catch return helpers.serverError();
+    defer allocator.free(title);
+    const summary = std.fmt.allocPrint(
+        allocator,
+        "{s} schedule order execution requires signature approval before cron job {s} runs.",
+        .{ tier.string(), link.cron_job_id },
+    ) catch return helpers.serverError();
+    defer allocator.free(summary);
+
+    const approval = approvals_api.createProducerApproval(state, .{
+        .space_id = link.space_id,
+        .kind = "signature",
+        .queue = "orders",
+        .target_ref = target_ref,
+        .title = title,
+        .summary = summary,
+        .created_at_ms = now_ms,
+    }, now_ms) catch return helpers.serverError();
+
+    return approvalRequiredResponse(allocator, approval, tier);
+}
+
+fn latestApprovalForTarget(state: *state_mod.State, space_id: []const u8, target_ref: []const u8) ?state_mod.Approval {
+    var latest: ?state_mod.Approval = null;
+    for (state.approvalsList()) |approval| {
+        if (!std.mem.eql(u8, approval.space_id, space_id)) continue;
+        if (!std.mem.eql(u8, approval.target_ref, target_ref)) continue;
+        if (latest == null or approval.id > latest.?.id) latest = approval;
+    }
+    return latest;
+}
+
+fn approvalRequiredResponse(allocator: std.mem.Allocator, approval: state_mod.Approval, tier: ExecutionTier) helpers.ApiResponse {
+    const body = std.json.Stringify.valueAlloc(allocator, .{
+        .status = "approval_required",
+        .tier = tier.string(),
+        .approval_id = approval.id,
+        .target_ref = approval.target_ref,
+    }, .{}) catch return helpers.serverError();
+    return .{ .status = "202 Accepted", .content_type = "application/json", .body = body };
+}
+
+fn approvalBlockedResponse(allocator: std.mem.Allocator, approval: state_mod.Approval, tier: ExecutionTier) helpers.ApiResponse {
+    const body = std.json.Stringify.valueAlloc(allocator, .{
+        .@"error" = "schedule execution approval was not approved",
+        .tier = tier.string(),
+        .approval_id = approval.id,
+        .approval_status = approval.status,
+        .target_ref = approval.target_ref,
+    }, .{}) catch return helpers.serverError();
+    return .{ .status = "409 Conflict", .content_type = "application/json", .body = body };
+}
+
+fn scheduleExecutionTier(order: orders.Order) ExecutionTier {
+    return tierFromText(order.content) orelse
+        tierFromText(order.summary) orelse
+        .t0;
+}
+
+fn tierFromText(text: []const u8) ?ExecutionTier {
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    while (lines.next()) |raw_line| {
+        if (tierFromLine(raw_line)) |tier| return tier;
+    }
+    return null;
+}
+
+fn tierFromLine(raw_line: []const u8) ?ExecutionTier {
+    const sep = std.mem.indexOfScalar(u8, raw_line, ':') orelse
+        (std.mem.indexOfScalar(u8, raw_line, '=') orelse return null);
+    const raw_key = std.mem.trim(u8, raw_line[0..sep], " \t\r\"'{}.,");
+    const raw_value = std.mem.trim(u8, raw_line[sep + 1 ..], " \t\r\"'{}.,");
+
+    var key_buf: [64]u8 = undefined;
+    const normalized_key = normalizeTierKey(&key_buf, raw_key) orelse return null;
+    if (!std.mem.eql(u8, normalized_key, "tier") and
+        !std.mem.eql(u8, normalized_key, "autonomytier") and
+        !std.mem.eql(u8, normalized_key, "approvaltier") and
+        !std.mem.eql(u8, normalized_key, "policytier"))
+    {
+        return null;
+    }
+
+    return tierFromValue(raw_value);
+}
+
+fn normalizeTierKey(buf: []u8, raw_key: []const u8) ?[]const u8 {
+    if (raw_key.len == 0 or raw_key.len > buf.len) return null;
+    var len: usize = 0;
+    for (raw_key) |byte| {
+        if (byte == '_' or byte == '-' or byte == ' ') continue;
+        if (len >= buf.len) return null;
+        buf[len] = std.ascii.toLower(byte);
+        len += 1;
+    }
+    return buf[0..len];
+}
+
+fn tierFromValue(raw_value: []const u8) ?ExecutionTier {
+    var end: usize = 0;
+    while (end < raw_value.len and !std.ascii.isWhitespace(raw_value[end]) and raw_value[end] != ',' and raw_value[end] != '}') {
+        end += 1;
+    }
+    const value = std.mem.trim(u8, raw_value[0..end], " \t\r\"'");
+    if (std.ascii.eqlIgnoreCase(value, "t0") or std.mem.eql(u8, value, "0")) return .t0;
+    if (std.ascii.eqlIgnoreCase(value, "t1") or std.mem.eql(u8, value, "1")) return .t1;
+    if (std.ascii.eqlIgnoreCase(value, "t2") or std.mem.eql(u8, value, "2")) return .t2;
+    return null;
 }
 
 fn buildCreateBody(allocator: std.mem.Allocator, order: orders.Order) ![]const u8 {
@@ -753,4 +924,181 @@ test "schedule order bridge emits order executed event with run ref" {
     const link = (try findLinkByOrder(allocator, fixture.paths, "ops", "order-1")).?;
     defer link.deinit(allocator);
     try std.testing.expectEqualStrings("run-99", link.last_run_ref);
+}
+
+test "schedule order bridge T1 cron run creates signature approval and blocks execution" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+    try state.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0", .space_id = "ops" });
+
+    var order = try orders.create(allocator, fixture.paths, "ops", .{
+        .id = "order-1",
+        .title = "Morning report",
+        .kind = "schedule",
+        .schedule = "0 9 * * *",
+        .content = "---\ntier: T1\n---\n# Brief\nSend the morning report.",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer order.deinit(allocator);
+
+    try upsertLink(allocator, fixture.paths, .{
+        .order_id = "order-1",
+        .space_id = "ops",
+        .component = "nullclaw",
+        .instance = "my-agent",
+        .cron_job_id = "job-42",
+        .created_at_ms = 1500,
+        .updated_at_ms = 1500,
+    });
+
+    const first = beforeCronRun(allocator, fixture.paths, &state, "nullclaw", "my-agent", "job-42", 2000).?;
+    defer allocator.free(first.body);
+    try std.testing.expectEqualStrings("202 Accepted", first.status);
+    try std.testing.expect(std.mem.indexOf(u8, first.body, "\"status\":\"approval_required\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, first.body, "\"tier\":\"T1\"") != null);
+    try std.testing.expectEqual(@as(usize, 1), state.approvalsList().len);
+    try std.testing.expectEqual(@as(usize, 1), state.eventsList().len);
+
+    const approval = state.approvalsList()[0];
+    try std.testing.expectEqualStrings("signature", approval.kind);
+    try std.testing.expectEqualStrings("orders", approval.queue);
+    try std.testing.expectEqualStrings("order:order-1:space:ops:cron:job-42", approval.target_ref);
+    try std.testing.expectEqualStrings("pending", approval.status);
+    try std.testing.expectEqualStrings("approval.created", state.eventsList()[0].event_type);
+
+    const repeat = beforeCronRun(allocator, fixture.paths, &state, "nullclaw", "my-agent", "job-42", 2500).?;
+    defer allocator.free(repeat.body);
+    try std.testing.expectEqualStrings("202 Accepted", repeat.status);
+    try std.testing.expect(std.mem.indexOf(u8, repeat.body, "\"approval_id\":1") != null);
+    try std.testing.expectEqual(@as(usize, 1), state.approvalsList().len);
+}
+
+test "schedule order bridge scopes approvals for same order and cron ids across spaces" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+    try state.addInstance("nullclaw", "ops-agent", .{ .version = "1.0.0", .space_id = "ops" });
+    try state.addInstance("nullclaw", "lab-agent", .{ .version = "1.0.0", .space_id = "lab" });
+
+    var ops_order = try orders.create(allocator, fixture.paths, "ops", .{
+        .id = "order-1",
+        .title = "Ops report",
+        .kind = "schedule",
+        .schedule = "0 9 * * *",
+        .content = "tier: T1\nSend the ops report.",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer ops_order.deinit(allocator);
+    var lab_order = try orders.create(allocator, fixture.paths, "lab", .{
+        .id = "order-1",
+        .title = "Lab report",
+        .kind = "schedule",
+        .schedule = "0 9 * * *",
+        .content = "tier: T1\nSend the lab report.",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer lab_order.deinit(allocator);
+
+    try upsertLink(allocator, fixture.paths, .{
+        .order_id = "order-1",
+        .space_id = "ops",
+        .component = "nullclaw",
+        .instance = "ops-agent",
+        .cron_job_id = "job-shared",
+        .created_at_ms = 1500,
+        .updated_at_ms = 1500,
+    });
+    try upsertLink(allocator, fixture.paths, .{
+        .order_id = "order-1",
+        .space_id = "lab",
+        .component = "nullclaw",
+        .instance = "lab-agent",
+        .cron_job_id = "job-shared",
+        .created_at_ms = 1500,
+        .updated_at_ms = 1500,
+    });
+
+    const ops_first = beforeCronRun(allocator, fixture.paths, &state, "nullclaw", "ops-agent", "job-shared", 2000).?;
+    defer allocator.free(ops_first.body);
+    try std.testing.expectEqualStrings("202 Accepted", ops_first.status);
+    try std.testing.expect(std.mem.indexOf(u8, ops_first.body, "\"approval_id\":1") != null);
+
+    const lab_first = beforeCronRun(allocator, fixture.paths, &state, "nullclaw", "lab-agent", "job-shared", 2001).?;
+    defer allocator.free(lab_first.body);
+    try std.testing.expectEqualStrings("202 Accepted", lab_first.status);
+    try std.testing.expect(std.mem.indexOf(u8, lab_first.body, "\"approval_id\":2") != null);
+
+    try std.testing.expectEqual(@as(usize, 2), state.approvalsList().len);
+    try std.testing.expectEqualStrings("ops", state.approvalsList()[0].space_id);
+    try std.testing.expectEqualStrings("order:order-1:space:ops:cron:job-shared", state.approvalsList()[0].target_ref);
+    try std.testing.expectEqualStrings("lab", state.approvalsList()[1].space_id);
+    try std.testing.expectEqualStrings("order:order-1:space:lab:cron:job-shared", state.approvalsList()[1].target_ref);
+
+    _ = try state.decideApproval(1, "approved", "", 3000);
+
+    const lab_repeat = beforeCronRun(allocator, fixture.paths, &state, "nullclaw", "lab-agent", "job-shared", 3500).?;
+    defer allocator.free(lab_repeat.body);
+    try std.testing.expectEqualStrings("202 Accepted", lab_repeat.status);
+    try std.testing.expect(std.mem.indexOf(u8, lab_repeat.body, "\"approval_id\":2") != null);
+    try std.testing.expectEqual(@as(usize, 2), state.approvalsList().len);
+}
+
+test "schedule order bridge approved T2 approval permits one cron run" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+    try state.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0", .space_id = "ops" });
+
+    var order = try orders.create(allocator, fixture.paths, "ops", .{
+        .id = "order-1",
+        .title = "Production report",
+        .kind = "schedule",
+        .schedule = "0 9 * * *",
+        .content = "{\"autonomy_tier\":\"T2\"}\n# Brief\nSend the production report.",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer order.deinit(allocator);
+
+    try upsertLink(allocator, fixture.paths, .{
+        .order_id = "order-1",
+        .space_id = "ops",
+        .component = "nullclaw",
+        .instance = "my-agent",
+        .cron_job_id = "job-42",
+        .created_at_ms = 1500,
+        .updated_at_ms = 1500,
+    });
+
+    const approval_needed = beforeCronRun(allocator, fixture.paths, &state, "nullclaw", "my-agent", "job-42", 2000).?;
+    defer allocator.free(approval_needed.body);
+    try std.testing.expectEqualStrings("202 Accepted", approval_needed.status);
+    try std.testing.expect(std.mem.indexOf(u8, approval_needed.body, "\"tier\":\"T2\"") != null);
+
+    _ = try state.decideApproval(1, "approved", "", 3000);
+    try std.testing.expect(beforeCronRun(allocator, fixture.paths, &state, "nullclaw", "my-agent", "job-42", 3500) == null);
+
+    try emitExecutedForCronRun(allocator, fixture.paths, &state, "nullclaw", "my-agent", "job-42", "run-1", 4000);
+
+    const next_run = beforeCronRun(allocator, fixture.paths, &state, "nullclaw", "my-agent", "job-42", 5000).?;
+    defer allocator.free(next_run.body);
+    try std.testing.expectEqualStrings("202 Accepted", next_run.status);
+    try std.testing.expect(std.mem.indexOf(u8, next_run.body, "\"approval_id\":2") != null);
+    try std.testing.expectEqual(@as(usize, 2), state.approvalsList().len);
 }
