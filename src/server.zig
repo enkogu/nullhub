@@ -3392,6 +3392,68 @@ test "route emits event for managed nullboiler workflow run" {
     try std.testing.expectEqualStrings("wf-1", events[0].subject_id);
 }
 
+test "route emits event for managed nullboiler run transition" {
+    if (comptime @import("builtin").os.tag == .windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var upstream = try proxy_api.TestUpstream.start(allocator, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 11\r\n\r\n{\"ok\":true}");
+    defer upstream.deinit();
+
+    var ctx = TestContext.init(allocator);
+    defer ctx.deinit(allocator);
+    try ctx.paths.ensureDirs();
+    try ctx.state.addInstance("nullboiler", "boiler-a", .{ .version = "1.0.0", .space_id = "ops" });
+
+    const inst_dir = try ctx.paths.instanceDir(allocator, "nullboiler", "boiler-a");
+    defer allocator.free(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
+
+    const config_path = try ctx.paths.instanceConfig(allocator, "nullboiler", "boiler-a");
+    defer allocator.free(config_path);
+    var file = try std_compat.fs.createFileAbsolute(config_path, .{ .truncate = true });
+    defer file.close();
+    const config = try std.fmt.allocPrint(allocator, "{{\"port\":{d}}}\n", .{upstream.ctx.server.listen_address.in.getPort()});
+    defer allocator.free(config);
+    try file.writeAll(config);
+
+    const key = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ "nullboiler", "boiler-a" });
+    try ctx.manager.instances.put(key, .{
+        .component = "nullboiler",
+        .name = "boiler-a",
+        .status = .running,
+        .port = upstream.ctx.server.listen_address.in.getPort(),
+    });
+
+    const resp = ctx.route(
+        allocator,
+        "POST",
+        "/api/nullboiler/runs/run-1/transition?boiler_instance=boiler-a",
+        "{\"trigger\":\"complete\"}",
+    );
+    defer allocator.free(resp.body);
+
+    try std.testing.expectEqualStrings("200 OK", resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, upstream.request(), "POST /runs/run-1/transition HTTP/1.1") != null);
+
+    {
+        const events = ctx.state.eventsList();
+        try std.testing.expectEqual(@as(usize, 1), events.len);
+        try std.testing.expectEqualStrings("ops", events[0].space_id);
+        try std.testing.expectEqualStrings("work.workflow.transitioned", events[0].event_type);
+        try std.testing.expectEqualStrings("nullboiler", events[0].source);
+        try std.testing.expectEqualStrings("workflow_run", events[0].subject_type);
+        try std.testing.expectEqualStrings("run-1", events[0].subject_id);
+    }
+
+    {
+        const events_resp = ctx.route(allocator, "GET", "/api/events?space=ops&type=work.workflow.transitioned", "");
+        defer allocator.free(events_resp.body);
+        try std.testing.expectEqualStrings("200 OK", events_resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"work.workflow.transitioned\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"subject_id\":\"run-1\"") != null);
+    }
+}
+
 test "extractHeader finds Content-Length" {
     const raw = "GET / HTTP/1.1\r\nContent-Length: 42\r\nHost: localhost\r\n\r\nbody";
     const val = extractHeader(raw, "Content-Length");
