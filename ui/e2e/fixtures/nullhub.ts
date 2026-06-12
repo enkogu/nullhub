@@ -14,6 +14,8 @@ type NullHubFixtureOptions = {
   nullboilerRuns?: Record<string, unknown>[];
   nullwatchRuns?: Record<string, unknown>[];
   instances?: Record<string, Record<string, unknown>>;
+  instanceConfig?: JsonBody;
+  instanceUsage?: JsonBody;
 };
 
 async function fulfillJson(route: Route, body: JsonBody, status = 200) {
@@ -208,6 +210,45 @@ const fixtureEvents = [
     payload: { agent: 'Athena' },
   },
 ];
+
+const fixtureInstanceConfig = {
+  agents: {
+    defaults: {
+      model: {
+        primary: 'openrouter/openai/gpt-5.5',
+      },
+    },
+  },
+  models: {
+    providers: {
+      openrouter: {
+        api_key: 'fixture-key',
+      },
+    },
+  },
+};
+
+const fixtureInstanceUsage = {
+  window: '7d',
+  generated_at: 1_780_870_800,
+  rows: [
+    {
+      provider: 'openrouter',
+      model: 'openai/gpt-5.5',
+      prompt_tokens: 1200,
+      completion_tokens: 480,
+      total_tokens: 1680,
+      requests: 6,
+      last_used: 1_780_870_800,
+    },
+  ],
+  totals: {
+    prompt_tokens: 1200,
+    completion_tokens: 480,
+    total_tokens: 1680,
+    requests: 6,
+  },
+};
 
 function requestPath(route: Route): string {
   const url = new URL(route.request().url());
@@ -411,6 +452,111 @@ async function nullTicketsActionRoute(
   await fulfillJson(route, { error: 'Unsupported NullTickets fixture action.' }, 404);
 }
 
+async function instanceDetailRoute(route: Route, options: NullHubFixtureOptions) {
+  recordRequest(route, options);
+  const url = new URL(route.request().url());
+  const parts = url.pathname.split('/').filter(Boolean);
+  const action = parts[4] || '';
+
+  if (action === 'config') {
+    await fulfillJson(route, options.instanceConfig || fixtureInstanceConfig);
+    return;
+  }
+  if (action === 'provider-health') {
+    await fulfillJson(route, {
+      provider: 'openrouter',
+      model: 'openai/gpt-5.5',
+      configured: true,
+      live_ok: true,
+      status: 'ok',
+    });
+    return;
+  }
+  if (action === 'usage') {
+    await fulfillJson(route, options.instanceUsage || fixtureInstanceUsage);
+    return;
+  }
+  if (action === 'integration') {
+    await fulfillJson(route, {
+      linked_watch: null,
+      available_watches: [],
+      current_link: null,
+    });
+    return;
+  }
+  if (action === 'onboarding') {
+    await fulfillJson(route, {
+      supported: true,
+      pending: false,
+    });
+    return;
+  }
+  if (action === 'history') {
+    if (url.searchParams.get('session_id')) {
+      await fulfillJson(route, {
+        messages: [
+          {
+            role: 'user',
+            content: 'What is on your plate?',
+            created_at: '2026-06-12T00:00:00Z',
+          },
+          {
+            role: 'assistant',
+            content: 'I am handling the current loop review.',
+            created_at: '2026-06-12T00:01:00Z',
+          },
+        ],
+        total: 2,
+        offset: 0,
+      });
+      return;
+    }
+    await fulfillJson(route, {
+      sessions: [
+        {
+          session_id: 'agent-main-claw',
+          message_count: 2,
+          first_message_at: '2026-06-12T00:00:00Z',
+          last_message_at: '2026-06-12T00:01:00Z',
+        },
+      ],
+      total: 1,
+      offset: 0,
+    });
+    return;
+  }
+  if (action === 'memory') {
+    if (url.searchParams.get('stats')) {
+      await fulfillJson(route, {
+        backend: 'fixture',
+        retrieval: 'ready',
+        entries: 2,
+      });
+      return;
+    }
+    await fulfillJson(route, { entries: [], items: [] });
+    return;
+  }
+  if (action === 'skills') {
+    await fulfillJson(route, []);
+    return;
+  }
+  if (action === 'mcp') {
+    await fulfillJson(route, []);
+    return;
+  }
+  if (action === 'cron') {
+    await fulfillJson(route, []);
+    return;
+  }
+  if (action === 'docs') {
+    await fulfillJson(route, { documents: [] });
+    return;
+  }
+
+  await fulfillJson(route, { error: `Unsupported fixture instance action: ${action}` }, 404);
+}
+
 export async function installNullHubFixtureRoutes(page: Page, options: NullHubFixtureOptions = {}) {
   const spaces = fixtureSpaces.map((space) => ({ ...space }));
   const pipelines = (options.nullticketsPipelines || []).map((pipeline) => ({ ...pipeline }));
@@ -441,6 +587,28 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/events**', (route) => eventsRoute(route, options));
   await page.route(/\/api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options));
   await page.route(/\/nullhub-api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options));
+  await page.route('**/api/instances/*/*/config**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/nullhub-api/instances/*/*/config**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/api/instances/*/*/provider-health**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/nullhub-api/instances/*/*/provider-health**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/api/instances/*/*/usage**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/nullhub-api/instances/*/*/usage**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/api/instances/*/*/integration**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/nullhub-api/instances/*/*/integration**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/api/instances/*/*/onboarding**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/nullhub-api/instances/*/*/onboarding**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/api/instances/*/*/history**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/nullhub-api/instances/*/*/history**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/api/instances/*/*/memory**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/nullhub-api/instances/*/*/memory**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/api/instances/*/*/skills**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/nullhub-api/instances/*/*/skills**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/api/instances/*/*/mcp**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/nullhub-api/instances/*/*/mcp**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/api/instances/*/*/cron**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/nullhub-api/instances/*/*/cron**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/api/instances/*/*/docs**', (route) => instanceDetailRoute(route, options));
+  await page.route('**/nullhub-api/instances/*/*/docs**', (route) => instanceDetailRoute(route, options));
   await page.route('**/api/instances/nulltickets/*/tickets**', (route) => nullTicketsActionRoute(route, options, pipelines, tasks));
   await page.route('**/nullhub-api/instances/nulltickets/*/tickets**', (route) =>
     nullTicketsActionRoute(route, options, pipelines, tasks),
