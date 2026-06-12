@@ -3640,6 +3640,74 @@ test "route schedule order transitions bridge to nullclaw cron and emit order ex
     }
 }
 
+test "route schedule order cron run without run ref does not emit order executed" {
+    const builtin = @import("builtin");
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var ctx = TestContext.init(allocator);
+    defer ctx.deinit(allocator);
+    try ctx.paths.ensureDirs();
+
+    try ctx.state.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0", .space_id = "ops" });
+    try writeServerTestCronStore(allocator, ctx.paths, "nullclaw", "my-agent", "[]");
+
+    const script =
+        \\#!/bin/sh
+        \\set -eu
+        \\home="${NULLCLAW_HOME:?}"
+        \\if [ "$1" = "cron" ] && [ "$2" = "add-agent" ] && [ "$3" = "0 9 * * *" ] && [ "$5" = "--session-target" ] && [ "$6" = "order-1" ]; then
+        \\  cat > "${home}/cron.json" <<EOF
+        \\[{"id":"job-order-1","expression":"0 9 * * *","prompt":"Send brief","paused":false,"one_shot":false}]
+        \\EOF
+        \\  exit 0
+        \\fi
+        \\if [ "$1" = "cron" ] && [ "$2" = "run" ] && [ "$3" = "job-order-1" ]; then
+        \\  exit 0
+        \\fi
+        \\if [ "$1" = "cron" ] && [ "$2" = "runs" ] && [ "$3" = "job-order-1" ] && [ "$4" = "--limit" ] && [ "$5" = "5" ] && [ "$6" = "--json" ]; then
+        \\  printf '%s\n' '{"runs":[],"total":0}'
+        \\  exit 0
+        \\fi
+        \\echo "unexpected args: $*" >&2
+        \\exit 1
+        \\
+    ;
+    try writeServerTestBinary(allocator, ctx.paths, "nullclaw", "1.0.0", script);
+
+    {
+        const resp = ctx.route(
+            allocator,
+            "POST",
+            "/api/orders?space=ops",
+            "{\"title\":\"Morning report\",\"kind\":\"schedule\",\"schedule\":\"0 9 * * *\",\"content\":\"Send brief\"}",
+        );
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const resp = ctx.route(allocator, "POST", "/api/orders/order-1/enact?space=ops", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    }
+
+    {
+        const resp = ctx.route(allocator, "POST", "/api/instances/nullclaw/my-agent/cron/job-order-1/run", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"ran\"") != null);
+    }
+
+    {
+        const resp = ctx.route(allocator, "GET", "/api/events?space=ops&type=order.executed", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.executed\"") == null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"run_ref\"") == null);
+    }
+}
+
 test "route DELETE /api/orders removes order document and emits event" {
     var ctx = TestContext.init(std.testing.allocator);
     defer ctx.deinit(std.testing.allocator);

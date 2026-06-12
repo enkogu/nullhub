@@ -140,9 +140,25 @@ fn ensureCronActive(
 
     if (findLinkByOrder(allocator, paths, order.space_id, order.id) catch return helpers.serverError()) |existing| {
         defer existing.deinit(allocator);
-        return runCronAction(allocator, cron_api, existing.component, existing.instance, existing.cron_job_id, "resume");
+        if (runCronAction(allocator, cron_api, existing.component, existing.instance, existing.cron_job_id, "resume")) |resp| {
+            if (!isNotFoundStatus(resp.status)) return resp;
+            removeLink(allocator, paths, order.space_id, order.id) catch return helpers.serverError();
+        } else {
+            return null;
+        }
     }
 
+    return createCronForOrder(allocator, paths, state, cron_api, order, now_ms);
+}
+
+fn createCronForOrder(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    state: *state_mod.State,
+    cron_api: CronApi,
+    order: orders.Order,
+    now_ms: i64,
+) ?helpers.ApiResponse {
     const instance = resolveNullclawInstance(allocator, state, order.space_id) catch return helpers.serverError();
     if (instance == null) return helpers.badRequest("{\"error\":\"no nullclaw instance found for order space\"}");
     defer allocator.free(instance.?);
@@ -194,7 +210,7 @@ fn removeCron(
     defer link.deinit(allocator);
 
     if (runCronAction(allocator, cron_api, link.component, link.instance, link.cron_job_id, "remove")) |resp| {
-        return resp;
+        if (!isNotFoundStatus(resp.status)) return resp;
     }
     removeLink(allocator, paths, order.space_id, order.id) catch return helpers.serverError();
     return null;
@@ -309,6 +325,10 @@ fn appendPathSegment(buf: *std.array_list.Managed(u8), value: []const u8) !void 
 
 fn isSuccessStatus(status: []const u8) bool {
     return status.len >= 3 and status[0] == '2' and std.ascii.isDigit(status[1]) and std.ascii.isDigit(status[2]);
+}
+
+fn isNotFoundStatus(status: []const u8) bool {
+    return std.mem.eql(u8, status, "404 Not Found");
 }
 
 fn bridgePath(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []const u8) ![]const u8 {
@@ -487,6 +507,7 @@ const MockCall = struct {
 const MockCronApi = struct {
     calls: std.array_list.Managed(MockCall),
     next_job_id: []const u8 = "job-42",
+    missing_job_id: []const u8 = "",
 
     fn init(allocator: std.mem.Allocator) MockCronApi {
         return .{ .calls = std.array_list.Managed(MockCall).init(allocator) };
@@ -509,6 +530,13 @@ const MockCronApi = struct {
             .body = allocator.dupe(u8, body) catch @panic("OOM"),
         }) catch @panic("OOM");
 
+        if (self.missing_job_id.len > 0 and std.mem.indexOf(u8, target, self.missing_job_id) != null) {
+            if ((std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, target, "/resume")) or
+                std.mem.eql(u8, method, "DELETE"))
+            {
+                return helpers.notFound();
+            }
+        }
         if (std.mem.eql(u8, method, "POST") and std.mem.endsWith(u8, target, "/cron")) {
             const response = std.fmt.allocPrint(allocator, "{{\"job\":{{\"id\":\"{s}\"}}}}", .{self.next_job_id}) catch @panic("OOM");
             return helpers.jsonOk(response);
@@ -567,6 +595,78 @@ test "schedule order bridge enact creates cron through instance API" {
     defer link.deinit(allocator);
     try std.testing.expectEqualStrings("job-42", link.cron_job_id);
     try std.testing.expectEqualStrings("my-agent", link.instance);
+}
+
+test "schedule order bridge recreates stale cron link on enact" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+    try state.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0", .space_id = "ops" });
+
+    try upsertLink(allocator, fixture.paths, .{
+        .order_id = "order-1",
+        .space_id = "ops",
+        .component = "nullclaw",
+        .instance = "my-agent",
+        .cron_job_id = "job-stale",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+
+    var mock = MockCronApi.init(allocator);
+    defer mock.deinit();
+    mock.missing_job_id = "job-stale";
+    mock.next_job_id = "job-recreated";
+
+    try std.testing.expect(beforeTransition(allocator, fixture.paths, &state, mock.api(), scheduleOrder(), .activate, 2000) == null);
+    try std.testing.expectEqual(@as(usize, 2), mock.calls.items.len);
+    try std.testing.expectEqualStrings("POST", mock.calls.items[0].method);
+    try std.testing.expectEqualStrings("/api/instances/nullclaw/my-agent/cron/job-stale/resume", mock.calls.items[0].target);
+    try std.testing.expectEqualStrings("POST", mock.calls.items[1].method);
+    try std.testing.expectEqualStrings("/api/instances/nullclaw/my-agent/cron", mock.calls.items[1].target);
+
+    const link = (try findLinkByOrder(allocator, fixture.paths, "ops", "order-1")).?;
+    defer link.deinit(allocator);
+    try std.testing.expectEqualStrings("job-recreated", link.cron_job_id);
+    try std.testing.expectEqualStrings("", link.last_run_ref);
+}
+
+test "schedule order bridge archive clears stale cron link idempotently" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+    try state.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0", .space_id = "ops" });
+
+    try upsertLink(allocator, fixture.paths, .{
+        .order_id = "order-1",
+        .space_id = "ops",
+        .component = "nullclaw",
+        .instance = "my-agent",
+        .cron_job_id = "job-stale",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+
+    var mock = MockCronApi.init(allocator);
+    defer mock.deinit();
+    mock.missing_job_id = "job-stale";
+
+    try std.testing.expect(beforeTransition(allocator, fixture.paths, &state, mock.api(), scheduleOrder(), .archive, 2000) == null);
+    try std.testing.expectEqual(@as(usize, 1), mock.calls.items.len);
+    try std.testing.expectEqualStrings("DELETE", mock.calls.items[0].method);
+    try std.testing.expectEqualStrings("/api/instances/nullclaw/my-agent/cron/job-stale", mock.calls.items[0].target);
+    try std.testing.expect((try findLinkByOrder(allocator, fixture.paths, "ops", "order-1")) == null);
+
+    try std.testing.expect(beforeTransition(allocator, fixture.paths, &state, mock.api(), scheduleOrder(), .archive, 3000) == null);
+    try std.testing.expectEqual(@as(usize, 1), mock.calls.items.len);
 }
 
 test "schedule order bridge suspend pauses and archive removes cron" {

@@ -2328,20 +2328,25 @@ fn handleCronCommandWithJob(
         std.log.warn("failed to append cron action event: {s}", .{@errorName(err)});
     };
     if (std.mem.eql(u8, success_status, "ran")) {
-        const run_ref = latestCronRunRefAlloc(allocator, s, paths, component, name, job_id) catch null;
-        defer if (run_ref) |value| allocator.free(value);
-        schedule_order_bridge.emitExecutedForCronRun(
-            allocator,
-            paths,
-            s,
-            component,
-            name,
-            job_id,
-            run_ref orelse job_id,
-            now_ms,
-        ) catch |err| {
-            std.log.warn("failed to append order executed event: {s}", .{@errorName(err)});
+        const run_ref = latestCronRunRefAlloc(allocator, s, paths, component, name, job_id) catch |err| blk: {
+            std.log.warn("failed to inspect cron run ref for schedule order bridge: {s}", .{@errorName(err)});
+            break :blk null;
         };
+        if (run_ref) |value| {
+            defer allocator.free(value);
+            schedule_order_bridge.emitExecutedForCronRun(
+                allocator,
+                paths,
+                s,
+                component,
+                name,
+                job_id,
+                value,
+                now_ms,
+            ) catch |err| {
+                std.log.warn("failed to append order executed event: {s}", .{@errorName(err)});
+            };
+        }
     }
     return jsonOk(response_body);
 }
