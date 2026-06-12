@@ -111,7 +111,7 @@ test('renders /work/results from ticket deliverables and artifacts', async ({ pa
   await expect(appCard.getByText('Delivered', { exact: true })).toBeVisible();
   await expect(appCard.getByRole('link', { name: 'Open app Support Portal' })).toHaveAttribute(
     'href',
-    '/instances/nullclaw/Athena?space=ops',
+    '/team/instances/nullclaw/Athena?space=ops',
   );
 
   await page.getByRole('combobox', { name: 'lifecycle' }).selectOption('delivered');

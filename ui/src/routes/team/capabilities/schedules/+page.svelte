@@ -1,5 +1,5 @@
 <script lang="ts">
-  import SchedulesPage from "../../../capabilities/schedules/+page.svelte";
+  import CapabilitiesRegistry from "$lib/components/CapabilitiesRegistry.svelte";
 </script>
 
-<SchedulesPage />
+<CapabilitiesRegistry kind="schedules" title="Schedules" />

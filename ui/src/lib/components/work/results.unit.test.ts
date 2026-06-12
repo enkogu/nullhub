@@ -117,8 +117,8 @@ describe('app result links', () => {
     const result = artifactToResult(
       artifact({ kind: 'app', meta: { app: { component: 'nullclaw', name: 'support portal' } } }),
     );
-    expect(appResultHref(result, 'ops')).toBe('/instances/nullclaw/support%20portal?space=ops');
-    expect(appResultHref(result)).toBe('/instances/nullclaw/support%20portal');
+    expect(appResultHref(result, 'ops')).toBe('/team/instances/nullclaw/support%20portal?space=ops');
+    expect(appResultHref(result)).toBe('/team/instances/nullclaw/support%20portal');
   });
 
   test('returns no link for non-app results', () => {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import LoopLibraryPage from "../../../loops/library/+page.svelte";
+  import LoopsWorkspace from "$lib/components/loops/LoopsWorkspace.svelte";
 </script>
 
-<LoopLibraryPage />
+<LoopsWorkspace initialTab="installed" />

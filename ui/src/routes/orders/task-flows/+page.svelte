@@ -1,5 +1,11 @@
 <script lang="ts">
-  import TaskFlowsPage from "../../task-flows/+page.svelte";
+  import NullTicketsWorkspacePage from "$lib/components/nulltickets/NullTicketsWorkspacePage.svelte";
+
+  const views = ["pipelines"] as const;
 </script>
 
-<TaskFlowsPage />
+<NullTicketsWorkspacePage
+  title="Task Flows"
+  initialView="pipelines"
+  {views}
+/>

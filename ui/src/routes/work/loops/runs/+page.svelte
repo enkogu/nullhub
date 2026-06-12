@@ -1,5 +1,5 @@
 <script lang="ts">
-  import LoopRunsPage from "../../../loops/runs/+page.svelte";
+  import LoopRunsCenter from "$lib/components/loops/LoopRunsCenter.svelte";
 </script>
 
-<LoopRunsPage />
+<LoopRunsCenter />

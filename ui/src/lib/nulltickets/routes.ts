@@ -10,7 +10,7 @@ export function withTicketsInstance(path: string, ticketsInstance?: string): str
   return withQueryParam(path, TICKETS_INSTANCE_QUERY_PARAM, value);
 }
 
-const nullticketsUiRoot = "/nulltickets";
+const nullticketsUiRoot = "/market/nulltickets";
 const nullticketsApiRoot = "/nulltickets";
 const storeBase = `${nullticketsApiRoot}/store`;
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import HooksPage from "../../../capabilities/hooks/+page.svelte";
+  import CapabilitiesRegistry from "$lib/components/CapabilitiesRegistry.svelte";
 </script>
 
-<HooksPage />
+<CapabilitiesRegistry kind="hooks" title="Hooks" />

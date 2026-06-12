@@ -1,5 +1,5 @@
 <script lang="ts">
-  import SkillsPage from "../../../capabilities/skills/+page.svelte";
+  import CapabilitiesRegistry from "$lib/components/CapabilitiesRegistry.svelte";
 </script>
 
-<SkillsPage />
+<CapabilitiesRegistry kind="skills" title="Skills" />
