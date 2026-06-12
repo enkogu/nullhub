@@ -276,3 +276,50 @@ test "charter PUT injects managed charter through policy bootstrap path" {
     try std.testing.expectEqual(@as(usize, 1), events.len);
     try std.testing.expectEqualStrings("charter.updated", events[0].event_type);
 }
+
+test "charter PUT preserves field H2 markdown through persisted read and policy sync" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    try state.addInstance("nullclaw", "ops-agent", .{ .version = "dev-local", .space_id = "ops" });
+
+    const mission = "Line one\n## Details\nLine two";
+    const resp = handlePut(
+        allocator,
+        fixture.paths,
+        &state,
+        "/api/charter?space=ops",
+        "{\"stage\":\"alpha\",\"mission\":\"Line one\\n## Details\\nLine two\",\"autonomy_bounds\":\"Ask first.\",\"autonomy_defaults\":\"T1\",\"metrics\":\"cycle time\"}",
+        1300,
+    );
+    defer allocator.free(resp.body);
+    try std.testing.expectEqualStrings("200 OK", resp.status);
+
+    var loaded = try charter_store.loadOrDefault(allocator, fixture.paths, "ops");
+    defer loaded.deinit(allocator);
+    try std.testing.expectEqualStrings(mission, loaded.mission);
+
+    const workspace_dir = try fixture.paths.instanceWorkspaceDir(allocator, "nullclaw", "ops-agent");
+    defer allocator.free(workspace_dir);
+    const orders_path = try std.fs.path.join(allocator, &.{ workspace_dir, policy_orders.managed_orders_filename });
+    defer allocator.free(orders_path);
+    const config_path = try std.fs.path.join(allocator, &.{ workspace_dir, policy_orders.managed_orders_bootstrap_filename });
+    defer allocator.free(config_path);
+
+    const orders_bytes = try std_compat.fs.readFileAbsolute(allocator, orders_path, policy_orders.managed_orders_budget_bytes + 1);
+    defer allocator.free(orders_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, "Line one") != null);
+    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, "## Details") != null);
+    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, "Line two") != null);
+
+    const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, policy_orders.managed_orders_budget_bytes + 4096);
+    defer allocator.free(config_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "Line one") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "## Details") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "Line two") != null);
+}

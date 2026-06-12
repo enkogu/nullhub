@@ -9,6 +9,39 @@ pub const default_autonomy_defaults = "T1";
 pub const charter_doc_path = "charter.md";
 const max_charter_bytes: usize = 512 * 1024;
 
+const FieldSection = struct {
+    title: []const u8,
+    begin_marker: []const u8,
+    end_marker: []const u8,
+};
+
+const mission_section = FieldSection{
+    .title = "Mission",
+    .begin_marker = "<!-- NULLHUB:CHARTER_FIELD:mission:BEGIN -->",
+    .end_marker = "<!-- NULLHUB:CHARTER_FIELD:mission:END -->",
+};
+const autonomy_bounds_section = FieldSection{
+    .title = "Autonomy Bounds",
+    .begin_marker = "<!-- NULLHUB:CHARTER_FIELD:autonomy_bounds:BEGIN -->",
+    .end_marker = "<!-- NULLHUB:CHARTER_FIELD:autonomy_bounds:END -->",
+};
+const autonomy_defaults_section = FieldSection{
+    .title = "Autonomy Defaults",
+    .begin_marker = "<!-- NULLHUB:CHARTER_FIELD:autonomy_defaults:BEGIN -->",
+    .end_marker = "<!-- NULLHUB:CHARTER_FIELD:autonomy_defaults:END -->",
+};
+const metrics_section = FieldSection{
+    .title = "Metrics",
+    .begin_marker = "<!-- NULLHUB:CHARTER_FIELD:metrics:BEGIN -->",
+    .end_marker = "<!-- NULLHUB:CHARTER_FIELD:metrics:END -->",
+};
+const field_sections = [_]FieldSection{
+    mission_section,
+    autonomy_bounds_section,
+    autonomy_defaults_section,
+    metrics_section,
+};
+
 pub const Charter = struct {
     space_id: []const u8,
     stage: []const u8,
@@ -84,10 +117,10 @@ pub fn renderMarkdown(allocator: std.mem.Allocator, charter: Charter) ![]const u
     try appendFrontmatterLine(&buf, "doc_path", charter.doc_path);
     try buf.appendSlice("---\n");
     try buf.appendSlice("# Space Charter\n\n");
-    try appendSection(&buf, "Mission", charter.mission);
-    try appendSection(&buf, "Autonomy Bounds", charter.autonomy_bounds);
-    try appendSection(&buf, "Autonomy Defaults", charter.autonomy_defaults);
-    try appendSection(&buf, "Metrics", charter.metrics);
+    try appendSection(&buf, mission_section, charter.mission);
+    try appendSection(&buf, autonomy_bounds_section, charter.autonomy_bounds);
+    try appendSection(&buf, autonomy_defaults_section, charter.autonomy_defaults);
+    try appendSection(&buf, metrics_section, charter.metrics);
     return buf.toOwnedSlice();
 }
 
@@ -121,10 +154,10 @@ pub fn parseMarkdown(allocator: std.mem.Allocator, expected_space_id: []const u8
     return ownedCharter(allocator, .{
         .space_id = expected_space_id,
         .stage = normalizedOrDefault(parsed_stage, default_stage),
-        .mission = std.mem.trim(u8, sectionBody(body, "Mission"), " \t\r\n"),
-        .autonomy_bounds = std.mem.trim(u8, sectionBody(body, "Autonomy Bounds"), " \t\r\n"),
-        .autonomy_defaults = normalizedOrDefault(sectionBody(body, "Autonomy Defaults"), default_autonomy_defaults),
-        .metrics = std.mem.trim(u8, sectionBody(body, "Metrics"), " \t\r\n"),
+        .mission = std.mem.trim(u8, sectionBody(body, mission_section), " \t\r\n"),
+        .autonomy_bounds = std.mem.trim(u8, sectionBody(body, autonomy_bounds_section), " \t\r\n"),
+        .autonomy_defaults = normalizedOrDefault(sectionBody(body, autonomy_defaults_section), default_autonomy_defaults),
+        .metrics = std.mem.trim(u8, sectionBody(body, metrics_section), " \t\r\n"),
         .doc_path = if (parsed_doc_path.len > 0) parsed_doc_path else charter_doc_path,
     });
 }
@@ -158,18 +191,38 @@ fn normalizedOrDefault(value: []const u8, default_value: []const u8) []const u8 
     return if (trimmed.len > 0) trimmed else default_value;
 }
 
-fn appendSection(buf: *std.array_list.Managed(u8), title: []const u8, value: []const u8) !void {
+fn appendSection(buf: *std.array_list.Managed(u8), section: FieldSection, value: []const u8) !void {
     try buf.appendSlice("## ");
-    try buf.appendSlice(title);
+    try buf.appendSlice(section.title);
     try buf.appendSlice("\n");
+    try buf.appendSlice(section.begin_marker);
+    try buf.append('\n');
     if (value.len > 0) {
         try buf.appendSlice(value);
         if (!std.mem.endsWith(u8, value, "\n")) try buf.append('\n');
     }
-    try buf.append('\n');
+    try buf.appendSlice(section.end_marker);
+    try buf.appendSlice("\n\n");
 }
 
-fn sectionBody(body: []const u8, wanted_title: []const u8) []const u8 {
+fn sectionBody(body: []const u8, section: FieldSection) []const u8 {
+    if (markedSectionBody(body, section)) |marked| return marked;
+    return knownHeadingSectionBody(body, section.title);
+}
+
+fn markedSectionBody(body: []const u8, section: FieldSection) ?[]const u8 {
+    const begin_idx = std.mem.indexOf(u8, body, section.begin_marker) orelse return null;
+    var content_start = begin_idx + section.begin_marker.len;
+    if (std.mem.startsWith(u8, body[content_start..], "\r\n")) {
+        content_start += 2;
+    } else if (std.mem.startsWith(u8, body[content_start..], "\n")) {
+        content_start += 1;
+    }
+    const end_idx = std.mem.indexOfPos(u8, body, content_start, section.end_marker) orelse return null;
+    return body[content_start..end_idx];
+}
+
+fn knownHeadingSectionBody(body: []const u8, wanted_title: []const u8) []const u8 {
     var lines = std.mem.splitScalar(u8, body, '\n');
     var offset: usize = 0;
     var section_start: ?usize = null;
@@ -178,7 +231,8 @@ fn sectionBody(body: []const u8, wanted_title: []const u8) []const u8 {
         offset += line.len + if (offset + line.len < body.len) @as(usize, 1) else @as(usize, 0);
         const title = markdownHeadingTitle(line) orelse continue;
         if (section_start) |start| {
-            return body[start..line_start];
+            if (isCharterFieldHeading(title)) return body[start..line_start];
+            continue;
         }
         if (std.ascii.eqlIgnoreCase(title, wanted_title)) {
             section_start = offset;
@@ -186,6 +240,13 @@ fn sectionBody(body: []const u8, wanted_title: []const u8) []const u8 {
     }
     if (section_start) |start| return body[start..];
     return "";
+}
+
+fn isCharterFieldHeading(title: []const u8) bool {
+    for (field_sections) |section| {
+        if (std.ascii.eqlIgnoreCase(title, section.title)) return true;
+    }
+    return false;
 }
 
 fn markdownHeadingTitle(line: []const u8) ?[]const u8 {
@@ -319,7 +380,7 @@ test "charter markdown round-trips escaped frontmatter and sections" {
     const source = try ownedCharter(allocator, .{
         .space_id = "ops",
         .stage = "alpha \"quoted\"",
-        .mission = "Line one\nLine two",
+        .mission = "Line one\n## Details\nLine two",
         .autonomy_bounds = "Stay inside tools.",
         .autonomy_defaults = "T1\nEscalate risky work.",
         .metrics = "cycle_time",
