@@ -1,8 +1,7 @@
 <script module lang="ts">
 	import { defineMeta } from "@storybook/addon-svelte-csf";
 	import DigestCard from "./DigestCard.svelte";
-	import type { NullHubEvent } from "$lib/api/client";
-	import type { DigestUsagePayload } from "./digest";
+	import type { DigestEvent, DigestUsagePayload } from "./digest";
 
 	const { Story } = defineMeta({
 		title: "Dashboard/DigestCard",
@@ -12,7 +11,7 @@
 	const nowMs = 1_780_000_000_000;
 	const lastSeenMs = nowMs - 8 * 60 * 60_000;
 
-	function event(overrides: Partial<NullHubEvent>): NullHubEvent {
+	function event(overrides: Partial<DigestEvent>): DigestEvent {
 		return {
 			id: 1,
 			spaceId: "ops",
@@ -30,7 +29,7 @@
 		};
 	}
 
-	const populatedEvents: NullHubEvent[] = [
+	const populatedEvents: DigestEvent[] = [
 		event({ id: 1, subjectId: "task-1", title: "Close support triage" }),
 		event({
 			id: 2,

@@ -7,12 +7,12 @@
 	import CircleDollarSignIcon from "@lucide/svelte/icons/circle-dollar-sign";
 	import ClipboardCheckIcon from "@lucide/svelte/icons/clipboard-check";
 	import FileCheck2Icon from "@lucide/svelte/icons/file-check-2";
+	import type { Component } from "svelte";
 	import { Button } from "$lib/components/ui/button/index.js";
 	import { cn } from "$lib/utils.js";
 	import CountBadge from "$lib/components/CountBadge.svelte";
 	import DataState, { type DataStateKind } from "$lib/components/DataState.svelte";
-	import { aggregateDigest, digestHasActivity, type DigestSummary, type DigestUsagePayload } from "./digest";
-	import type { NullHubEvent } from "$lib/api/client";
+	import { aggregateDigest, digestHasActivity, type DigestEvent, type DigestSummary, type DigestUsagePayload } from "./digest";
 
 	let {
 		events = [],
@@ -23,7 +23,7 @@
 		onRetry,
 		class: className,
 	}: {
-		events?: NullHubEvent[];
+		events?: DigestEvent[];
 		usage?: DigestUsagePayload | null;
 		state?: DigestCardState;
 		error?: unknown;
@@ -46,7 +46,7 @@
 		value: string;
 		description: string;
 		tone: "ok" | "watch" | "primary" | "neutral";
-		icon: typeof CheckCircle2Icon;
+		icon: Component;
 	};
 
 	let metrics = $derived(metricRows(summary));

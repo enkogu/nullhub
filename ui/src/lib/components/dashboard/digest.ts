@@ -1,5 +1,3 @@
-import type { NullHubEvent } from '$lib/api/client';
-
 export type DigestUsageTotals = {
   total_cost_usd?: number;
   cost_usd?: number;
@@ -28,6 +26,21 @@ export type DigestSummary = {
   eventCount: number;
   sinceMs: number;
   latestEventAtMs: number | null;
+};
+
+export type DigestEvent = {
+  id: number;
+  spaceId?: string;
+  type: string;
+  source?: string;
+  subjectType: string;
+  subjectId: string;
+  title?: string;
+  summary?: string;
+  severity?: string;
+  evidenceRef: string;
+  createdAtMs: number;
+  payload: unknown;
 };
 
 const closedTerms = new Set(['closed', 'completed', 'complete', 'finished', 'done', 'succeeded', 'success', 'delivered']);
@@ -81,18 +94,18 @@ function payloadText(payload: Record<string, unknown>, keys: string[]): string {
   return keys.map((key) => stringValue(payload[key])).filter(Boolean).join(' ');
 }
 
-function eventKey(event: NullHubEvent, fallbackPrefix: string): string {
+function eventKey(event: DigestEvent, fallbackPrefix: string): string {
   return event.subjectId || event.evidenceRef || `${fallbackPrefix}:${event.id}`;
 }
 
-function isTaskClosed(event: NullHubEvent): boolean {
+function isTaskClosed(event: DigestEvent): boolean {
   const payload = recordValue(event.payload);
   const subject = stringValue(event.subjectType).toLowerCase();
   const parts = normalizedParts(event.type, payloadText(payload, ['status', 'state', 'stage', 'lifecycle']));
   return subject.includes('task') && hasAny(parts, closedTerms);
 }
 
-function isResultAwaitingReview(event: NullHubEvent): boolean {
+function isResultAwaitingReview(event: DigestEvent): boolean {
   const payload = recordValue(event.payload);
   const subject = stringValue(event.subjectType).toLowerCase();
   const reviewText = payloadText(payload, ['status', 'state', 'stage', 'lifecycle', 'result_status', 'resultStatus']);
@@ -102,7 +115,7 @@ function isResultAwaitingReview(event: NullHubEvent): boolean {
   return includesTerm(event.type, reviewTerms) && (subject.includes('result') || subject.includes('deliverable') || subject.includes('artifact') || subject.includes('run'));
 }
 
-function isOrderExecuted(event: NullHubEvent): boolean {
+function isOrderExecuted(event: DigestEvent): boolean {
   const payload = recordValue(event.payload);
   const subject = stringValue(event.subjectType).toLowerCase();
   const parts = normalizedParts(event.type, payloadText(payload, ['status', 'state', 'stage']));
@@ -154,7 +167,7 @@ export function aggregateUsageSpend(usage: DigestUsagePayload | null | undefined
 }
 
 export function aggregateDigest(
-  events: NullHubEvent[],
+  events: DigestEvent[],
   usage: DigestUsagePayload | null | undefined,
   lastSeenMs: number,
 ): DigestSummary {

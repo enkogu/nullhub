@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import InstanceCard from "$lib/components/InstanceCard.svelte";
-  import { api, approvalsApi, eventsApi, type Approval, type NullHubEvent } from "$lib/api/client";
+  import { api, approvalsApi, eventsApi, type Approval } from "$lib/api/client";
   import { pollWhileVisible } from "$lib/poll";
   import DataState, { type DataStateKind } from "$lib/components/DataState.svelte";
   import DigestCard, { type DigestCardState } from "$lib/components/dashboard/DigestCard.svelte";
-  import type { DigestUsagePayload } from "$lib/components/dashboard/digest";
+  import type { DigestEvent, DigestUsagePayload } from "$lib/components/dashboard/digest";
   import NeedsYouList, { type NeedsYouListState } from "$lib/components/dashboard/NeedsYouList.svelte";
   import RunningNow, { type RunningNowState } from "$lib/components/dashboard/RunningNow.svelte";
   import { agentEventsToLiveRuns, type LiveRun } from "$lib/components/work/live";
@@ -48,7 +48,7 @@
   let runningNowRuns = $state<LiveRun[]>([]);
   let runningNowState = $state<RunningNowState>("idle");
   let runningNowError = $state<unknown>(null);
-  let digestEvents = $state<NullHubEvent[]>([]);
+  let digestEvents = $state<DigestEvent[]>([]);
   let digestUsage = $state<DigestUsagePayload | null>(null);
   let digestState = $state<DigestCardState>("idle");
   let digestError = $state<unknown>(null);

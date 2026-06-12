@@ -1,11 +1,10 @@
 import { describe, expect, test } from 'vitest';
-import { aggregateDigest, aggregateUsageSpend, type DigestUsagePayload } from './digest';
-import type { NullHubEvent } from '$lib/api/client';
+import { aggregateDigest, aggregateUsageSpend, type DigestEvent, type DigestUsagePayload } from './digest';
 
 const nowMs = 1_780_000_000_000;
 const lastSeenMs = nowMs - 8 * 60 * 60_000;
 
-function event(overrides: Partial<NullHubEvent>): NullHubEvent {
+function event(overrides: Partial<DigestEvent>): DigestEvent {
   return {
     id: 1,
     spaceId: 'ops',
