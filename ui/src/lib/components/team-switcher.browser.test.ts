@@ -2,6 +2,7 @@ import { afterEach, expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-svelte';
 import { createSpacesFixtureRoutes } from '$lib/api/__fixtures__/spaces';
 import { installApiFixture, type InstalledApiFixture } from '$lib/api/__fixtures__/backend';
+import type { SpacesApi } from '$lib/api/client';
 import TeamSwitcher from './team-switcher.svelte';
 import type { SpaceOverviewRowModel } from './SpaceOverviewRow.svelte';
 
@@ -22,6 +23,22 @@ afterEach(() => {
   fixture?.restore();
   fixture = null;
 });
+
+function nextFrame() {
+  return new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+async function pressKey(element: HTMLElement, key: string) {
+  element.focus();
+  element.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key }));
+  await nextFrame();
+}
+
+function menuItemByText(container: HTMLElement, label: string) {
+  return Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((item) =>
+    item.textContent?.includes(label),
+  );
+}
 
 test('loads All-spaces overview rows through the typed spaces client', async () => {
   fixture = installApiFixture(createSpacesFixtureRoutes());
@@ -65,4 +82,23 @@ test('renders loading, empty, and error states', async () => {
   });
   await expect.element(error.getByText('Spaces unavailable')).toBeVisible();
   await expect.element(error.getByText('Spaces down.')).toBeVisible();
+});
+
+test('renders the dropdown error retry action as a keyboard-selectable menu item', async () => {
+  const listSpaceOverviews = vi.fn<SpacesApi['listSpaceOverviews']>().mockResolvedValue(rows);
+  const api = { listSpaceOverviews } as unknown as SpacesApi;
+  const screen = await render(TeamSwitcher, {
+    props: { api, rows: [], state: 'error', error: new Error('Spaces down.'), defaultOpen: true },
+  });
+
+  await expect.element(screen.getByText('Spaces unavailable')).toBeVisible();
+  await expect.element(screen.getByRole('menuitem', { name: 'Retry' })).toBeVisible();
+  expect(document.body.querySelector('[data-slot="error-state"] button')).toBeNull();
+
+  const retryItem = menuItemByText(document.body, 'Retry');
+  expect(retryItem).toBeTruthy();
+  await pressKey(retryItem as HTMLElement, 'Enter');
+
+  expect(listSpaceOverviews).toHaveBeenCalledTimes(1);
+  await expect.element(screen.getByText('Operations')).toBeVisible();
 });

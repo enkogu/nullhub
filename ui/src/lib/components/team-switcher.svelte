@@ -7,6 +7,7 @@
 	import ChevronsUpDownIcon from "@lucide/svelte/icons/chevrons-up-down";
 	import Globe2Icon from "@lucide/svelte/icons/globe-2";
 	import PlusIcon from "@lucide/svelte/icons/plus";
+	import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
 	import { onMount } from "svelte";
 	import { spacesApi, type SpaceSelection, type SpacesApi } from "$lib/api/client";
 	import DataState, { type DataStateKind } from "$lib/components/DataState.svelte";
@@ -110,6 +111,11 @@
 		if (!rows) await loadOverviews();
 	}
 
+	function retryOverviews(event?: Event) {
+		event?.preventDefault();
+		void loadOverviews();
+	}
+
 	onMount(() => {
 		if (!rows) void loadOverviews();
 	});
@@ -175,8 +181,6 @@
 					loadingDescription="Fetching Spaces and their current work."
 					errorTitle="Spaces unavailable"
 					errorFallback="Spaces could not be loaded."
-					retryLabel="Retry"
-					onRetry={() => void loadOverviews()}
 				>
 					<div class="grid gap-1" aria-label="Space overviews">
 						{#each localRows as row (row.space.id)}
@@ -189,6 +193,14 @@
 						{/each}
 					</div>
 				</DataState>
+				{#if dataState === "error"}
+					<DropdownMenu.Item onSelect={retryOverviews} class="gap-2 p-2">
+						<span class="flex size-6 items-center justify-center rounded-md border bg-transparent">
+							<RefreshCwIcon class="size-4" aria-hidden="true" />
+						</span>
+						<span class="font-medium">Retry</span>
+					</DropdownMenu.Item>
+				{/if}
 				<DropdownMenu.Separator />
 				<DropdownMenu.Item onSelect={() => void createSpace()} class="gap-2 p-2">
 					<span class="flex size-6 items-center justify-center rounded-md border bg-transparent">
