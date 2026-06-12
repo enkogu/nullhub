@@ -7,6 +7,8 @@ type NullHubFixtureOptions = {
   status?: JsonBody;
   events?: Record<string, unknown>[];
   eventsStatus?: number;
+  approvals?: Record<string, unknown>[];
+  approvalsStatus?: number;
   loopCatalog?: JsonBody;
   loopCatalogStatus?: number;
   nullticketsPipelines?: Record<string, unknown>[];
@@ -209,6 +211,48 @@ const fixtureEvents = [
   },
 ];
 
+export const fixtureApprovals = [
+  {
+    id: 3,
+    space_id: 'ops',
+    kind: 'failure',
+    queue: 'runs',
+    target_ref: 'run:run-9',
+    title: 'Nightly digest run failed',
+    summary: 'The run exited with a provider timeout after 3 retries.',
+    status: 'pending',
+    feedback: '',
+    created_at_ms: 1_779_999_900_000,
+    decided_at_ms: 0,
+  },
+  {
+    id: 2,
+    space_id: 'ops',
+    kind: 'question',
+    queue: 'intake',
+    target_ref: 'run:run-7',
+    title: 'Which tone should the newsletter use?',
+    summary: 'The drafting agent is waiting on a tone choice before continuing.',
+    status: 'pending',
+    feedback: '',
+    created_at_ms: 1_779_999_800_000,
+    decided_at_ms: 0,
+  },
+  {
+    id: 1,
+    space_id: 'ops',
+    kind: 'signature',
+    queue: 'deploys',
+    target_ref: 'order:42',
+    title: 'Sign the v2 deploy plan',
+    summary: '## Deploy plan\n\n- roll out v2\n- watch the error rate',
+    status: 'pending',
+    feedback: '',
+    created_at_ms: 1_779_999_700_000,
+    decided_at_ms: 0,
+  },
+];
+
 function requestPath(route: Route): string {
   const url = new URL(route.request().url());
   return `${url.pathname}${url.search}`;
@@ -326,6 +370,70 @@ async function eventsRoute(route: Route, options: NullHubFixtureOptions) {
   });
 }
 
+async function approvalsRoute(
+  route: Route,
+  options: NullHubFixtureOptions,
+  approvals: Record<string, unknown>[],
+) {
+  recordRequest(route, options);
+  if (options.approvalsStatus && options.approvalsStatus >= 400) {
+    await fulfillJson(route, { error: 'Approvals unavailable.' }, options.approvalsStatus);
+    return;
+  }
+
+  const url = new URL(route.request().url());
+  const space = url.searchParams.get('space');
+  if (!space) {
+    await fulfillJson(route, { error: 'space query is required' }, 400);
+    return;
+  }
+  const status = url.searchParams.get('status');
+  const kind = url.searchParams.get('kind');
+  const queue = url.searchParams.get('queue');
+  const filtered = approvals.filter((approval) => {
+    if (approval.space_id !== space) return false;
+    if (status && approval.status !== status) return false;
+    if (kind && approval.kind !== kind) return false;
+    if (queue && approval.queue !== queue) return false;
+    return true;
+  });
+  await fulfillJson(route, { approvals: filtered, has_more: false, next_cursor: null });
+}
+
+async function approvalDecideRoute(
+  route: Route,
+  options: NullHubFixtureOptions,
+  approvals: Record<string, unknown>[],
+) {
+  recordRequest(route, options);
+  const url = new URL(route.request().url());
+  const id = Number(url.pathname.split('/').filter(Boolean).slice(-2)[0]);
+  const approval = approvals.find((entry) => entry.id === id);
+  if (!approval || approval.space_id !== url.searchParams.get('space')) {
+    await fulfillJson(route, { error: 'not found' }, 404);
+    return;
+  }
+  if (approval.status !== 'pending') {
+    await fulfillJson(route, { error: 'approval already decided' }, 409);
+    return;
+  }
+  const payload = route.request().postDataJSON() as { decision?: string; feedback?: string } | null;
+  const decision = String(payload?.decision || '');
+  const feedback = String(payload?.feedback || '');
+  if (!['approved', 'pushed_back', 'rejected'].includes(decision)) {
+    await fulfillJson(route, { error: 'decision must be approved, pushed_back, or rejected' }, 400);
+    return;
+  }
+  if (decision === 'pushed_back' && !feedback.trim()) {
+    await fulfillJson(route, { error: 'feedback is required when pushing back' }, 422);
+    return;
+  }
+  approval.status = decision;
+  approval.feedback = feedback.trim();
+  approval.decided_at_ms = Date.now();
+  await fulfillJson(route, approval);
+}
+
 function matchesFixtureSpace(record: Record<string, unknown>, space: string | null): boolean {
   const recordSpace = String(record.space_id ?? record.spaceId ?? '').trim();
   if (!space) return true;
@@ -439,6 +547,13 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/nulltickets/store/loops.templates**', (route) => loopCatalogRoute(route, options));
   await page.route('**/api/events**', (route) => eventsRoute(route, options));
   await page.route('**/nullhub-api/events**', (route) => eventsRoute(route, options));
+  const approvals = (options.approvals || fixtureApprovals).map((approval) => ({ ...approval }));
+  await page.route(/\/api\/approvals(?:\?.*)?$/, (route) => approvalsRoute(route, options, approvals));
+  await page.route(/\/nullhub-api\/approvals(?:\?.*)?$/, (route) => approvalsRoute(route, options, approvals));
+  await page.route(/\/api\/approvals\/\d+\/decide(?:\?.*)?$/, (route) => approvalDecideRoute(route, options, approvals));
+  await page.route(/\/nullhub-api\/approvals\/\d+\/decide(?:\?.*)?$/, (route) =>
+    approvalDecideRoute(route, options, approvals),
+  );
   await page.route(/\/api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options));
   await page.route(/\/nullhub-api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options));
   await page.route('**/api/instances/nulltickets/*/tickets**', (route) => nullTicketsActionRoute(route, options, pipelines, tasks));
