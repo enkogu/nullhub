@@ -36,6 +36,33 @@
 `,
   };
 
+  const triggerDraft: Partial<OrderEditorDraft> = {
+    type: 'trigger',
+    title: 'Ticket created dispatcher',
+    summary: 'Start triage when a new ticket appears.',
+    triggerEventType: 'work.ticket.created',
+    triggerSource: 'nulltickets',
+    triggerSubjectType: 'ticket',
+    actionType: 'create_ticket',
+    actionTarget: 'triage',
+    actionInstructions: 'Create a triage task for the new ticket.',
+    autonomyTier: 'T1',
+  };
+
+  const mandateDraft: Partial<OrderEditorDraft> = {
+    type: 'mandate',
+    title: 'Subscriber goal mandate',
+    summary: 'Continue subscriber outreach until the goal condition holds.',
+    mandateGoal: 'subscribers-50',
+    mandateConditionEventType: 'subscribers.goal_met',
+    mandateUnmetEventType: 'subscribers.goal_unmet',
+    mandateCheckCadenceMs: 60000,
+    actionType: 'run_agent',
+    actionTarget: 'growth-agent',
+    actionInstructions: 'Continue outreach until the subscriber goal is met.',
+    autonomyTier: 'T2',
+  };
+
   const aiDecisionDraft: Partial<OrderEditorDraft> = {
     ...scheduleDraft,
     source: 'ai_decision',
@@ -59,5 +86,7 @@
 
 <Story name="Schedule" args={{ draft: scheduleDraft }} template={editorTemplate} />
 <Story name="Policy" args={{ draft: policyDraft }} template={editorTemplate} />
+<Story name="Trigger" args={{ draft: triggerDraft }} template={editorTemplate} />
+<Story name="Mandate" args={{ draft: mandateDraft }} template={editorTemplate} />
 <Story name="AI Decision Draft" args={{ draft: aiDecisionDraft }} template={editorTemplate} />
 <Story name="Validation" args={{ draft: invalidDraft }} template={editorTemplate} />

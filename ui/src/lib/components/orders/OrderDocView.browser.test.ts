@@ -11,6 +11,7 @@ const policyOrder: Order = {
   title: 'Policy order detail',
   summary: 'Keep managed policy instructions current.',
   kind: 'policy',
+  goal: '',
   status: 'active',
   schedule: 'Manual',
   signal: 'Policy update',
@@ -117,15 +118,15 @@ test('renders loading, empty, error, and deferred states', async () => {
   await expect.element(error.getByText('Order unavailable')).toBeVisible();
   await expect.element(error.getByText('Order API failed.')).toBeVisible();
 
-  const mandate = await render(OrderDocView, {
+  const unsupported = await render(OrderDocView, {
     props: {
-      order: { ...policyOrder, kind: 'mandate', title: 'Legacy mandate' },
+      order: { ...policyOrder, kind: 'unknown-kind', title: 'Legacy order' },
       state: 'ready',
       nowMs,
       editHref: '/orders/order-41/edit',
     },
   });
-  await expect.element(mandate.getByText('Detail view deferred')).toBeVisible();
-  await expect.element(mandate.getByRole('link', { name: 'Edit' })).toHaveAttribute('aria-disabled', 'true');
-  expect(mandate.container.querySelector('[data-slot="markdown-viewer"]')).toBeNull();
+  await expect.element(unsupported.getByText('Detail view deferred')).toBeVisible();
+  await expect.element(unsupported.getByRole('link', { name: 'Edit' })).toHaveAttribute('aria-disabled', 'true');
+  expect(unsupported.container.querySelector('[data-slot="markdown-viewer"]')).toBeNull();
 });

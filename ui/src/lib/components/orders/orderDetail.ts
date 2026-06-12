@@ -19,7 +19,7 @@ export type OrderActionCopy = {
   destructive?: boolean;
 };
 
-const supportedDetailKinds = new Set(['schedule', 'policy', 'loop', 'workflow']);
+const supportedDetailKinds = new Set(['schedule', 'policy', 'trigger', 'mandate', 'loop', 'workflow']);
 
 function clean(value: unknown): string {
   return typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim();

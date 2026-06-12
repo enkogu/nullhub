@@ -1,4 +1,4 @@
-import type { Order } from '$lib/api/client';
+import type { Order, OrderCreateInput } from '$lib/api/client';
 import type { StatusDotStatus } from '$lib/components/StatusDot.svelte';
 import type { BadgeVariant } from '$lib/components/ui/badge/index.js';
 
@@ -68,6 +68,7 @@ export function orderKindLabel(kind: string): string {
   if (normalized === 'loop') return 'Loop';
   if (normalized === 'workflow') return 'Workflow';
   if (normalized === 'schedule') return 'Schedule';
+  if (normalized === 'trigger') return 'Trigger';
   if (normalized === 'policy') return 'Policy';
   if (normalized === 'mandate') return 'Mandate';
   return titleCase(normalized || 'Mandate');
@@ -105,18 +106,23 @@ export function orderTypeVariant(kind: string): BadgeVariant {
   if (normalized === 'workflow') return 'secondary';
   if (normalized === 'loop') return 'outline';
   if (normalized === 'schedule') return 'warning';
+  if (normalized === 'trigger') return 'secondary';
   if (normalized === 'policy') return 'muted';
   return 'default';
 }
 
 export function scheduleLabel(order: Order): string {
-  return clean(order.schedule) || manualSchedule;
+  const schedule = clean(order.schedule);
+  if (schedule.startsWith('event:')) return schedule.slice('event:'.length).trim() || schedule;
+  return schedule || manualSchedule;
 }
 
 export function signalLabel(order: Order): string {
   const signal = optionalString(order, 'signal');
   if (signal) return signal;
-  if (clean(order.schedule)) return 'Scheduled signal';
+  const schedule = clean(order.schedule);
+  if (schedule.startsWith('event:')) return schedule.slice('event:'.length).trim() || 'Event signal';
+  if (schedule) return 'Scheduled signal';
   const kind = lower(order.kind);
   if (kind === 'loop') return 'Loop trigger';
   if (kind === 'workflow') return 'Workflow trigger';
@@ -198,6 +204,7 @@ export function filterOrderRegistryItems(
 export const orderTypeOptions = [
   { label: 'Mandate', value: 'mandate' },
   { label: 'Schedule', value: 'schedule' },
+  { label: 'Trigger', value: 'trigger' },
   { label: 'Loop', value: 'loop' },
   { label: 'Workflow', value: 'workflow' },
   { label: 'Policy', value: 'policy' },
@@ -214,6 +221,7 @@ export type OrderEditorType = 'schedule' | 'policy' | 'trigger' | 'mandate';
 export type OrderEditorSource = 'human' | 'ai_decision';
 export type OrderAutonomyTier = 'T0' | 'T1' | 'T2' | 'T3';
 export type CronPresetId = 'weekday-0900' | 'daily-0900' | 'weekly-monday-1000' | 'hourly' | 'raw';
+export type OrderActionType = 'create_ticket' | 'start_loop' | 'start_workflow' | 'run_agent';
 
 export type OrderEditorDraft = {
   type: OrderEditorType;
@@ -224,10 +232,38 @@ export type OrderEditorDraft = {
   cronPresetId: CronPresetId;
   policyAgentScope: string;
   autonomyTier: OrderAutonomyTier;
+  triggerEventType: string;
+  triggerSource: string;
+  triggerSubjectType: string;
+  triggerSubjectId: string;
+  actionType: OrderActionType;
+  actionTarget: string;
+  actionInstructions: string;
+  mandateGoal: string;
+  mandateConditionEventType: string;
+  mandateUnmetEventType: string;
+  mandateConditionSource: string;
+  mandateConditionSubjectType: string;
+  mandateConditionSubjectId: string;
+  mandateCheckCadenceMs: number;
   body: string;
 };
 
-export type OrderEditorValidation = Partial<Record<'type' | 'title' | 'schedule' | 'policyAgentScope' | 'body', string>>;
+export type OrderEditorValidation = Partial<
+  Record<
+    | 'type'
+    | 'title'
+    | 'schedule'
+    | 'policyAgentScope'
+    | 'triggerEventType'
+    | 'actionType'
+    | 'mandateGoal'
+    | 'mandateConditionEventType'
+    | 'mandateCheckCadenceMs'
+    | 'body',
+    string
+  >
+>;
 
 export const orderEditorTypeCards: Array<{
   type: OrderEditorType;
@@ -249,16 +285,12 @@ export const orderEditorTypeCards: Array<{
   {
     type: 'trigger',
     label: 'Trigger',
-    description: 'React to event-log signals.',
-    disabled: true,
-    disabledLabel: 'P5',
+    description: 'React to event-log signals with a dispatcher action.',
   },
   {
     type: 'mandate',
     label: 'Mandate',
-    description: 'Turn completion signals into standing orders.',
-    disabled: true,
-    disabledLabel: 'P5',
+    description: 'Keep a goal true by checking condition events.',
   },
 ];
 
@@ -327,6 +359,13 @@ export const autonomyTiers: Array<{
   },
 ];
 
+export const orderActionOptions: Array<{ value: OrderActionType; label: string; targetLabel: string }> = [
+  { value: 'run_agent', label: 'Run agent', targetLabel: 'Agent or instance' },
+  { value: 'create_ticket', label: 'Create ticket', targetLabel: 'Ticket queue' },
+  { value: 'start_loop', label: 'Start Loop', targetLabel: 'Loop id' },
+  { value: 'start_workflow', label: 'Start Workflow', targetLabel: 'Workflow id' },
+];
+
 const defaultBody = `## WHEN
 - Describe the condition or cadence that should start this order.
 
@@ -338,6 +377,7 @@ const defaultBody = `## WHEN
 `;
 
 const frontmatterKeys = ['kind', 'source', 'title', 'summary', 'schedule', 'agent_scope', 'autonomy_tier'] as const;
+const defaultMandateCheckCadenceMs = 60_000;
 
 function normalizeEditorType(value: unknown): OrderEditorType {
   const normalized = lower(value);
@@ -355,6 +395,25 @@ function normalizeAutonomyTier(value: unknown): OrderAutonomyTier {
   const normalized = clean(value).toUpperCase();
   if (normalized === 'T0' || normalized === 'T2' || normalized === 'T3') return normalized;
   return 'T1';
+}
+
+function normalizeActionType(value: unknown): OrderActionType {
+  const normalized = lower(value);
+  if (normalized === 'create_ticket' || normalized === 'start_loop' || normalized === 'start_workflow') {
+    return normalized;
+  }
+  return 'run_agent';
+}
+
+function positiveInteger(value: unknown, fallback: number): number {
+  if (value === null || value === undefined || clean(value) === '') return fallback;
+  const parsed = typeof value === 'number' ? value : Number(clean(value));
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.trunc(parsed);
+}
+
+export function orderActionTargetLabel(actionType: OrderActionType): string {
+  return orderActionOptions.find((option) => option.value === actionType)?.targetLabel ?? 'Target';
 }
 
 export function orderBodySkeleton(): string {
@@ -377,6 +436,20 @@ export function normalizeOrderEditorDraft(input: Partial<OrderEditorDraft> = {})
     cronPresetId: input.cronPresetId ?? cronPresetIdForExpression(schedule),
     policyAgentScope: input.policyAgentScope === undefined ? 'All agents in this Space' : clean(input.policyAgentScope),
     autonomyTier: normalizeAutonomyTier(input.autonomyTier),
+    triggerEventType: clean(input.triggerEventType),
+    triggerSource: clean(input.triggerSource),
+    triggerSubjectType: clean(input.triggerSubjectType),
+    triggerSubjectId: clean(input.triggerSubjectId),
+    actionType: normalizeActionType(input.actionType),
+    actionTarget: clean(input.actionTarget),
+    actionInstructions: clean(input.actionInstructions),
+    mandateGoal: clean(input.mandateGoal),
+    mandateConditionEventType: clean(input.mandateConditionEventType),
+    mandateUnmetEventType: clean(input.mandateUnmetEventType),
+    mandateConditionSource: clean(input.mandateConditionSource),
+    mandateConditionSubjectType: clean(input.mandateConditionSubjectType),
+    mandateConditionSubjectId: clean(input.mandateConditionSubjectId),
+    mandateCheckCadenceMs: positiveInteger(input.mandateCheckCadenceMs, defaultMandateCheckCadenceMs),
     body: input.body === undefined ? orderBodySkeleton() : input.body,
   };
 }
@@ -479,7 +552,22 @@ export function validateOrderEditorDraft(input: Partial<OrderEditorDraft>): Orde
   if (draft.type === 'policy' && !draft.policyAgentScope) {
     errors.policyAgentScope = 'Agent scope is required for a policy order.';
   }
-  if (!hasRequiredBodySections(draft.body)) {
+  if (draft.type === 'trigger' && !draft.triggerEventType) {
+    errors.triggerEventType = 'Event type is required for a trigger order.';
+  }
+  if ((draft.type === 'trigger' || draft.type === 'mandate') && !draft.actionType) {
+    errors.actionType = 'Action is required for dispatcher orders.';
+  }
+  if (draft.type === 'mandate' && !draft.mandateGoal) {
+    errors.mandateGoal = 'Goal is required for a mandate order.';
+  }
+  if (draft.type === 'mandate' && !draft.mandateConditionEventType) {
+    errors.mandateConditionEventType = 'Condition event type is required for a mandate order.';
+  }
+  if (draft.type === 'mandate' && draft.mandateCheckCadenceMs < 1) {
+    errors.mandateCheckCadenceMs = 'Cadence must be at least 1 ms.';
+  }
+  if ((draft.type === 'schedule' || draft.type === 'policy') && !hasRequiredBodySections(draft.body)) {
     errors.body = 'Body must include WHEN, WHAT, and BOUNDS sections.';
   }
   return errors;
@@ -506,6 +594,13 @@ function parseYamlScalar(value: string): string {
 
 export function orderDraftToDocument(input: Partial<OrderEditorDraft>): string {
   const draft = normalizeOrderEditorDraft(input);
+  if (draft.type === 'trigger') {
+    return `${JSON.stringify(triggerSpecFromDraft(draft), null, 2)}\n`;
+  }
+  if (draft.type === 'mandate') {
+    return `${JSON.stringify(mandateSpecFromDraft(draft), null, 2)}\n`;
+  }
+
   const frontmatter: Record<(typeof frontmatterKeys)[number], string> = {
     kind: draft.type,
     source: draft.source,
@@ -519,7 +614,167 @@ export function orderDraftToDocument(input: Partial<OrderEditorDraft>): string {
   return `---\n${lines.join('\n')}\n---\n${draft.body}`;
 }
 
+function optionalJsonString(value: string): string | undefined {
+  const cleaned = clean(value);
+  return cleaned || undefined;
+}
+
+function actionSpecFromDraft(draft: OrderEditorDraft): Record<string, string> {
+  return {
+    type: draft.actionType,
+    ...(optionalJsonString(draft.actionTarget) ? { target: draft.actionTarget } : {}),
+    ...(optionalJsonString(draft.actionInstructions) ? { instructions: draft.actionInstructions } : {}),
+  };
+}
+
+export function triggerSpecFromDraft(input: Partial<OrderEditorDraft>): Record<string, unknown> {
+  const draft = normalizeOrderEditorDraft(input);
+  return {
+    trigger: {
+      event_type: draft.triggerEventType,
+      ...(optionalJsonString(draft.triggerSource) ? { source: draft.triggerSource } : {}),
+      ...(optionalJsonString(draft.triggerSubjectType) ? { subject_type: draft.triggerSubjectType } : {}),
+      ...(optionalJsonString(draft.triggerSubjectId) ? { subject_id: draft.triggerSubjectId } : {}),
+    },
+    tier: draft.autonomyTier,
+    action: actionSpecFromDraft(draft),
+  };
+}
+
+export function mandateSpecFromDraft(input: Partial<OrderEditorDraft>): Record<string, unknown> {
+  const draft = normalizeOrderEditorDraft(input);
+  return {
+    goal: draft.mandateGoal,
+    condition: {
+      event_type: draft.mandateConditionEventType,
+      ...(optionalJsonString(draft.mandateUnmetEventType) ? { unmet_event_type: draft.mandateUnmetEventType } : {}),
+      ...(optionalJsonString(draft.mandateConditionSource) ? { source: draft.mandateConditionSource } : {}),
+      ...(optionalJsonString(draft.mandateConditionSubjectType) ? { subject_type: draft.mandateConditionSubjectType } : {}),
+      ...(optionalJsonString(draft.mandateConditionSubjectId) ? { subject_id: draft.mandateConditionSubjectId } : {}),
+    },
+    check_cadence_ms: draft.mandateCheckCadenceMs,
+    tier: draft.autonomyTier,
+    action: actionSpecFromDraft(draft),
+  };
+}
+
+function recordValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function stringRecordValue(record: Record<string, unknown> | null | undefined, key: string): string {
+  const value = record?.[key];
+  if (value === null || value === undefined || typeof value === 'object') return '';
+  return clean(value);
+}
+
+function firstStringRecordValue(record: Record<string, unknown> | null | undefined, keys: string[]): string {
+  for (const key of keys) {
+    const value = stringRecordValue(record, key);
+    if (value) return value;
+  }
+  return '';
+}
+
+function numberRecordValue(record: Record<string, unknown> | null | undefined, key: string): number | undefined {
+  const value = record?.[key];
+  if (value === null || value === undefined || clean(value) === '') return undefined;
+  const parsed = typeof value === 'number' ? value : Number(clean(value));
+  return Number.isFinite(parsed) ? Math.trunc(parsed) : undefined;
+}
+
+function actionDraftFromSpec(root: Record<string, unknown>): Partial<OrderEditorDraft> {
+  const action = recordValue(root.action);
+  const actionName = action
+    ? firstStringRecordValue(action, ['type', 'kind'])
+    : clean(root.action) || firstStringRecordValue(root, ['executor', 'action_type']);
+  return {
+    actionType: normalizeActionType(actionName),
+    actionTarget: firstStringRecordValue(action, [
+      'target',
+      'target_ref',
+      'instance',
+      'workflow_id',
+      'loop_id',
+      'agent',
+      'ticket_queue',
+    ]) || firstStringRecordValue(root, ['target', 'target_ref', 'instance', 'workflow_id', 'loop_id', 'agent', 'ticket_queue']),
+    actionInstructions:
+      firstStringRecordValue(action, ['instructions', 'prompt', 'message']) ||
+      firstStringRecordValue(root, ['instructions', 'prompt', 'message']),
+  };
+}
+
+function goalDraftFromSpec(root: Record<string, unknown>): string {
+  const goal = firstStringRecordValue(root, ['goal', 'goal_id', 'goal_ref']);
+  if (goal) return goal;
+  return firstStringRecordValue(recordValue(root.goal), ['id', 'ref', 'title', 'name']);
+}
+
+function triggerDraftFromSpec(root: Record<string, unknown>): Partial<OrderEditorDraft> {
+  const trigger = recordValue(root.trigger);
+  const eventType = trigger
+    ? firstStringRecordValue(trigger, ['event_type', 'type'])
+    : clean(root.trigger) || firstStringRecordValue(root, ['event_type', 'type']);
+  return {
+    type: 'trigger',
+    triggerEventType: eventType,
+    triggerSource: firstStringRecordValue(trigger, ['source']) || stringRecordValue(root, 'source'),
+    triggerSubjectType: firstStringRecordValue(trigger, ['subject_type']) || stringRecordValue(root, 'subject_type'),
+    triggerSubjectId: firstStringRecordValue(trigger, ['subject_id']) || stringRecordValue(root, 'subject_id'),
+    autonomyTier: normalizeAutonomyTier(stringRecordValue(root, 'tier')),
+    ...actionDraftFromSpec(root),
+  };
+}
+
+function mandateDraftFromSpec(root: Record<string, unknown>): Partial<OrderEditorDraft> {
+  const condition = recordValue(root.condition) ?? recordValue(root.completion) ?? root;
+  const action = recordValue(root.action);
+  return {
+    type: 'mandate',
+    mandateGoal: goalDraftFromSpec(root),
+    mandateConditionEventType:
+      firstStringRecordValue(condition, ['event_type', 'met_event_type']) ||
+      firstStringRecordValue(root, ['condition_event_type', 'met_event_type']),
+    mandateUnmetEventType:
+      firstStringRecordValue(condition, ['unmet_event_type', 'false_event_type']) || stringRecordValue(root, 'unmet_event_type'),
+    mandateConditionSource: firstStringRecordValue(condition, ['source']) || stringRecordValue(root, 'source'),
+    mandateConditionSubjectType: firstStringRecordValue(condition, ['subject_type']) || stringRecordValue(root, 'subject_type'),
+    mandateConditionSubjectId: firstStringRecordValue(condition, ['subject_id']) || stringRecordValue(root, 'subject_id'),
+    mandateCheckCadenceMs: positiveInteger(
+      numberRecordValue(root, 'check_cadence_ms') ??
+        numberRecordValue(root, 'cadence_ms') ??
+        numberRecordValue(root, 'check_interval_ms') ??
+        numberRecordValue(condition, 'check_cadence_ms'),
+      defaultMandateCheckCadenceMs,
+    ),
+    autonomyTier: normalizeAutonomyTier(stringRecordValue(root, 'tier') || stringRecordValue(action, 'tier')),
+    ...actionDraftFromSpec(root),
+  };
+}
+
+function jsonDocumentToDraft(document: string): Partial<OrderEditorDraft> | null {
+  const trimmed = document.trim();
+  if (!trimmed.startsWith('{')) return null;
+  try {
+    const root = recordValue(JSON.parse(trimmed));
+    if (!root) return null;
+    if (recordValue(root.condition) || recordValue(root.completion) || stringRecordValue(root, 'goal')) {
+      return mandateDraftFromSpec(root);
+    }
+    if (recordValue(root.trigger) || stringRecordValue(root, 'trigger') || stringRecordValue(root, 'event_type')) {
+      return triggerDraftFromSpec(root);
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export function orderDocumentToDraft(document: string): OrderEditorDraft {
+  const jsonDraft = jsonDocumentToDraft(document);
+  if (jsonDraft) return normalizeOrderEditorDraft(jsonDraft);
+
   if (!document.startsWith('---\n')) return normalizeOrderEditorDraft({ body: document });
   const end = document.indexOf('\n---\n', 4);
   if (end < 0) return normalizeOrderEditorDraft({ body: document });
@@ -541,5 +796,41 @@ export function orderDocumentToDraft(document: string): OrderEditorDraft {
     policyAgentScope: values.agent_scope,
     autonomyTier: values.autonomy_tier as OrderAutonomyTier,
     body,
+  });
+}
+
+export type OrderEditorOrderInput = Pick<OrderCreateInput, 'title' | 'summary' | 'kind' | 'goal' | 'schedule' | 'content'>;
+
+export function orderDraftToOrderInput(input: Partial<OrderEditorDraft>): OrderEditorOrderInput {
+  const draft = normalizeOrderEditorDraft(input);
+  return {
+    title: draft.title,
+    summary: draft.summary,
+    kind: draft.type,
+    goal: draft.type === 'mandate' ? draft.mandateGoal : '',
+    schedule:
+      draft.type === 'schedule'
+        ? draft.schedule
+        : draft.type === 'trigger' && draft.triggerEventType
+          ? `event:${draft.triggerEventType}`
+          : '',
+    content: orderDraftToDocument(draft),
+  };
+}
+
+export function orderToEditorDraft(order: Order): OrderEditorDraft {
+  const contentDraft = orderDocumentToDraft(order.content || '');
+  const type = normalizeEditorType(order.kind || contentDraft.type);
+  const schedule = clean(order.schedule) || contentDraft.schedule;
+  const triggerEventType =
+    type === 'trigger' && schedule.startsWith('event:') ? clean(schedule.slice('event:'.length)) : contentDraft.triggerEventType;
+  return normalizeOrderEditorDraft({
+    ...contentDraft,
+    type,
+    title: clean(order.title) || contentDraft.title,
+    summary: clean(order.summary) || contentDraft.summary,
+    schedule,
+    triggerEventType,
+    mandateGoal: clean(order.goal) || contentDraft.mandateGoal,
   });
 }
