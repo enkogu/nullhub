@@ -294,6 +294,22 @@ export type StandaloneInfo = {
   standalone_path?: string;
   already_imported?: boolean;
 };
+export type CurrentSessionUser = {
+  id?: string;
+  email?: string;
+  name?: string;
+  username?: string;
+  avatar_url?: string;
+  avatarUrl?: string;
+  avatar?: string;
+  picture?: string;
+};
+export type CurrentSessionBootstrap = {
+  user?: CurrentSessionUser;
+  needsOnboarding?: boolean;
+  agentsCount?: number;
+  workspace?: unknown;
+};
 export type ApiRequestError = Error & {
   status?: number;
   body?: any;
@@ -630,6 +646,8 @@ export const nullBoilerApi = createNullBoilerApi(request, withQuery);
 
 export const api = {
   getStatus: () => request<any>('/status'),
+  getCurrentSession: () =>
+    controlPlaneRequest<CurrentSessionBootstrap>('/api/me/bootstrap', { timeoutMs: 5000 }),
   getGlobalUsage: (window: '24h' | '7d' | '30d' | 'all' = '24h') =>
     request<any>(withQuery('/usage', { window })),
   getComponents: () => request<any>('/components'),

@@ -28,6 +28,8 @@ type NullHubFixtureOptions = {
   usage?: JsonBody;
   usageBySpace?: Record<string, JsonBody>;
   usageStatus?: number;
+  currentSession?: JsonBody;
+  currentSessionStatus?: number;
 };
 
 async function fulfillJson(route: Route, body: JsonBody, status = 200) {
@@ -98,6 +100,20 @@ const fixtureServiceStatus = {
   running: false,
   service_type: '',
   unit_path: '',
+};
+
+const fixtureCurrentSession = {
+  user: {
+    id: 'fixture-user',
+    name: 'Fixture Operator',
+    email: 'operator@nullhub.local',
+  },
+  needsOnboarding: false,
+  agentsCount: 1,
+  workspace: {
+    id: 'ops',
+    name: 'Operations',
+  },
 };
 
 const missionControlState = {
@@ -544,6 +560,15 @@ async function usageRoute(route: Route, options: NullHubFixtureOptions) {
   await fulfillJson(route, (space && options.usageBySpace?.[space]) || options.usage || fixtureGlobalUsage);
 }
 
+async function currentSessionRoute(route: Route, options: NullHubFixtureOptions) {
+  recordRequest(route, options);
+  await fulfillJson(
+    route,
+    options.currentSession || fixtureCurrentSession,
+    options.currentSessionStatus || 200,
+  );
+}
+
 function matchesFixtureSpace(record: Record<string, unknown>, space: string | null): boolean {
   const recordSpace = String(record.space_id ?? record.spaceId ?? '').trim();
   if (!space) return true;
@@ -880,6 +905,7 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
 
   await page.route('**/api/status', (route) => fulfillJson(route, options.status || fixtureStatus));
   await page.route('**/nullhub-api/status', (route) => fulfillJson(route, options.status || fixtureStatus));
+  await page.route('**/api/me/bootstrap', (route) => currentSessionRoute(route, options));
   await page.route('**/api/spaces', (route) => spacesRoute(route, options, spaces));
   await page.route('**/nullhub-api/spaces', (route) => spacesRoute(route, options, spaces));
   await page.route('**/api/mission-control/state', (route) => fulfillJson(route, missionControlState));
