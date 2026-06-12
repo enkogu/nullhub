@@ -18,6 +18,9 @@ export type Order = {
   kind: OrderKind;
   status: OrderStatus;
   schedule: string;
+  signal?: string;
+  tier?: string;
+  execCount?: number;
   docPath: string;
   content: string;
   createdAtMs: number;
@@ -84,11 +87,22 @@ function numberValue(value: unknown): number {
   return 0;
 }
 
+function optionalNumberValue(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  const parsed = numberValue(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 function stringValue(value: unknown): string {
   return typeof value === 'string' ? value : value == null ? '' : String(value);
 }
 
 function normalizeOrder(raw: any): Order {
+  const signal = stringValue(raw?.signal ?? raw?.trigger ?? raw?.source_signal);
+  const tier = stringValue(raw?.tier ?? raw?.policy_tier ?? raw?.plan_tier);
+  const execCount = optionalNumberValue(
+    raw?.exec_count ?? raw?.execution_count ?? raw?.run_count ?? raw?.runs_count ?? raw?.execCount,
+  );
   return {
     id: stringValue(raw?.id),
     spaceId: stringValue(raw?.space_id ?? raw?.spaceId),
@@ -97,6 +111,9 @@ function normalizeOrder(raw: any): Order {
     kind: stringValue(raw?.kind || 'mandate'),
     status: stringValue(raw?.status || 'draft'),
     schedule: stringValue(raw?.schedule),
+    ...(signal ? { signal } : {}),
+    ...(tier ? { tier } : {}),
+    ...(execCount !== undefined ? { execCount } : {}),
     docPath: stringValue(raw?.doc_path ?? raw?.docPath),
     content: stringValue(raw?.content ?? raw?.body),
     createdAtMs: numberValue(raw?.created_at_ms ?? raw?.createdAtMs),

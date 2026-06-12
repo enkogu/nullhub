@@ -8,6 +8,8 @@ type NullHubFixtureOptions = {
   status?: JsonBody;
   events?: Record<string, unknown>[];
   eventsStatus?: number;
+  orders?: Record<string, unknown>[];
+  ordersStatus?: number;
   approvals?: Record<string, unknown>[];
   approvalsStatus?: number;
   loopCatalog?: JsonBody;
@@ -236,6 +238,41 @@ const fixtureEvents = [
     evidence_ref: '',
     created_at_ms: 1_779_999_500_000,
     payload: { agent: 'Athena' },
+  },
+];
+
+const fixtureOrders = [
+  {
+    id: 'order-2',
+    space_id: 'ops',
+    title: 'Weekly pipeline review',
+    summary: 'Review open loops and blocked workflow mandates.',
+    kind: 'workflow',
+    status: 'active',
+    schedule: '0 10 * * 1',
+    signal: 'Monday review signal',
+    tier: 'Managed',
+    exec_count: 12,
+    doc_path: 'orders/order-2.md',
+    content: '# Weekly pipeline review\n',
+    created_at_ms: 1_779_000_000_000,
+    updated_at_ms: 1_780_000_000_000,
+  },
+  {
+    id: 'order-1',
+    space_id: 'ops',
+    title: 'Morning report',
+    summary: 'Prepare the daily operations brief.',
+    kind: 'schedule',
+    status: 'draft',
+    schedule: '0 9 * * *',
+    signal: 'Daily briefing signal',
+    tier: 'Core',
+    exec_count: 3,
+    doc_path: 'orders/order-1.md',
+    content: '# Morning report\n',
+    created_at_ms: 1_778_000_000_000,
+    updated_at_ms: 1_779_900_000_000,
   },
 ];
 
@@ -484,6 +521,26 @@ async function eventsRoute(route: Route, options: NullHubFixtureOptions) {
     has_more: false,
     next_cursor: null,
   });
+}
+
+async function ordersRoute(route: Route, options: NullHubFixtureOptions) {
+  recordRequest(route, options);
+  if (options.ordersStatus && options.ordersStatus >= 400) {
+    await fulfillJson(route, { error: 'Orders unavailable.' }, options.ordersStatus);
+    return;
+  }
+
+  const url = new URL(route.request().url());
+  const space = url.searchParams.get('space');
+  if (!space) {
+    await fulfillJson(route, { error: 'space query is required' }, 400);
+    return;
+  }
+  const orders = (options.orders || fixtureOrders).filter((order) => {
+    const orderSpace = String(order.space_id ?? order.spaceId ?? '');
+    return orderSpace === space;
+  });
+  await fulfillJson(route, { orders });
 }
 
 async function approvalsRoute(
@@ -920,6 +977,8 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/nulltickets/store/loops.templates**', (route) => loopCatalogRoute(route, options));
   await page.route('**/api/events**', (route) => eventsRoute(route, options));
   await page.route('**/nullhub-api/events**', (route) => eventsRoute(route, options));
+  await page.route(/\/api\/orders(?:\?.*)?$/, (route) => ordersRoute(route, options));
+  await page.route(/\/nullhub-api\/orders(?:\?.*)?$/, (route) => ordersRoute(route, options));
   const approvals = (options.approvals || fixtureApprovals).map((approval) => ({ ...approval }));
   await page.route(/\/api\/approvals(?:\?.*)?$/, (route) => approvalsRoute(route, options, approvals));
   await page.route(/\/nullhub-api\/approvals(?:\?.*)?$/, (route) => approvalsRoute(route, options, approvals));
@@ -989,6 +1048,22 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   );
   await page.route('**/api/nullboiler/workflows**', (route) => fulfillJson(route, { items: [] }));
   await page.route('**/nullhub-api/nullboiler/workflows**', (route) => fulfillJson(route, { items: [] }));
+  await page.route('**/api/nullboiler/tracker/status**', (route) =>
+    jsonRoute(route, options, { running: [], queued: [], status: 'idle' }),
+  );
+  await page.route('**/nullhub-api/nullboiler/tracker/status**', (route) =>
+    jsonRoute(route, options, { running: [], queued: [], status: 'idle' }),
+  );
+  await page.route('**/api/nullboiler/tracker/tasks**', (route) => jsonRoute(route, options, []));
+  await page.route('**/nullhub-api/nullboiler/tracker/tasks**', (route) => jsonRoute(route, options, []));
+  await page.route('**/api/nullboiler/tracker/stats**', (route) =>
+    jsonRoute(route, options, { running: 0, queued: 0, completed: 0 }),
+  );
+  await page.route('**/nullhub-api/nullboiler/tracker/stats**', (route) =>
+    jsonRoute(route, options, { running: 0, queued: 0, completed: 0 }),
+  );
+  await page.route('**/api/nullboiler/workers**', (route) => jsonRoute(route, options, []));
+  await page.route('**/nullhub-api/nullboiler/workers**', (route) => jsonRoute(route, options, []));
   await page.route('**/api/nullwatch/v1/summary**', (route) =>
     fulfillJson(route, { totals: {}, status: 'empty' }),
   );
