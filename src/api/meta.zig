@@ -905,7 +905,7 @@ const routes = [_]RouteSpec{
         .summary = "List durable Orders for one Space.",
         .auth_mode = "optional_bearer",
         .query_params = order_query_params[0..],
-        .response = "Order list backed by the Space orders table and markdown docs.",
+        .response = "Order list backed by the Space orders table and markdown docs, including derived safety state when event evidence is available.",
         .examples = route_examples_orders[0..1],
     },
     .{
@@ -917,7 +917,7 @@ const routes = [_]RouteSpec{
         .auth_mode = "optional_bearer",
         .query_params = order_query_params[0..],
         .body = "Order payload with title, optional id, summary, kind, goal, schedule, and markdown content. Active mandate Orders require a goal.",
-        .response = "Created Order record.",
+        .response = "Created Order record with derived safety state when event evidence is available.",
         .examples = route_examples_orders[1..2],
     },
     .{
@@ -929,7 +929,7 @@ const routes = [_]RouteSpec{
         .auth_mode = "optional_bearer",
         .path_params = order_id_params[0..],
         .query_params = order_query_params[0..],
-        .response = "Order record including markdown content.",
+        .response = "Order record including markdown content and derived safety state when event evidence is available.",
     },
     .{
         .id = "orders.update",
@@ -941,7 +941,7 @@ const routes = [_]RouteSpec{
         .path_params = order_id_params[0..],
         .query_params = order_query_params[0..],
         .body = "Partial Order update payload. Active mandate Orders require a goal.",
-        .response = "Updated Order record.",
+        .response = "Updated Order record with derived safety state when event evidence is available.",
     },
     .{
         .id = "orders.schedule",
@@ -953,7 +953,7 @@ const routes = [_]RouteSpec{
         .path_params = order_id_params[0..],
         .query_params = order_query_params[0..],
         .body = "Payload with schedule.",
-        .response = "Updated Order record.",
+        .response = "Updated Order record with derived safety state when event evidence is available.",
     },
     .{
         .id = "orders.delete",
@@ -977,7 +977,7 @@ const routes = [_]RouteSpec{
         .auth_mode = "optional_bearer",
         .path_params = order_id_params[0..],
         .query_params = order_query_params[0..],
-        .response = "Updated Order record.",
+        .response = "Updated Order record with derived safety state when event evidence is available.",
         .examples = route_examples_orders[2..],
     },
     .{

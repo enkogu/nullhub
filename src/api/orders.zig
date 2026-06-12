@@ -1,6 +1,7 @@
 const std = @import("std");
 const std_compat = @import("compat");
 const orders = @import("../core/orders.zig");
+const order_safety = @import("../core/order_safety.zig");
 const policy_orders = @import("../core/policy_orders.zig");
 const paths_mod = @import("../core/paths.zig");
 const state_mod = @import("../core/state.zig");
@@ -72,6 +73,10 @@ fn orderIdFromActionTarget(allocator: std.mem.Allocator, target: []const u8, exp
 }
 
 pub fn handleList(allocator: std.mem.Allocator, paths: paths_mod.Paths, target: []const u8) helpers.ApiResponse {
+    return handleListWithState(allocator, paths, null, target);
+}
+
+pub fn handleListWithState(allocator: std.mem.Allocator, paths: paths_mod.Paths, state: ?*state_mod.State, target: []const u8) helpers.ApiResponse {
     const space_id = requiredSpaceQueryAlloc(allocator, target) catch |err| switch (err) {
         error.MissingSpace => return helpers.badRequest("{\"error\":\"space query is required\"}"),
         error.InvalidSpace => return helpers.badRequest("{\"error\":\"invalid space id\"}"),
@@ -85,11 +90,15 @@ pub fn handleList(allocator: std.mem.Allocator, paths: paths_mod.Paths, target: 
         allocator.free(loaded);
     }
 
-    const body = renderList(allocator, loaded) catch return helpers.serverError();
+    const body = renderList(allocator, loaded, eventsForState(state)) catch return helpers.serverError();
     return helpers.jsonOk(body);
 }
 
 pub fn handleGet(allocator: std.mem.Allocator, paths: paths_mod.Paths, target: []const u8, order_id: []const u8) helpers.ApiResponse {
+    return handleGetWithState(allocator, paths, null, target, order_id);
+}
+
+pub fn handleGetWithState(allocator: std.mem.Allocator, paths: paths_mod.Paths, state: ?*state_mod.State, target: []const u8, order_id: []const u8) helpers.ApiResponse {
     const space_id = requiredSpaceQueryAlloc(allocator, target) catch |err| switch (err) {
         error.MissingSpace => return helpers.badRequest("{\"error\":\"space query is required\"}"),
         error.InvalidSpace => return helpers.badRequest("{\"error\":\"invalid space id\"}"),
@@ -104,7 +113,7 @@ pub fn handleGet(allocator: std.mem.Allocator, paths: paths_mod.Paths, target: [
     };
     defer order.deinit(allocator);
 
-    const body = renderOrder(allocator, order) catch return helpers.serverError();
+    const body = renderOrder(allocator, order, eventsForState(state)) catch return helpers.serverError();
     return helpers.jsonOk(body);
 }
 
@@ -151,7 +160,7 @@ pub fn handleCreate(allocator: std.mem.Allocator, paths: paths_mod.Paths, state:
 
     applyOrderMutationSideEffects(allocator, paths, state, order, "order.created", "Order created", now_ms) catch return helpers.serverError();
 
-    const response = renderOrder(allocator, order) catch return helpers.serverError();
+    const response = renderOrder(allocator, order, eventsForState(state)) catch return helpers.serverError();
     return .{ .status = "201 Created", .content_type = "application/json", .body = response };
 }
 
@@ -190,7 +199,7 @@ pub fn handleUpdate(allocator: std.mem.Allocator, paths: paths_mod.Paths, state:
 
     applyOrderMutationSideEffects(allocator, paths, state, order, "order.updated", "Order updated", now_ms) catch return helpers.serverError();
 
-    const response = renderOrder(allocator, order) catch return helpers.serverError();
+    const response = renderOrder(allocator, order, eventsForState(state)) catch return helpers.serverError();
     return helpers.jsonOk(response);
 }
 
@@ -232,7 +241,7 @@ pub fn handleTransition(
 
     applyOrderMutationSideEffects(allocator, paths, state, order, transition.eventType(), "Order status changed", now_ms) catch return helpers.serverError();
 
-    const response = renderOrder(allocator, order) catch return helpers.serverError();
+    const response = renderOrder(allocator, order, eventsForState(state)) catch return helpers.serverError();
     return helpers.jsonOk(response);
 }
 
@@ -258,7 +267,7 @@ pub fn handleSchedule(allocator: std.mem.Allocator, paths: paths_mod.Paths, stat
 
     applyOrderMutationSideEffects(allocator, paths, state, order, "order.scheduled", "Order schedule updated", now_ms) catch return helpers.serverError();
 
-    const response = renderOrder(allocator, order) catch return helpers.serverError();
+    const response = renderOrder(allocator, order, eventsForState(state)) catch return helpers.serverError();
     return helpers.jsonOk(response);
 }
 
@@ -408,26 +417,30 @@ fn intField(root: std.json.ObjectMap, key: []const u8) ?i64 {
     };
 }
 
-fn renderList(allocator: std.mem.Allocator, items: []const orders.Order) ![]const u8 {
+fn eventsForState(state: ?*state_mod.State) ?[]const state_mod.Event {
+    return if (state) |loaded| loaded.eventsList() else null;
+}
+
+fn renderList(allocator: std.mem.Allocator, items: []const orders.Order, events: ?[]const state_mod.Event) ![]const u8 {
     var buf = std.array_list.Managed(u8).init(allocator);
     errdefer buf.deinit();
     try buf.appendSlice("{\"orders\":[");
     for (items, 0..) |order, idx| {
         if (idx > 0) try buf.append(',');
-        try appendOrderJson(&buf, order);
+        try appendOrderJson(&buf, order, events);
     }
     try buf.appendSlice("]}");
     return buf.toOwnedSlice();
 }
 
-fn renderOrder(allocator: std.mem.Allocator, order: orders.Order) ![]const u8 {
+fn renderOrder(allocator: std.mem.Allocator, order: orders.Order, events: ?[]const state_mod.Event) ![]const u8 {
     var buf = std.array_list.Managed(u8).init(allocator);
     errdefer buf.deinit();
-    try appendOrderJson(&buf, order);
+    try appendOrderJson(&buf, order, events);
     return buf.toOwnedSlice();
 }
 
-fn appendOrderJson(buf: *std.array_list.Managed(u8), order: orders.Order) !void {
+fn appendOrderJson(buf: *std.array_list.Managed(u8), order: orders.Order, events: ?[]const state_mod.Event) !void {
     try buf.appendSlice("{\"id\":\"");
     try appendEscaped(buf, order.id);
     try buf.appendSlice("\",\"space_id\":\"");
@@ -449,6 +462,37 @@ fn appendOrderJson(buf: *std.array_list.Managed(u8), order: orders.Order) !void 
     try buf.appendSlice("\",\"content\":\"");
     try appendEscaped(buf, order.content);
     try appendFmt(buf, "\",\"created_at_ms\":{d},\"updated_at_ms\":{d}", .{ order.created_at_ms, order.updated_at_ms });
+    if (events) |items| {
+        try buf.appendSlice(",\"safety\":");
+        try appendSafetyJson(buf, order_safety.evaluate(order, items));
+    }
+    try buf.appendSlice("}");
+}
+
+fn appendSafetyJson(buf: *std.array_list.Managed(u8), safety: order_safety.Summary) !void {
+    try buf.appendSlice("{\"status\":\"");
+    try appendEscaped(buf, safety.status);
+    try buf.appendSlice("\",\"guarded\":");
+    try buf.appendSlice(if (safety.guarded) "true" else "false");
+    try buf.appendSlice(",\"probation\":");
+    try buf.appendSlice(if (safety.probation) "true" else "false");
+    try buf.appendSlice(",\"circuit_open\":");
+    try buf.appendSlice(if (safety.circuit_open) "true" else "false");
+    try appendFmt(
+        buf,
+        ",\"safe_executions\":{d},\"required_safe_executions\":{d},\"consecutive_failures\":{d},\"failure_threshold\":{d},\"reset_event_id\":{d},\"last_success_event_id\":{d},\"last_failure_event_id\":{d},\"circuit_opened_event_id\":{d},\"updated_at_ms\":{d}",
+        .{
+            safety.safe_executions,
+            safety.required_safe_executions,
+            safety.consecutive_failures,
+            safety.failure_threshold,
+            safety.reset_event_id,
+            safety.last_success_event_id,
+            safety.last_failure_event_id,
+            safety.circuit_opened_event_id,
+            safety.updated_at_ms,
+        },
+    );
     try buf.appendSlice("}");
 }
 
@@ -589,6 +633,95 @@ test "orders API rejects activating mandate orders without a goal" {
         defer allocator.free(resp.body);
         try std.testing.expectEqualStrings("200 OK", resp.status);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"active\"") != null);
+    }
+}
+
+test "orders API surfaces probation and circuit breaker state" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    {
+        const resp = handleCreate(
+            allocator,
+            fixture.paths,
+            &state,
+            "/api/orders?space=ops",
+            "{\"id\":\"auto-order\",\"title\":\"Auto order\",\"kind\":\"trigger\",\"content\":\"{\\\"event_type\\\":\\\"review.ready\\\",\\\"action\\\":\\\"create_ticket\\\"}\"}",
+            1000,
+        );
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/auto-order/activate?space=ops", "auto-order", .activate, 1100, null);
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"safety\":{\"status\":\"probation\"") != null);
+    }
+
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "dispatcher.executed",
+        .source = "nullhub.dispatcher",
+        .subject_type = "order",
+        .subject_id = "auto-order",
+        .title = "Dispatcher executed",
+        .created_at_ms = 1200,
+    });
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "dispatcher.executed",
+        .source = "nullhub.dispatcher",
+        .subject_type = "order",
+        .subject_id = "auto-order",
+        .title = "Dispatcher executed",
+        .created_at_ms = 1300,
+    });
+
+    {
+        const resp = handleGetWithState(allocator, fixture.paths, &state, "/api/orders/auto-order?space=ops", "auto-order");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"safety\":{\"status\":\"clear\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"safe_executions\":2") != null);
+    }
+
+    var failure_idx: usize = 0;
+    while (failure_idx < order_safety.failure_threshold) : (failure_idx += 1) {
+        _ = try state.addEvent(.{
+            .space_id = "ops",
+            .event_type = "dispatcher.failed",
+            .source = "nullhub.dispatcher",
+            .subject_type = "order",
+            .subject_id = "auto-order",
+            .title = "Dispatcher failed",
+            .created_at_ms = 1400 + @as(i64, @intCast(failure_idx)),
+        });
+    }
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "dispatcher.circuit_opened",
+        .source = "nullhub.dispatcher",
+        .subject_type = "order",
+        .subject_id = "auto-order",
+        .title = "Dispatcher circuit opened",
+        .severity = "error",
+        .created_at_ms = 1500,
+    });
+
+    {
+        const resp = handleListWithState(allocator, fixture.paths, &state, "/api/orders?space=ops");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"safety\":{\"status\":\"circuit_open\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"circuit_open\":true") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"consecutive_failures\":3") != null);
     }
 }
 

@@ -1700,7 +1700,7 @@ pub const Server = struct {
         // Orders API — /api/orders?space={id} and /api/orders/{id}[/action]?space={id}
         if (orders_api.isOrdersCollectionPath(target)) {
             if (std.mem.eql(u8, method, "GET")) {
-                const resp = orders_api.handleList(allocator, self.paths, target);
+                const resp = orders_api.handleListWithState(allocator, self.paths, self.state, target);
                 return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
             }
             if (std.mem.eql(u8, method, "POST")) {
@@ -1739,7 +1739,7 @@ pub const Server = struct {
         if (orders_api.orderIdFromTarget(allocator, target) catch null) |order_id| {
             defer allocator.free(order_id);
             if (std.mem.eql(u8, method, "GET")) {
-                const resp = orders_api.handleGet(allocator, self.paths, target, order_id);
+                const resp = orders_api.handleGetWithState(allocator, self.paths, self.state, target, order_id);
                 return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
             }
             if (std.mem.eql(u8, method, "PATCH")) {
