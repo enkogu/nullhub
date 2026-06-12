@@ -549,6 +549,7 @@ fn ownedTestOrder(allocator: std.mem.Allocator, order: orders_mod.Order) !orders
         .title = try allocator.dupe(u8, order.title),
         .summary = try allocator.dupe(u8, order.summary),
         .kind = try allocator.dupe(u8, order.kind),
+        .goal = try allocator.dupe(u8, order.goal),
         .status = try allocator.dupe(u8, order.status),
         .schedule = try allocator.dupe(u8, order.schedule),
         .doc_path = try allocator.dupe(u8, order.doc_path),

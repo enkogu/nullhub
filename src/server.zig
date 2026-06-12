@@ -3536,11 +3536,12 @@ test "route /api/orders CRUD transitions and emits events" {
             std.testing.allocator,
             "POST",
             "/api/orders?space=ops",
-            "{\"title\":\"Morning report\",\"summary\":\"Daily brief\",\"content\":\"# Brief\\n\"}",
+            "{\"title\":\"Morning report\",\"summary\":\"Daily brief\",\"goal\":\"daily-brief-published\",\"content\":\"# Brief\\n\"}",
         );
         defer std.testing.allocator.free(resp.body);
         try std.testing.expectEqualStrings("201 Created", resp.status);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":\"order-1\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"goal\":\"daily-brief-published\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"draft\"") != null);
     }
 
