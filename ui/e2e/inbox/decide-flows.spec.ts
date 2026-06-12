@@ -26,6 +26,7 @@ test('approve removes the card and decrements the pending count', async ({ page 
   await expect(page.getByText('Which tone should the newsletter use?')).toBeVisible();
   await expect(page.getByText('Nightly digest run failed')).toBeVisible();
   await expect(page.getByRole('button', { name: /^All/ })).toContainText('3');
+  await expect(page.getByTestId('inbox-pending-badge')).toHaveText('3');
 
   const decideRequest = page.waitForRequest(
     (request) => request.url().includes('/approvals/1/decide') && request.method() === 'POST',
@@ -41,12 +42,14 @@ test('approve removes the card and decrements the pending count', async ({ page 
   expect(request.postDataJSON()).toMatchObject({ decision: 'approved' });
 
   await expect(page.getByRole('button', { name: /^All/ })).toContainText('2');
+  await expect(page.getByTestId('inbox-pending-badge')).toHaveText('2');
 
   const screenshotPath = testInfo.outputPath('inbox-approve.png');
   await page.screenshot({ path: screenshotPath, fullPage: true });
   console.log(`screenshot: ${screenshotPath}`);
 
   expect(requests.some((entry) => entry.startsWith('/api/approvals?space=ops'))).toBe(true);
+  expect(requests.filter((entry) => entry === '/api/approvals?space=ops&status=pending&limit=100').length).toBeGreaterThanOrEqual(2);
   expect(runtimeErrors).toEqual([]);
 });
 

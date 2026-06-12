@@ -6,6 +6,7 @@
   import type { InboxDecisionInput } from '$lib/components/inbox/inbox';
   import { PageHeader } from '$lib/components/ui/page-header';
   import { approvalsStore } from '$lib/stores/approvals.svelte';
+  import { needsYouStore } from '$lib/stores/needsYou.svelte';
   import { spacesStore } from '$lib/stores/spaces.svelte';
   import type { Approval, ApprovalListParams } from '$lib/api/client';
   import type { PollStop } from '$lib/poll';
@@ -32,6 +33,7 @@
 
   async function decide(approval: Approval, input: InboxDecisionInput) {
     await approvalsStore.decide(approval, input);
+    await needsYouStore.refresh(currentListParams()).catch(() => undefined);
   }
 
   function openRun(approval: Approval) {
