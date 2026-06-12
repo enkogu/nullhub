@@ -4,6 +4,7 @@ import { createEventsApi } from '$lib/api/events';
 import { createMissionControlApi } from '$lib/api/missionControl';
 import { createNullTicketsApi, createNullTicketsStoreApi } from '$lib/api/nulltickets';
 import { createOrdersApi } from '$lib/api/orders';
+import { createPackagesApi } from '$lib/api/packages';
 import { SPACE_QUERY_PARAM, createSpacesApi, selectedSpaceFromEnvironment } from '$lib/api/spaces';
 import { componentApiPath, encodePathSegment, instanceApiPath } from '$lib/nullstack/path';
 import { normalizeMojibakeText, normalizeMojibakeValue } from '$lib/textEncoding';
@@ -158,6 +159,18 @@ export type {
   OrderUpdateInput,
   OrdersApi,
 } from '$lib/api/orders';
+export type {
+  PackageCharter,
+  PackageContribution,
+  PackageItemType,
+  PackageListPage,
+  PackageListParams,
+  PackageManifest,
+  PackageRequirement,
+  PackageScale,
+  PackageStage,
+  PackagesApi,
+} from '$lib/api/packages';
 export type {
   Space,
   SpaceCreateInput,
@@ -582,6 +595,7 @@ export const spacesApi = createSpacesApi(request, withQuery);
 export const eventsApi = createEventsApi(request, withQuery);
 export const approvalsApi = createApprovalsApi(request, withQuery);
 export const ordersApi = createOrdersApi(request, withQuery);
+export const packagesApi = createPackagesApi(request, withQuery);
 
 export const nullWatchApi = {
   getNullWatchHealth: (params?: NullWatchTarget) =>

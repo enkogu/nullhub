@@ -1,0 +1,85 @@
+import { expect, test, type Page } from '@playwright/test';
+import { installNullHubFixtureRoutes } from './fixtures/nullhub';
+
+function collectRuntimeFailures(page: Page) {
+  const runtimeErrors: string[] = [];
+  const failedResponses: string[] = [];
+
+  page.on('console', (message) => {
+    if (message.type() === 'error') runtimeErrors.push(message.text());
+  });
+  page.on('pageerror', (error) => {
+    runtimeErrors.push(error.message);
+  });
+  page.on('response', (response) => {
+    if (response.status() >= 400) failedResponses.push(`${response.status()} ${response.url()}`);
+  });
+
+  return { runtimeErrors, failedResponses };
+}
+
+test('market catalog renders populated package grid, filters, and package detail', async ({ page }, testInfo) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
+  const requests: string[] = [];
+  await installNullHubFixtureRoutes(page, { requests });
+
+  await page.goto('/market?space=ops');
+
+  await expect(page.getByRole('heading', { name: 'Market' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Built-in Loop Templates' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'MCP Server Starters' })).toBeVisible();
+  await expect(page.getByText('Installed', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('Market recommendation stages')).toContainText('Foundation');
+  await expect(page.getByLabel('Market recommendation stages')).toContainText('Capability');
+
+  await page.getByRole('combobox', { name: 'Type' }).selectOption('mcp_server');
+  await expect(page.getByRole('heading', { name: 'MCP Server Starters' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Built-in Loop Templates' })).toHaveCount(0);
+
+  await page.getByRole('link', { name: 'Review package MCP Server Starters' }).click();
+  await expect(page).toHaveURL(/\/market\/builtin\.mcp-server-starters/);
+  await expect(page.getByRole('heading', { name: 'MCP Server Starters' })).toBeVisible();
+  await expect(page.getByText('providers.search.api_key')).toBeVisible();
+  await expect(page.getByText('Install impact')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Install into Space' })).toBeDisabled();
+
+  const screenshotPath = testInfo.outputPath('market-detail.png');
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  console.log(`screenshot: ${screenshotPath}`);
+
+  expect(requests).toContain('/api/market/catalog');
+  expect(requests).toContain('/api/market/installed?space=ops');
+  expect(failedResponses).toEqual([]);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test('market catalog renders loading state while package reads are pending', async ({ page }) => {
+  await installNullHubFixtureRoutes(page, { marketCatalogDelayMs: 1200 });
+
+  await page.goto('/market?space=ops');
+
+  await expect(page.getByRole('status')).toContainText('Loading Market');
+});
+
+test('market catalog renders empty state from an empty built-in catalog', async ({ page }) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
+  await installNullHubFixtureRoutes(page, { marketCatalog: { packages: [] }, marketInstalled: { packages: [] } });
+
+  await page.goto('/market?space=ops');
+
+  await expect(page.getByText('No packages in the built-in catalog')).toBeVisible();
+  expect(failedResponses).toEqual([]);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test('market catalog renders error state when package reads fail', async ({ page }) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
+  await installNullHubFixtureRoutes(page, { marketCatalogStatus: 503 });
+
+  await page.goto('/market?space=ops');
+
+  await expect(page.getByText('Market unavailable')).toBeVisible();
+  await expect(page.getByText('Market catalog unavailable.')).toBeVisible();
+  expect(failedResponses.some((entry) => entry.startsWith('503 '))).toBe(true);
+  expect(runtimeErrors.filter((entry) => !entry.includes('Failed to load resource'))).toEqual([]);
+});
