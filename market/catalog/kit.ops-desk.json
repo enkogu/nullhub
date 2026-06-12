@@ -1,0 +1,51 @@
+{
+  "id": "builtin.ops-desk",
+  "name": "Ops Desk Kit",
+  "version": "1.0.0",
+  "scale": "kit",
+  "summary": "A small kit for inbox triage, orders, and visible work evidence.",
+  "requires": [
+    {
+      "kind": "package",
+      "id": "builtin.nullclaw-agent"
+    }
+  ],
+  "contributes": [
+    {
+      "kind": "loop_template",
+      "name": "Inbox triage"
+    },
+    {
+      "kind": "order_template",
+      "name": "Daily brief"
+    }
+  ],
+  "config": {
+    "channels": [],
+    "secrets": [
+      {
+        "name": "model_provider",
+        "secret_ref": "providers.default.api_key"
+      }
+    ]
+  },
+  "seeds": [
+    {
+      "kind": "loop",
+      "name": "Inbox triage"
+    }
+  ],
+  "extends": [
+    "builtin.nullclaw-agent"
+  ],
+  "charter": {
+    "mission": "Turn recurring inbox requests into reviewed orders and work evidence.",
+    "autonomy_bounds": [
+      "Human approval before irreversible actions"
+    ],
+    "metrics": [
+      "triage_latency",
+      "completed_orders"
+    ]
+  }
+}

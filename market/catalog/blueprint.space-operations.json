@@ -1,0 +1,50 @@
+{
+  "id": "builtin.space-operations",
+  "name": "Space Operations Blueprint",
+  "version": "1.0.0",
+  "scale": "blueprint",
+  "summary": "A starter operating model for a small managed workspace.",
+  "requires": [
+    {
+      "kind": "secret_ref",
+      "name": "default_model_provider",
+      "secret_ref": "providers.default.api_key"
+    }
+  ],
+  "contributes": [
+    {
+      "kind": "space_defaults",
+      "target": "orders"
+    },
+    {
+      "kind": "kit",
+      "package": "builtin.ops-desk"
+    }
+  ],
+  "config": {
+    "defaults": {
+      "autonomy": "review_required",
+      "evidence_policy": "required"
+    }
+  },
+  "seeds": [
+    {
+      "kind": "order",
+      "title": "Daily operating brief"
+    }
+  ],
+  "extends": [
+    "builtin.ops-desk"
+  ],
+  "charter": {
+    "mission": "Keep routine workspace operations visible, reviewed, and repeatable.",
+    "autonomy_bounds": [
+      "Draft before execution",
+      "Require approval for external sends"
+    ],
+    "metrics": [
+      "open_orders",
+      "blocked_work"
+    ]
+  }
+}

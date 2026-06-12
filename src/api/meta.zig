@@ -139,6 +139,13 @@ const required_order_space_query = ParamSpec{
     .description = "Selected Space id. Order reads and writes are always space-scoped.",
 };
 
+const required_market_space_query = ParamSpec{
+    .name = "space",
+    .location = "query",
+    .required = true,
+    .description = "Selected Space id. Installed package library reads are always space-scoped.",
+};
+
 const event_type_query = ParamSpec{
     .name = "type",
     .location = "query",
@@ -358,6 +365,7 @@ const reveal_query_params = [_]ParamSpec{reveal_query};
 const space_query_params = [_]ParamSpec{space_query};
 const event_query_params = [_]ParamSpec{ required_event_space_query, event_type_query, event_source_query, event_subject_type_query, event_subject_id_query, event_severity_query, event_limit_query, event_cursor_query };
 const order_query_params = [_]ParamSpec{required_order_space_query};
+const market_query_params = [_]ParamSpec{required_market_space_query};
 const reveal_space_query_params = [_]ParamSpec{ reveal_query, space_query };
 const logs_query_params = [_]ParamSpec{ lines_query, log_source_query };
 const history_query_params = [_]ParamSpec{ history_session_query, history_limit_query, history_offset_query };
@@ -415,6 +423,17 @@ const route_examples_orders = [_]ExampleSpec{
     .{
         .command = "nullhub api DELETE '/api/orders/order-1?space=ops'",
         .description = "Delete an Order document and derived table row.",
+    },
+};
+
+const route_examples_market = [_]ExampleSpec{
+    .{
+        .command = "nullhub api GET /api/market/catalog --pretty",
+        .description = "List built-in package manifests shipped with nullhub.",
+    },
+    .{
+        .command = "nullhub api GET '/api/market/installed?space=ops' --pretty",
+        .description = "List manifests installed in a selected Space library.",
     },
 };
 
@@ -563,6 +582,27 @@ const routes = [_]RouteSpec{
         .summary = "Return the current component registry snapshot.",
         .auth_mode = "optional_bearer",
         .response = "Registry snapshot payload.",
+    },
+    .{
+        .id = "market.catalog.get",
+        .method = "GET",
+        .path_template = "/api/market/catalog",
+        .category = "market",
+        .summary = "List built-in package manifests from the shipped local catalog.",
+        .auth_mode = "optional_bearer",
+        .response = "Package manifest array for built-in component, kit, and blueprint packages.",
+        .examples = route_examples_market[0..1],
+    },
+    .{
+        .id = "market.installed.get",
+        .method = "GET",
+        .path_template = "/api/market/installed",
+        .category = "market",
+        .summary = "List package manifests installed in the selected Space library.",
+        .auth_mode = "optional_bearer",
+        .query_params = market_query_params[0..],
+        .response = "Package manifest array loaded from the selected Space market library.",
+        .examples = route_examples_market[1..],
     },
     .{
         .id = "wizard.free_port",
@@ -1829,6 +1869,8 @@ test "jsonAlloc includes stable route metadata" {
     defer std.testing.allocator.free(json);
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"meta.routes.get\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.catalog.get\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.installed.get\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"orders.delete\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"method\": \"DELETE\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "/api/instances/{component}/{name}") != null);
@@ -1839,6 +1881,9 @@ test "textAlloc renders grouped route list" {
     defer std.testing.allocator.free(text);
 
     try std.testing.expect(std.mem.indexOf(u8, text, "[meta]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "[market]") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/market/catalog") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/market/installed") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/meta/routes") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/spec") != null);
 }

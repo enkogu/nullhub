@@ -29,6 +29,7 @@ const approvals_api = @import("api/approvals.zig");
 const orders_api = @import("api/orders.zig");
 const event_producers = @import("api/event_producers.zig");
 const spaces_api = @import("api/spaces.zig");
+const market_api = @import("api/market.zig");
 const usage_api = @import("api/usage.zig");
 const report_api = @import("api/report.zig");
 const nullboiler_api = @import("api/nullboiler.zig");
@@ -1696,6 +1697,22 @@ pub const Server = struct {
             }
             if (std.mem.eql(u8, method, "DELETE")) {
                 const resp = orders_api.handleDelete(allocator, self.paths, self.state, target, order_id, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+
+        // Market Packages API — local built-in catalog and per-space installed package library.
+        if (market_api.isCatalogPath(target)) {
+            if (std.mem.eql(u8, method, "GET")) {
+                const resp = market_api.handleCatalog(allocator);
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+        if (market_api.isInstalledPath(target)) {
+            if (std.mem.eql(u8, method, "GET")) {
+                const resp = market_api.handleInstalled(allocator, self.paths, target);
                 return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
             }
             return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
@@ -3551,6 +3568,40 @@ test "route /api/orders unknown item subroutes do not mutate order" {
     try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.scheduled\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.deleted\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.updated\"") == null);
+}
+
+test "route GET market catalog and installed package APIs" {
+    const allocator = std.testing.allocator;
+    var ctx = TestContext.init(allocator);
+    defer ctx.deinit(allocator);
+
+    {
+        const resp = ctx.route(allocator, "GET", "/api/market/catalog", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"packages\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"scale\": \"component\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"scale\": \"kit\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"scale\": \"blueprint\"") != null);
+    }
+
+    {
+        const resp = ctx.route(allocator, "GET", "/api/market/installed?space=ops", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expectEqualStrings("{\"packages\":[]}", resp.body);
+
+        const library_dir = try ctx.paths.spacePackageLibraryDir(allocator, "ops");
+        defer allocator.free(library_dir);
+        var dir = try std_compat.fs.openDirAbsolute(library_dir, .{});
+        dir.close();
+    }
+
+    {
+        const resp = ctx.route(allocator, "GET", "/api/market/installed", "");
+        try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+        try std.testing.expectEqualStrings("{\"error\":\"space query is required\"}", resp.body);
+    }
 }
 
 test "route /api/approvals covers decide state transitions and feedback-required" {
