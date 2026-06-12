@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { createPackagesApi } from './packages';
+import { createPackagesApi, packageLibraryDownloadHref } from './packages';
 import { ALL_SPACES_STORAGE_VALUE, SELECTED_SPACE_STORAGE_KEY } from './spaces';
 import { installApiFixture, jsonFixture, type InstalledApiFixture } from './__fixtures__/backend';
 
@@ -103,5 +103,63 @@ describe('packages api', () => {
     const api = createPackagesApi((path) => fetch(`/api${path}`).then((res) => res.json()), withQuery);
 
     await expect(api.listInstalledPackages()).rejects.toThrow('Packages API requires a selected Space.');
+  });
+
+  test('exports a selected package set into the selected space library', async () => {
+    installSelectedSpace('ops');
+    fixture = installApiFixture([
+      {
+        method: 'POST',
+        path: '/api/market/export?space=ops',
+        handler: (request) => {
+          expect(request.bodyJson).toMatchObject({
+            scope: 'selection',
+            scale: 'kit',
+            name: 'Ops Starter Kit',
+            selection: { packages: ['builtin.loop-templates'] },
+          });
+          return jsonFixture({
+            status: 'exported',
+            package_id: 'export.ops.kit',
+            file: '/tmp/nullhub/spaces/ops/packages/export.ops.kit.json',
+            download_url: '/api/market/library/export.ops.kit.json?space=ops',
+            package: {
+              ...catalogPackage,
+              id: 'export.ops.kit',
+              name: 'Ops Starter Kit',
+              scale: 'kit',
+              config: { export: { source_space: 'ops', scope: 'selection' } },
+              extends: ['builtin.loop-templates'],
+            },
+          }, { status: 201 });
+        },
+      },
+    ]);
+    const api = createPackagesApi((path, options) => fetch(`/api${path}`, options).then((res) => res.json()), withQuery);
+
+    const result = await api.exportPackage({
+      scope: 'selection',
+      name: 'Ops Starter Kit',
+      selection: { packages: ['builtin.loop-templates'] },
+    });
+
+    expect(result).toMatchObject({
+      status: 'exported',
+      packageId: 'export.ops.kit',
+      file: '/tmp/nullhub/spaces/ops/packages/export.ops.kit.json',
+      downloadUrl: '/api/market/library/export.ops.kit.json?space=ops',
+      package: {
+        id: 'export.ops.kit',
+        name: 'Ops Starter Kit',
+        stage: 'starter',
+      },
+    });
+  });
+
+  test('builds package library download links for the selected space', () => {
+    installSelectedSpace('ops');
+
+    expect(packageLibraryDownloadHref('export.ops.kit')).toBe('/api/market/library/export.ops.kit.json?space=ops');
+    expect(packageLibraryDownloadHref('export.ops.kit', null)).toBe('');
   });
 });
