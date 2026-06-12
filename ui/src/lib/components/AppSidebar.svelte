@@ -112,6 +112,14 @@
 		{ title: "Observability", url: "/nullwatch" },
 	];
 
+	// VD-82: Interim Legacy group until new shells land. Remove each link as its owner shell ships.
+	const legacyLinks = [
+		{ title: "Loops", url: "/loops" },
+		{ title: "Artifacts", url: "/artifacts" },
+		{ title: "Tickets", url: "/nulltickets" },
+		{ title: "Automations", url: "/automations" },
+	];
+
 	const fallbackSpaces: SpaceOption[] = [
 		{
 			id: "local",
@@ -174,6 +182,7 @@
 
 	let hubOk = $state(true);
 	let statusLoading = false;
+	let legacyOpen = $state(false);
 	let systemOpen = $state(false);
 	let selectedSpaceId = $state("");
 	let shortcutPrefix = $state(false);
@@ -208,6 +217,10 @@
 		if (item.excludePrefixes?.some((prefix) => startsWithSegment(currentPath, prefix))) return false;
 		if (item.exact?.includes(currentPath)) return true;
 		return item.prefixes?.some((prefix) => startsWithSegment(currentPath, prefix)) ?? false;
+	}
+
+	function isLegacyActive(): boolean {
+		return legacyLinks.some((item) => startsWithSegment(currentPath, item.url));
 	}
 
 	function readCurrentUser() {
@@ -346,6 +359,45 @@
 						{/if}
 					</Sidebar.MenuItem>
 				{/each}
+
+				<Collapsible.Root bind:open={legacyOpen} class="group/collapsible">
+					{#snippet child({ props })}
+						<Sidebar.MenuItem {...props}>
+							<Collapsible.Trigger>
+								{#snippet child({ props })}
+									<Sidebar.MenuButton
+										{...props}
+										isActive={isLegacyActive()}
+										tooltipContent="Legacy"
+										data-app-sidebar-item="legacy"
+										data-app-sidebar-legacy-trigger
+									>
+										<ListChecksIcon />
+										<span>Legacy</span>
+										<ChevronRightIcon
+											class="ms-auto size-4 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90"
+										/>
+									</Sidebar.MenuButton>
+								{/snippet}
+							</Collapsible.Trigger>
+							<Collapsible.Content>
+								<Sidebar.MenuSub>
+									{#each legacyLinks as subItem (subItem.url)}
+										<Sidebar.MenuSubItem>
+											<Sidebar.MenuSubButton isActive={startsWithSegment(currentPath, subItem.url)}>
+												{#snippet child({ props })}
+													<a href={subItem.url} {...props} data-app-sidebar-legacy-link={subItem.url}>
+														<span>{subItem.title}</span>
+													</a>
+												{/snippet}
+											</Sidebar.MenuSubButton>
+										</Sidebar.MenuSubItem>
+									{/each}
+								</Sidebar.MenuSub>
+							</Collapsible.Content>
+						</Sidebar.MenuItem>
+					{/snippet}
+				</Collapsible.Root>
 
 				<Collapsible.Root bind:open={systemOpen} class="group/collapsible">
 					{#snippet child({ props })}

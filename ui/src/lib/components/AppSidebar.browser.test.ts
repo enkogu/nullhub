@@ -56,7 +56,38 @@ test("marks System active without expanding it", async () => {
 	expect(system.getAttribute("aria-expanded")).toBe("false");
 });
 
-test("keeps the left panel limited to product IA entries", async () => {
+test("renders Legacy collapsed above System and expands to the four VD-82 links", async () => {
+	const screen = await render(AppSidebarFixture);
+
+	const navItems = Array.from(screen.container.querySelectorAll<HTMLElement>("[data-app-sidebar-item]")).map((item) =>
+		item.getAttribute("data-app-sidebar-item")
+	);
+	expect(navItems).toEqual(["home", "inbox", "work", "orders", "team", "market", "legacy", "system"]);
+
+	const legacyTrigger = screen.container.querySelector<HTMLElement>("[data-app-sidebar-legacy-trigger]");
+	expect(legacyTrigger).not.toBeNull();
+	expect(legacyTrigger?.getAttribute("aria-expanded")).toBe("false");
+
+	await screen.getByRole("button", { name: /Legacy/ }).click();
+	expect(legacyTrigger?.getAttribute("aria-expanded")).toBe("true");
+
+	const expectedLinks = [
+		["Loops", "/loops"],
+		["Artifacts", "/artifacts"],
+		["Tickets", "/nulltickets"],
+		["Automations", "/automations"],
+	] as const;
+
+	for (const [name, href] of expectedLinks) {
+		const link = screen.getByRole("link", { name });
+		await expect.element(link).toBeVisible();
+		const element = await link.element();
+		expect(element.getAttribute("href")).toBe(href);
+		expect(element.getAttribute("data-app-sidebar-legacy-link")).toBe(href);
+	}
+});
+
+test("does not expose non-navigation command surfaces in the left panel", async () => {
 	const screen = await render(AppSidebarFixture);
 
 	expect(screen.container.textContent).not.toContain("Command palette");
