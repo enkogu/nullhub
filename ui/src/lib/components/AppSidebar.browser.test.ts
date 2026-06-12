@@ -35,6 +35,15 @@ test("renders the inbox badge slot and keeps System collapsed", async () => {
 	expect(systemTrigger?.getAttribute("aria-expanded")).toBe("false");
 });
 
+test("hides the inbox badge when the pending count is zero", async () => {
+	const screen = await render(AppSidebarFixture, {
+		activePath: "/inbox",
+		badgeCount: 0,
+	});
+
+	expect(screen.container.querySelector('[data-testid="inbox-badge"]')).toBeNull();
+});
+
 test("marks System active without expanding it", async () => {
 	const screen = await render(AppSidebarFixture, {
 		activePath: "/settings",

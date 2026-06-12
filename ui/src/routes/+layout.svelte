@@ -2,7 +2,7 @@
   import '../app.css';
   import '../shadcn.css';
   import { page } from '$app/stores';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
   import type { SpaceOption } from '$lib/components/AppSidebar.svelte';
   import CommandPalette from '$lib/components/CommandPalette.svelte';
@@ -14,6 +14,7 @@
   import { ALL_SPACES_STORAGE_VALUE, SELECTED_SPACE_STORAGE_KEY, SPACE_QUERY_PARAM, selectedSpaceFromEnvironment, type Space } from '$lib/api/spaces';
   import { headerToolbar } from '$lib/headerToolbar';
   import { redirectToPreferredOrigin } from '$lib/nullhubAccess';
+  import { needsYouStore } from '$lib/stores/needsYou.svelte';
   import { spacesStore } from '$lib/stores/spaces.svelte';
   import PanelRightCloseIcon from '@lucide/svelte/icons/panel-right-close';
   import PanelRightOpenIcon from '@lucide/svelte/icons/panel-right-open';
@@ -213,9 +214,26 @@
     commandPaletteOpen = !commandPaletteOpen;
   }
 
+  let shellMounted = $state(false);
+  let needsYouSpaceKey = $derived(spacesStore.selectedSpaceId ?? 'all');
+
+  $effect(() => {
+    needsYouSpaceKey;
+    if (!shellMounted || isLogoutRoute) return;
+    const spaceId = spacesStore.selectedSpaceId;
+    // untrack: startPolling reads/writes its own store state; tracking it
+    // here would re-trigger this effect in a loop.
+    untrack(() => needsYouStore.startPolling({ spaceId }));
+  });
+
   onMount(() => {
     void redirectToPreferredOrigin(window.location);
     void loadSpacesForShell();
+    shellMounted = true;
+    return () => {
+      shellMounted = false;
+      needsYouStore.stop();
+    };
   });
 </script>
 
@@ -233,7 +251,19 @@
         {activeSpaceId}
         onSpaceChange={handleSpaceChange}
         onCreateSpace={handleCreateSpace}
-      />
+      >
+        {#snippet inboxBadge()}
+          {#if needsYouStore.showBadge}
+            <span
+              class="font-mono text-xs tabular-nums"
+              data-testid="inbox-pending-badge"
+              aria-label={`${needsYouStore.displayCount} pending inbox items`}
+            >
+              {needsYouStore.displayCount}
+            </span>
+          {/if}
+        {/snippet}
+      </AppSidebar>
       <Sidebar.Inset>
         <header
           class="app-header flex h-16 shrink-0 items-center gap-2 border-b bg-background transition-[width,height] ease-linear group-has-data-[collapsible=icon]/sidebar-wrapper:h-12"

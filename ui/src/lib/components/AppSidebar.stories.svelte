@@ -38,6 +38,19 @@
 	</Sidebar.Provider>
 {/snippet}
 
+{#snippet inboxZeroTemplate()}
+	<Sidebar.Provider open={true} class="min-h-[640px]">
+		<AppSidebar activePath="/inbox" pollHubStatus={false} hubStatus="online">
+			{#snippet inboxBadge()}
+				<!-- Zero pending: the NeedsYou source hides the badge entirely. -->
+			{/snippet}
+		</AppSidebar>
+		<Sidebar.Inset class="min-h-[640px] p-6">
+			<div class="text-sm text-muted-foreground">Inbox active with zero pending (badge hidden)</div>
+		</Sidebar.Inset>
+	</Sidebar.Provider>
+{/snippet}
+
 {#snippet systemTemplate()}
 	<Sidebar.Provider open={true} class="min-h-[640px]">
 		<AppSidebar activePath="/settings" pollHubStatus={false} hubStatus="offline" />
@@ -49,4 +62,5 @@
 
 <Story name="Populated" template={populatedTemplate} />
 <Story name="Inbox Badge" template={inboxTemplate} />
+<Story name="Inbox Badge Hidden" template={inboxZeroTemplate} />
 <Story name="System Collapsed" template={systemTemplate} />
