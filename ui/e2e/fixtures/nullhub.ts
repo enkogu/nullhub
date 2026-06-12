@@ -566,6 +566,23 @@ async function jsonRoute(route: Route, options: NullHubFixtureOptions, body: Jso
   await fulfillJson(route, body, status);
 }
 
+function fixtureString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim();
+}
+
+function fixtureNumber(value: unknown, fallback: number): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function nextFixtureEventId(events: Record<string, unknown>[]): number {
+  return events.reduce((max, event) => Math.max(max, fixtureNumber(event.id, 0)), 10_000) + 1;
+}
+
 function fixtureProviders(space: string | null): JsonBody {
   if (space === 'ops') {
     return {
@@ -633,7 +650,7 @@ async function loopCatalogRoute(route: Route, options: NullHubFixtureOptions) {
   await fulfillJson(route, options.loopCatalog || fixtureLoopCatalog);
 }
 
-async function eventsRoute(route: Route, options: NullHubFixtureOptions) {
+async function eventsRoute(route: Route, options: NullHubFixtureOptions, requestEvents: Record<string, unknown>[]) {
   recordRequest(route, options);
   if (options.eventsStatus && options.eventsStatus >= 400) {
     await fulfillJson(route, { error: 'Events unavailable.' }, options.eventsStatus);
@@ -652,7 +669,7 @@ async function eventsRoute(route: Route, options: NullHubFixtureOptions) {
   const subjectType = url.searchParams.get('subject_type');
   const subjectId = url.searchParams.get('subject_id');
   const limit = Number(url.searchParams.get('limit') || '50');
-  const events = (options.events || fixtureEvents).filter((event) => {
+  const events = requestEvents.filter((event) => {
     if (space && event.space_id !== space) return false;
     if (source && event.source !== source) return false;
     if (level && event.severity !== level) return false;
@@ -669,7 +686,7 @@ async function eventsRoute(route: Route, options: NullHubFixtureOptions) {
   });
 }
 
-async function ordersRoute(route: Route, options: NullHubFixtureOptions) {
+async function ordersRoute(route: Route, options: NullHubFixtureOptions, requestOrders: Record<string, unknown>[]) {
   recordRequest(route, options);
   if (options.ordersStatus && options.ordersStatus >= 400) {
     await fulfillJson(route, { error: 'Orders unavailable.' }, options.ordersStatus);
@@ -682,8 +699,38 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions) {
     await fulfillJson(route, { error: 'space query is required' }, 400);
     return;
   }
-  const requestOrders = options.orders || fixtureOrders;
   const itemMatch = url.pathname.match(/\/(?:api|nullhub-api)\/orders\/([^/]+)(?:\/([^/]+))?$/);
+
+  if (route.request().method() === 'POST' && !itemMatch) {
+    const payload = route.request().postDataJSON() as Record<string, unknown> | null;
+    const title = String(payload?.title || '').trim();
+    if (!title) {
+      await fulfillJson(route, { error: 'title is required' }, 422);
+      return;
+    }
+    const id = String(payload?.id || `order-${requestOrders.length + 1}`);
+    const createdAtMs = typeof payload?.created_at_ms === 'number' ? payload.created_at_ms : Date.now();
+    const created = {
+      id,
+      space_id: space,
+      title,
+      summary: String(payload?.summary || ''),
+      kind: String(payload?.kind || 'mandate'),
+      status: 'draft',
+      schedule: String(payload?.schedule || ''),
+      signal: String(payload?.signal || ''),
+      tier: String(payload?.tier || ''),
+      exec_count: typeof payload?.exec_count === 'number' ? payload.exec_count : 0,
+      doc_path: String(payload?.doc_path || `orders/${id}.md`),
+      content: String(payload?.content || payload?.body || ''),
+      created_at_ms: createdAtMs,
+      updated_at_ms: typeof payload?.updated_at_ms === 'number' ? payload.updated_at_ms : createdAtMs,
+    };
+    requestOrders.push(created);
+    await fulfillJson(route, created, 201);
+    return;
+  }
+
   if (itemMatch) {
     const id = decodeURIComponent(itemMatch[1] || '');
     const action = decodeURIComponent(itemMatch[2] || '');
@@ -701,14 +748,23 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions) {
       return;
     }
     if (route.request().method() === 'POST' && action) {
+      if (action === 'schedule') {
+        const payload = route.request().postDataJSON() as Record<string, unknown> | null;
+        order.schedule = String(payload?.schedule || '');
+        order.updated_at_ms = 1_780_000_020_000;
+        await fulfillJson(route, order);
+        return;
+      }
       const nextStatus =
-        action === 'suspend'
-          ? 'suspended'
-          : action === 'resume'
+        action === 'draft'
+          ? 'draft'
+          : action === 'enact' || action === 'activate' || action === 'resume'
             ? 'active'
-            : action === 'archive'
-              ? 'archived'
-              : null;
+            : action === 'suspend' || action === 'pause'
+              ? 'suspended'
+              : action === 'archive'
+                ? 'archived'
+                : null;
       if (!nextStatus) {
         await fulfillJson(route, { error: 'order action not found' }, 404);
         return;
@@ -727,6 +783,106 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions) {
     return orderSpace === space;
   });
   await fulfillJson(route, { orders });
+}
+
+async function scheduleFireRoute(
+  route: Route,
+  options: NullHubFixtureOptions,
+  orders: Record<string, unknown>[],
+  events: Record<string, unknown>[],
+  tasks: Record<string, unknown>[],
+) {
+  recordRequest(route, options);
+  if (route.request().method() !== 'POST') {
+    await fulfillJson(route, { error: 'schedule fire fixture requires POST' }, 405);
+    return;
+  }
+
+  const url = new URL(route.request().url());
+  const space = url.searchParams.get('space');
+  if (!space) {
+    await fulfillJson(route, { error: 'space query is required' }, 400);
+    return;
+  }
+
+  const payload = route.request().postDataJSON() as Record<string, unknown> | null;
+  const orderId = fixtureString(payload?.order_id ?? payload?.orderId);
+  const runRef = fixtureString(payload?.run_ref ?? payload?.runRef);
+  if (!orderId || !runRef) {
+    await fulfillJson(route, { error: 'order_id and run_ref are required' }, 422);
+    return;
+  }
+
+  const order = orders.find((entry) => {
+    const entryId = fixtureString(entry.id);
+    const orderSpace = fixtureString(entry.space_id ?? entry.spaceId);
+    return entryId === orderId && orderSpace === space;
+  });
+  if (!order) {
+    await fulfillJson(route, { error: 'order not found' }, 404);
+    return;
+  }
+
+  const orderStatus = fixtureString(order.status);
+  if (orderStatus !== 'active') {
+    await fulfillJson(route, { fired: false, reason: 'order_not_active', order_status: orderStatus });
+    return;
+  }
+
+  const nowMs = fixtureNumber(payload?.now_ms ?? payload?.nowMs, Date.now());
+  const component = fixtureString(payload?.component) || 'nullclaw';
+  const instance = fixtureString(payload?.instance) || 'Athena';
+  const cronJobId = fixtureString(payload?.cron_job_id ?? payload?.cronJobId) || `cron-${orderId}`;
+  const taskId = fixtureString(payload?.task_id ?? payload?.taskId) || `task-${runRef}`;
+  const title = fixtureString(payload?.title) || fixtureString(order.title) || 'Scheduled order';
+
+  order.exec_count = fixtureNumber(order.exec_count ?? order.execCount, 0) + 1;
+  order.updated_at_ms = nowMs;
+
+  const event = {
+    id: nextFixtureEventId(events),
+    space_id: space,
+    type: 'order.executed',
+    source: 'cron',
+    subject_type: 'order',
+    subject_id: orderId,
+    title: 'Order executed',
+    summary: 'A schedule order cron run completed.',
+    severity: 'success',
+    evidence_ref: `artifact://${runRef}`,
+    created_at_ms: nowMs,
+    payload: {
+      component,
+      instance,
+      cron_job_id: cronJobId,
+      run_ref: runRef,
+    },
+  };
+  events.unshift(event);
+
+  const task = {
+    id: taskId,
+    pipeline_id: 'scheduled-orders',
+    stage: 'in_progress',
+    title,
+    description: `Work evidence created from scheduled order ${orderId}.`,
+    priority: 80,
+    created_at_ms: nowMs,
+    updated_at_ms: nowMs,
+    tickets_instance: 'tickets',
+    space_id: space,
+    latest_run: {
+      id: runRef,
+      task_id: taskId,
+      status: 'running',
+      agent_id: instance,
+      attempt: 1,
+      started_at_ms: nowMs,
+    },
+  };
+  tasks.unshift(task);
+
+  await fulfillJson(route, { fired: true, event, task, order });
 }
 
 async function approvalsRoute(
@@ -1160,8 +1316,10 @@ async function instanceDetailRoute(route: Route, options: NullHubFixtureOptions)
 
 export async function installNullHubFixtureRoutes(page: Page, options: NullHubFixtureOptions = {}) {
   const spaces = fixtureSpaces.map((space) => ({ ...space }));
+  const events = options.events || fixtureEvents.map((event) => ({ ...event, payload: { ...event.payload } }));
+  const orders = options.orders || fixtureOrders.map((order) => ({ ...order }));
   const pipelines = (options.nullticketsPipelines || []).map((pipeline) => ({ ...pipeline }));
-  const tasks = (options.nullticketsTasks || []).map((task) => ({ ...task }));
+  const tasks = options.nullticketsTasks || [];
   const artifacts = (options.nullticketsArtifacts || []).map((artifact) => ({ ...artifact }));
   const runEvents = (options.nullticketsRunEvents || []).map((event) => ({ ...event }));
 
@@ -1191,11 +1349,19 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/service/status', (route) => fulfillJson(route, fixtureServiceStatus));
   await page.route('**/api/nulltickets/store/loops.templates**', (route) => loopCatalogRoute(route, options));
   await page.route('**/nullhub-api/nulltickets/store/loops.templates**', (route) => loopCatalogRoute(route, options));
-  await page.route('**/api/events**', (route) => eventsRoute(route, options));
-  await page.route('**/nullhub-api/events**', (route) => eventsRoute(route, options));
-  await page.route(/\/api\/orders(?:\/[^/?]+(?:\/[^/?]+)?)?(?:\?.*)?$/, (route) => ordersRoute(route, options));
+  await page.route(/\/api\/fixtures\/schedule-fire(?:\?.*)?$/, (route) =>
+    scheduleFireRoute(route, options, orders, events, tasks),
+  );
+  await page.route(/\/nullhub-api\/fixtures\/schedule-fire(?:\?.*)?$/, (route) =>
+    scheduleFireRoute(route, options, orders, events, tasks),
+  );
+  await page.route('**/api/events**', (route) => eventsRoute(route, options, events));
+  await page.route('**/nullhub-api/events**', (route) => eventsRoute(route, options, events));
+  await page.route(/\/api\/orders(?:\/[^/?]+(?:\/[^/?]+)?)?(?:\?.*)?$/, (route) =>
+    ordersRoute(route, options, orders),
+  );
   await page.route(/\/nullhub-api\/orders(?:\/[^/?]+(?:\/[^/?]+)?)?(?:\?.*)?$/, (route) =>
-    ordersRoute(route, options),
+    ordersRoute(route, options, orders),
   );
   const approvals = (options.approvals || fixtureApprovals).map((approval) => ({ ...approval }));
   await page.route(/\/api\/approvals(?:\?.*)?$/, (route) => approvalsRoute(route, options, approvals));
