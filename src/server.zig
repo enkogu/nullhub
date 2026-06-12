@@ -2732,6 +2732,23 @@ test "reconcileInstancesOnBoot adopts persisted managed instance without respawn
         .argv = launch.argv,
     });
 
+    // Wait for the script's start marker so the SIGTERM from stopInstance
+    // below cannot kill the shell before it has written the log line the
+    // final assertion reads (ncm-9nfn; same race the two sibling tests
+    // already guard against).
+    var marker_attempts: usize = 0;
+    while (marker_attempts < 100) : (marker_attempts += 1) {
+        const file = std_compat.fs.openFileAbsolute(output_path, .{}) catch {
+            std_compat.thread.sleep(50 * std.time.ns_per_ms);
+            continue;
+        };
+        defer file.close();
+        const contents = try file.readToEndAlloc(allocator, 1024);
+        defer allocator.free(contents);
+        if (std.mem.eql(u8, contents, "started\n")) break;
+        std_compat.thread.sleep(50 * std.time.ns_per_ms);
+    }
+
     try runtime_state_mod.write(allocator, ctx.paths, "nullclaw", "demo", .{
         .pid = process_mod.persistedPidValue(spawned.pid).?,
         .port = 0,
