@@ -16,6 +16,8 @@ type NullHubFixtureOptions = {
   instances?: Record<string, Record<string, unknown>>;
   instanceConfig?: JsonBody;
   instanceUsage?: JsonBody;
+  usage?: JsonBody;
+  usageStatus?: number;
 };
 
 async function fulfillJson(route: Route, body: JsonBody, status = 200) {
@@ -250,6 +252,55 @@ const fixtureInstanceUsage = {
   },
 };
 
+const fixtureGlobalUsage = {
+  window: '7d',
+  generated_at: 1_780_870_800,
+  totals: {
+    prompt_tokens: 4800,
+    completion_tokens: 2200,
+    total_tokens: 7000,
+    requests: 18,
+  },
+  by_instance: [
+    {
+      component: 'nullclaw',
+      name: 'athena',
+      prompt_tokens: 3200,
+      completion_tokens: 1500,
+      total_tokens: 4700,
+      requests: 12,
+    },
+    {
+      component: 'nullclaw',
+      name: 'iris',
+      prompt_tokens: 1600,
+      completion_tokens: 700,
+      total_tokens: 2300,
+      requests: 6,
+    },
+  ],
+  by_model: [
+    {
+      provider: 'openrouter',
+      model: 'openai/gpt-5.5',
+      prompt_tokens: 4800,
+      completion_tokens: 2200,
+      total_tokens: 7000,
+      requests: 18,
+      last_used: 1_780_870_800,
+    },
+  ],
+  timeseries: [
+    {
+      bucket_start: 1_780_860_000,
+      prompt_tokens: 4800,
+      completion_tokens: 2200,
+      total_tokens: 7000,
+      requests: 18,
+    },
+  ],
+};
+
 function requestPath(route: Route): string {
   const url = new URL(route.request().url());
   return `${url.pathname}${url.search}`;
@@ -365,6 +416,15 @@ async function eventsRoute(route: Route, options: NullHubFixtureOptions) {
     has_more: false,
     next_cursor: null,
   });
+}
+
+async function usageRoute(route: Route, options: NullHubFixtureOptions) {
+  recordRequest(route, options);
+  if (options.usageStatus && options.usageStatus >= 400) {
+    await fulfillJson(route, { error: 'Usage unavailable.' }, options.usageStatus);
+    return;
+  }
+  await fulfillJson(route, options.usage || fixtureGlobalUsage);
 }
 
 function matchesFixtureSpace(record: Record<string, unknown>, space: string | null): boolean {
@@ -585,6 +645,8 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/nulltickets/store/loops.templates**', (route) => loopCatalogRoute(route, options));
   await page.route('**/api/events**', (route) => eventsRoute(route, options));
   await page.route('**/nullhub-api/events**', (route) => eventsRoute(route, options));
+  await page.route('**/api/usage**', (route) => usageRoute(route, options));
+  await page.route('**/nullhub-api/usage**', (route) => usageRoute(route, options));
   await page.route(/\/api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options));
   await page.route(/\/nullhub-api\/instances(?:\?.*)?$/, (route) => instancesRoute(route, options));
   await page.route('**/api/instances/*/*/config**', (route) => instanceDetailRoute(route, options));

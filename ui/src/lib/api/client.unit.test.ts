@@ -62,6 +62,11 @@ describe('api client fake backend fixture', () => {
       },
       {
         method: 'GET',
+        path: '/api/usage?window=7d',
+        handler: () => ({ body: { totals: { total_tokens: 0, requests: 0 }, by_instance: [], by_model: [], timeseries: [] } }),
+      },
+      {
+        method: 'GET',
         path: '/api/providers?reveal=true&space=ops',
         handler: () => ({ body: { providers: [] } }),
       },
@@ -108,6 +113,7 @@ describe('api client fake backend fixture', () => {
     ]);
 
     await expect(api.getInstances()).resolves.toEqual({ instances: [] });
+    await expect(api.getGlobalUsage('7d')).resolves.toMatchObject({ totals: { total_tokens: 0, requests: 0 } });
     await expect(api.getSavedProviders(true)).resolves.toEqual({ providers: [] });
     await expect(api.getSavedChannels()).resolves.toEqual({ channels: [] });
     await expect(api.getConfig('nullclaw', 'agent')).resolves.toEqual({ config: {} });
@@ -120,6 +126,7 @@ describe('api client fake backend fixture', () => {
 
     expect(fixture.requests.map((request) => request.path)).toEqual([
       '/api/instances?space=ops',
+      '/api/usage?window=7d',
       '/api/providers?reveal=true&space=ops',
       '/api/channels?space=ops',
       '/api/instances/nullclaw/agent/config?space=ops',

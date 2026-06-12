@@ -69,6 +69,7 @@
     { test: (path) => path.startsWith('/system/providers'), title: 'Providers', section: 'System' },
     { test: (path) => path.startsWith('/system/channels'), title: 'Channels', section: 'System' },
     { test: (path) => path.startsWith('/system/configs'), title: 'Configs', section: 'System' },
+    { test: (path) => path.startsWith('/system/usage'), title: 'Usage', section: 'System' },
     { test: (path) => path.startsWith('/system/settings'), title: 'Settings', section: 'System' },
     { test: (path) => path.startsWith('/system/observability'), title: 'Observability', section: 'System' },
     { test: (path) => path.startsWith('/system'), title: 'System' },
