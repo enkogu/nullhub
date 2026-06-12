@@ -6,6 +6,7 @@ const orders_mod = @import("../core/orders.zig");
 const paths_mod = @import("../core/paths.zig");
 const state_mod = @import("../core/state.zig");
 const helpers = @import("helpers.zig");
+const channels_api = @import("channels.zig");
 const query = @import("query.zig");
 const spaces_api = @import("spaces.zig");
 
@@ -1049,7 +1050,8 @@ fn isSafePackageId(id: []const u8) bool {
 }
 
 fn isSecretishKey(key: []const u8) bool {
-    return containsAsciiIgnoreCase(key, "secret") or
+    return channels_api.isSecretKey(key) or
+        containsAsciiIgnoreCase(key, "secret") or
         containsAsciiIgnoreCase(key, "token") or
         containsAsciiIgnoreCase(key, "api_key") or
         containsAsciiIgnoreCase(key, "apikey") or
@@ -1533,7 +1535,7 @@ test "market export writes blueprint to library strips secrets and emits event" 
     try state.addSavedChannel(.{
         .channel_type = "telegram",
         .account = "@ops",
-        .config = "{\"bot_token\":\"secret-channel-token\",\"chat_id\":\"123\"}",
+        .config = "{\"bot_token\":\"secret-channel-token\",\"encrypt_key\":\"secret-channel-encrypt-key\",\"chat_id\":\"123\"}",
         .space_id = "ops",
     });
     var order = try orders_mod.create(allocator, fixture.paths, "ops", .{
@@ -1561,8 +1563,10 @@ test "market export writes blueprint to library strips secrets and emits event" 
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "Daily Brief") != null);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "sk-secret-provider") == null);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "secret-channel-token") == null);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "secret-channel-encrypt-key") == null);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "providers.openrouter.1.api_key") != null);
     try std.testing.expect(std.mem.indexOf(u8, resp.body, "channels.telegram.1.config.bot_token") != null);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "channels.telegram.1.config.encrypt_key") != null);
 
     const manifest_path = try fixture.paths.spacePackageLibraryManifest(allocator, "ops", "export.ops.blueprint");
     defer allocator.free(manifest_path);
@@ -1572,6 +1576,8 @@ test "market export writes blueprint to library strips secrets and emits event" 
     try std.testing.expect(std.mem.indexOf(u8, manifest, "\"kind\":\"provider\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "\"secret_ref\":\"providers.openrouter.1.api_key\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, manifest, "sk-secret-provider") == null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "secret-channel-encrypt-key") == null);
+    try std.testing.expect(std.mem.indexOf(u8, manifest, "\"secret_ref\":\"channels.telegram.1.config.encrypt_key\"") != null);
 
     const events = state.eventsList();
     try std.testing.expectEqual(@as(usize, 1), events.len);
@@ -1583,6 +1589,8 @@ test "market export writes blueprint to library strips secrets and emits event" 
     defer allocator.free(download.body);
     try std.testing.expectEqualStrings("200 OK", download.status);
     try std.testing.expect(std.mem.indexOf(u8, download.body, "\"id\":\"export.ops.blueprint\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, download.body, "secret-channel-encrypt-key") == null);
+    try std.testing.expect(std.mem.indexOf(u8, download.body, "\"secret_ref\":\"channels.telegram.1.config.encrypt_key\"") != null);
 }
 
 test "market export supports selection kit and single component" {
