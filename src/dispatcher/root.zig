@@ -1,5 +1,7 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const std_compat = @import("compat");
+const managed_cli = @import("../api/managed_cli.zig");
 const durable_file = @import("../core/durable_file.zig");
 const orders_mod = @import("../core/orders.zig");
 const paths_mod = @import("../core/paths.zig");
@@ -102,6 +104,7 @@ const ParsedTriggerSpec = struct {
 };
 
 pub const DispatchContext = struct {
+    paths: paths_mod.Paths,
     order: orders_mod.Order,
     event: state_mod.Event,
     spec: TriggerSpec,
@@ -109,8 +112,12 @@ pub const DispatchContext = struct {
     now_ms: i64,
 };
 
+pub const ExecutionOutcome = struct {
+    succeeded: bool,
+};
+
 pub const Executors = struct {
-    pub const ExecFn = *const fn (?*anyopaque, std.mem.Allocator, *state_mod.State, DispatchContext) anyerror!void;
+    pub const ExecFn = *const fn (?*anyopaque, std.mem.Allocator, *state_mod.State, DispatchContext) anyerror!ExecutionOutcome;
 
     ptr: ?*anyopaque = null,
     create_ticket: ExecFn = defaultCreateTicket,
@@ -118,30 +125,124 @@ pub const Executors = struct {
     start_workflow: ExecFn = defaultStartWorkflow,
     run_agent: ExecFn = defaultRunAgent,
 
-    fn execute(self: Executors, allocator: std.mem.Allocator, state: *state_mod.State, ctx: DispatchContext) !void {
-        switch (ctx.spec.action) {
+    fn execute(self: Executors, allocator: std.mem.Allocator, state: *state_mod.State, ctx: DispatchContext) !ExecutionOutcome {
+        return switch (ctx.spec.action) {
             .create_ticket => try self.create_ticket(self.ptr, allocator, state, ctx),
             .start_loop => try self.start_loop(self.ptr, allocator, state, ctx),
             .start_workflow => try self.start_workflow(self.ptr, allocator, state, ctx),
             .run_agent => try self.run_agent(self.ptr, allocator, state, ctx),
-        }
+        };
     }
 };
 
-fn defaultCreateTicket(_: ?*anyopaque, allocator: std.mem.Allocator, state: *state_mod.State, ctx: DispatchContext) !void {
-    try appendExecutorEvent(allocator, state, ctx, "ticket.created", "ticket", "Ticket created");
+fn defaultCreateTicket(_: ?*anyopaque, allocator: std.mem.Allocator, state: *state_mod.State, ctx: DispatchContext) !ExecutionOutcome {
+    return appendWorkRun(allocator, state, ctx, .{
+        .kind = "ticket",
+        .status = "created",
+        .event_type = "work.ticket.created",
+        .severity = "success",
+        .title_prefix = "Ticket work run created",
+        .summary = "Dispatcher created a durable ticket work run.",
+    });
 }
 
-fn defaultStartLoop(_: ?*anyopaque, allocator: std.mem.Allocator, state: *state_mod.State, ctx: DispatchContext) !void {
-    try appendExecutorEvent(allocator, state, ctx, "loop.started", "loop", "Loop started");
+fn defaultStartLoop(_: ?*anyopaque, allocator: std.mem.Allocator, state: *state_mod.State, ctx: DispatchContext) !ExecutionOutcome {
+    return appendWorkRun(allocator, state, ctx, .{
+        .kind = "loop",
+        .status = "running",
+        .event_type = "work.loop.started",
+        .severity = "success",
+        .title_prefix = "Loop run started",
+        .summary = "Dispatcher started a durable loop work run.",
+    });
 }
 
-fn defaultStartWorkflow(_: ?*anyopaque, allocator: std.mem.Allocator, state: *state_mod.State, ctx: DispatchContext) !void {
-    try appendExecutorEvent(allocator, state, ctx, "workflow.started", "workflow", "Workflow started");
+fn defaultStartWorkflow(_: ?*anyopaque, allocator: std.mem.Allocator, state: *state_mod.State, ctx: DispatchContext) !ExecutionOutcome {
+    return appendWorkRun(allocator, state, ctx, .{
+        .kind = "workflow",
+        .status = "running",
+        .event_type = "work.workflow.started",
+        .severity = "success",
+        .title_prefix = "Workflow run started",
+        .summary = "Dispatcher started a durable workflow work run.",
+    });
 }
 
-fn defaultRunAgent(_: ?*anyopaque, allocator: std.mem.Allocator, state: *state_mod.State, ctx: DispatchContext) !void {
-    try appendExecutorEvent(allocator, state, ctx, "agent.run_requested", "agent", "Agent run requested");
+fn defaultRunAgent(_: ?*anyopaque, allocator: std.mem.Allocator, state: *state_mod.State, ctx: DispatchContext) !ExecutionOutcome {
+    if (builtin.os.tag == .windows) {
+        return appendWorkRun(allocator, state, ctx, .{
+            .kind = "agent",
+            .status = "failed",
+            .event_type = "work.agent.failed",
+            .severity = "error",
+            .title_prefix = "Agent run unsupported",
+            .summary = "Dispatcher agent execution is unsupported on this platform.",
+        });
+    }
+
+    const instance_name = ctx.spec.target orelse {
+        return appendWorkRun(allocator, state, ctx, .{
+            .kind = "agent",
+            .status = "failed",
+            .event_type = "work.agent.failed",
+            .severity = "error",
+            .title_prefix = "Agent run missing target",
+            .summary = "Dispatcher agent execution requires a NullClaw instance target.",
+        });
+    };
+    const clean_instance = stripComponentPrefix(instance_name, "nullclaw/");
+    const message = ctx.spec.instructions orelse ctx.order.summary;
+    const effective_message = if (message.len > 0) message else ctx.order.title;
+    const args = [_][]const u8{
+        "agent",
+        "invoke",
+        "--message",
+        effective_message,
+        "--session",
+        ctx.idempotency_key,
+        "--json",
+    };
+    const captured = managed_cli.capture(allocator, state, ctx.paths, "nullclaw", clean_instance, args[0..]);
+    switch (captured) {
+        .response => |resp| {
+            defer if (std.mem.eql(u8, resp.status, "502 Bad Gateway")) allocator.free(resp.body);
+            const summary = try std.fmt.allocPrint(allocator, "NullClaw agent invocation failed before execution: {s}.", .{resp.status});
+            defer allocator.free(summary);
+            return appendWorkRun(allocator, state, ctx, .{
+                .kind = "agent",
+                .status = "failed",
+                .event_type = "work.agent.failed",
+                .severity = "error",
+                .title_prefix = "Agent run failed",
+                .summary = summary,
+            });
+        },
+        .result => |result| {
+            defer allocator.free(result.stdout);
+            defer allocator.free(result.stderr);
+            if (!result.success) {
+                const summary = try std.fmt.allocPrint(allocator, "NullClaw agent invocation failed: {s}", .{firstOutputLine(result.stderr, result.stdout)});
+                defer allocator.free(summary);
+                return appendWorkRun(allocator, state, ctx, .{
+                    .kind = "agent",
+                    .status = "failed",
+                    .event_type = "work.agent.failed",
+                    .severity = "error",
+                    .title_prefix = "Agent run failed",
+                    .summary = summary,
+                });
+            }
+            return appendWorkRun(allocator, state, ctx, .{
+                .kind = "agent",
+                .status = "completed",
+                .event_type = "work.agent.completed",
+                .severity = "success",
+                .title_prefix = "Agent run completed",
+                .summary = "Dispatcher completed a NullClaw agent run.",
+                .evidence_ref = ctx.idempotency_key,
+            });
+        },
+    }
 }
 
 pub const RunOptions = struct {
@@ -155,6 +256,7 @@ pub const RunResult = struct {
     seen_events: usize = 0,
     matched_orders: usize = 0,
     executed: usize = 0,
+    failed: usize = 0,
     approvals_created: usize = 0,
     skipped_idempotent: usize = 0,
 };
@@ -271,6 +373,7 @@ pub fn runOnce(
             const key = try dispatchKey(allocator, order.id, event.id);
             defer allocator.free(key);
             const ctx = DispatchContext{
+                .paths = paths,
                 .order = order,
                 .event = event,
                 .spec = parsed_spec.spec,
@@ -280,9 +383,14 @@ pub fn runOnce(
 
             switch (parsed_spec.spec.tier) {
                 .t0 => {
-                    try options.executors.execute(allocator, state, ctx);
-                    try appendDispatchRecord(allocator, state, order, event, parsed_spec.spec, null, "dispatcher.executed", now_ms);
-                    result.executed += 1;
+                    const outcome = try options.executors.execute(allocator, state, ctx);
+                    if (outcome.succeeded) {
+                        try appendDispatchRecord(allocator, state, order, event, parsed_spec.spec, null, "dispatcher.executed", now_ms);
+                        result.executed += 1;
+                    } else {
+                        try appendDispatchRecord(allocator, state, order, event, parsed_spec.spec, null, "dispatcher.failed", now_ms);
+                        result.failed += 1;
+                    }
                     mutated_state = true;
                 },
                 .t1, .t2 => {
@@ -512,28 +620,55 @@ fn appendApprovalCreatedEvent(state: *state_mod.State, approval: state_mod.Appro
     });
 }
 
-fn appendExecutorEvent(
+const WorkRunAppendOptions = struct {
+    kind: []const u8,
+    status: []const u8,
+    event_type: []const u8,
+    severity: []const u8,
+    title_prefix: []const u8,
+    summary: []const u8,
+    evidence_ref: []const u8 = "",
+};
+
+fn appendWorkRun(
     allocator: std.mem.Allocator,
     state: *state_mod.State,
     ctx: DispatchContext,
-    event_type: []const u8,
-    subject_type: []const u8,
-    title_prefix: []const u8,
-) !void {
+    options: WorkRunAppendOptions,
+) !ExecutionOutcome {
+    _ = try state.addWorkRun(.{
+        .id = ctx.idempotency_key,
+        .space_id = ctx.event.space_id,
+        .kind = options.kind,
+        .status = options.status,
+        .order_id = ctx.order.id,
+        .trigger_event_id = ctx.event.id,
+        .target = ctx.spec.target orelse "",
+        .instructions = ctx.spec.instructions orelse "",
+        .summary = options.summary,
+        .evidence_ref = options.evidence_ref,
+        .created_at_ms = ctx.now_ms,
+        .updated_at_ms = ctx.now_ms,
+    });
+
     const payload = try std.json.Stringify.valueAlloc(allocator, .{
         .order_id = ctx.order.id,
         .trigger_event_id = ctx.event.id,
+        .run_id = ctx.idempotency_key,
         .idempotency_key = ctx.idempotency_key,
         .tier = ctx.spec.tier.string(),
         .action = ctx.spec.action.string(),
+        .kind = options.kind,
+        .status = options.status,
         .target = ctx.spec.target orelse "",
         .instructions = ctx.spec.instructions orelse "",
     }, .{});
     defer allocator.free(payload);
 
-    const title = try std.fmt.allocPrint(allocator, "{s}: {s}", .{ title_prefix, ctx.order.title });
+    const title = try std.fmt.allocPrint(allocator, "{s}: {s}", .{ options.title_prefix, ctx.order.title });
     defer allocator.free(title);
-    const summary = try std.fmt.allocPrint(allocator, "Dispatcher T0 executor for event {d} ({s}).", .{
+    const summary = try std.fmt.allocPrint(allocator, "{s} Trigger event {d} ({s}).", .{
+        options.summary,
         ctx.event.id,
         ctx.event.event_type,
     });
@@ -541,16 +676,30 @@ fn appendExecutorEvent(
 
     _ = try state.addEvent(.{
         .space_id = ctx.event.space_id,
-        .event_type = event_type,
+        .event_type = options.event_type,
         .source = source,
-        .subject_type = subject_type,
+        .subject_type = "work_run",
         .subject_id = ctx.idempotency_key,
         .title = title,
         .summary = summary,
-        .severity = "info",
+        .severity = options.severity,
+        .evidence_ref = options.evidence_ref,
         .payload_json = payload,
         .created_at_ms = ctx.now_ms,
     });
+    return .{ .succeeded = !std.mem.eql(u8, options.status, "failed") };
+}
+
+fn stripComponentPrefix(value: []const u8, prefix: []const u8) []const u8 {
+    return if (std.mem.startsWith(u8, value, prefix)) value[prefix.len..] else value;
+}
+
+fn firstOutputLine(stderr: []const u8, stdout: []const u8) []const u8 {
+    const selected = if (std.mem.trim(u8, stderr, " \t\r\n").len > 0) stderr else stdout;
+    const trimmed = std.mem.trim(u8, selected, " \t\r\n");
+    if (trimmed.len == 0) return "command failed";
+    const end = std.mem.indexOfAny(u8, trimmed, "\r\n") orelse trimmed.len;
+    return trimmed[0..end];
 }
 
 fn appendDispatchRecord(
@@ -654,9 +803,23 @@ fn createTriggerOrder(
     tier: []const u8,
     action: []const u8,
 ) !void {
+    try createTriggerOrderWithTarget(allocator, paths, space_id, id, event_type, tier, action, "test-target", "");
+}
+
+fn createTriggerOrderWithTarget(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    space_id: []const u8,
+    id: []const u8,
+    event_type: []const u8,
+    tier: []const u8,
+    action: []const u8,
+    target: []const u8,
+    instructions: []const u8,
+) !void {
     const content = try std.fmt.allocPrint(allocator,
-        \\{{"trigger":{{"event_type":"{s}"}},"tier":"{s}","action":{{"type":"{s}","target":"test-target"}}}}
-    , .{ event_type, tier, action });
+        \\{{"trigger":{{"event_type":"{s}"}},"tier":"{s}","action":{{"type":"{s}","target":"{s}","instructions":"{s}"}}}}
+    , .{ event_type, tier, action, target, instructions });
     defer allocator.free(content);
 
     const created = try orders_mod.create(allocator, paths, space_id, .{
@@ -671,6 +834,25 @@ fn createTriggerOrder(
 
     const active = try orders_mod.transition(allocator, paths, space_id, id, .activate, 101);
     defer active.deinit(allocator);
+}
+
+fn writeTestBinary(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    component: []const u8,
+    version: []const u8,
+    script: []const u8,
+) !void {
+    try paths.ensureDirs();
+    const bin_path = try paths.binary(allocator, component, version);
+    defer allocator.free(bin_path);
+
+    const file = try std_compat.fs.createFileAbsolute(bin_path, .{ .truncate = true });
+    defer file.close();
+    try file.writeAll(script);
+    if (comptime std_compat.fs.has_executable_bit) {
+        try file.chmod(0o755);
+    }
 }
 
 const Recorder = struct {
@@ -693,20 +875,24 @@ const Recorder = struct {
         return @ptrCast(@alignCast(ptr.?));
     }
 
-    fn recordCreateTicket(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !void {
+    fn recordCreateTicket(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !ExecutionOutcome {
         from(ptr).create_ticket_count += 1;
+        return .{ .succeeded = true };
     }
 
-    fn recordStartLoop(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !void {
+    fn recordStartLoop(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !ExecutionOutcome {
         from(ptr).start_loop_count += 1;
+        return .{ .succeeded = true };
     }
 
-    fn recordStartWorkflow(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !void {
+    fn recordStartWorkflow(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !ExecutionOutcome {
         from(ptr).start_workflow_count += 1;
+        return .{ .succeeded = true };
     }
 
-    fn recordRunAgent(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !void {
+    fn recordRunAgent(ptr: ?*anyopaque, _: std.mem.Allocator, _: *state_mod.State, _: DispatchContext) !ExecutionOutcome {
         from(ptr).run_agent_count += 1;
+        return .{ .succeeded = true };
     }
 };
 
@@ -749,7 +935,7 @@ test "dispatcher matches active trigger orders in event space" {
     try std.testing.expectEqual(@as(usize, 1), recorder.create_ticket_count);
 }
 
-test "dispatcher default T0 executor records action event" {
+test "dispatcher default T0 executor creates durable workflow run" {
     const allocator = std.testing.allocator;
     var fixture = try test_helpers.TempPaths.init(allocator);
     defer fixture.deinit();
@@ -771,15 +957,27 @@ test "dispatcher default T0 executor records action event" {
 
     const result = try runOnce(allocator, fixture.paths, &state, 300, .{});
     try std.testing.expectEqual(@as(usize, 1), result.executed);
+    try std.testing.expectEqual(@as(usize, 0), result.failed);
+    try std.testing.expectEqual(@as(usize, 1), state.workRunsList().len);
+    const run = state.workRunsList()[0];
+    try std.testing.expectEqualStrings("workflow", run.kind);
+    try std.testing.expectEqualStrings("running", run.status);
+    try std.testing.expectEqualStrings("workflow-on-event", run.order_id);
+    try std.testing.expectEqual(@as(u64, 1), run.trigger_event_id);
 
     var saw_workflow_started = false;
+    var saw_legacy_synthetic = false;
     var saw_dispatch_record = false;
     for (state.eventsList()) |event| {
-        if (std.mem.eql(u8, event.event_type, "workflow.started") and
+        if (std.mem.eql(u8, event.event_type, "work.workflow.started") and
             std.mem.eql(u8, event.source, source) and
-            std.mem.eql(u8, event.subject_type, "workflow"))
+            std.mem.eql(u8, event.subject_type, "work_run") and
+            std.mem.eql(u8, event.subject_id, run.id))
         {
             saw_workflow_started = true;
+        }
+        if (std.mem.eql(u8, event.event_type, "workflow.started")) {
+            saw_legacy_synthetic = true;
         }
         if (std.mem.eql(u8, event.event_type, "dispatcher.executed") and
             std.mem.eql(u8, event.source, source) and
@@ -789,7 +987,147 @@ test "dispatcher default T0 executor records action event" {
         }
     }
     try std.testing.expect(saw_workflow_started);
+    try std.testing.expect(!saw_legacy_synthetic);
     try std.testing.expect(saw_dispatch_record);
+
+    var loaded = try state_mod.State.load(allocator, state_path);
+    defer loaded.deinit();
+    try std.testing.expectEqual(@as(usize, 1), loaded.workRunsList().len);
+    try std.testing.expectEqualStrings(run.id, loaded.workRunsList()[0].id);
+}
+
+test "dispatcher run_agent invokes managed nullclaw and records completed work run" {
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    try fixture.paths.ensureDirs();
+
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+    try state.addInstance("nullclaw", "agent-one", .{ .version = "1.0.0", .space_id = "ops" });
+
+    const script =
+        \\#!/bin/sh
+        \\set -eu
+        \\if [ "$1" = "agent" ] && [ "$2" = "invoke" ] && [ "$3" = "--message" ] && [ "$4" = "hello from dispatcher" ] && [ "$5" = "--session" ] && [ "$7" = "--json" ]; then
+        \\  printf '%s\n' '{"response":"ok"}'
+        \\  exit 0
+        \\fi
+        \\echo "unexpected args: $*" >&2
+        \\exit 1
+        \\
+    ;
+    try writeTestBinary(allocator, fixture.paths, "nullclaw", "1.0.0", script);
+
+    try createTriggerOrderWithTarget(
+        allocator,
+        fixture.paths,
+        "ops",
+        "agent-on-event",
+        "review.ready",
+        "T0",
+        "run_agent",
+        "nullclaw/agent-one",
+        "hello from dispatcher",
+    );
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "review.ready",
+        .source = "test",
+        .title = "Review ready",
+        .created_at_ms = 200,
+    });
+
+    const result = try runOnce(allocator, fixture.paths, &state, 300, .{});
+    try std.testing.expectEqual(@as(usize, 1), result.executed);
+    try std.testing.expectEqual(@as(usize, 0), result.failed);
+    try std.testing.expectEqual(@as(usize, 1), state.workRunsList().len);
+    const run = state.workRunsList()[0];
+    try std.testing.expectEqualStrings("agent", run.kind);
+    try std.testing.expectEqualStrings("completed", run.status);
+    try std.testing.expectEqualStrings("nullclaw/agent-one", run.target);
+    try std.testing.expectEqualStrings("hello from dispatcher", run.instructions);
+
+    var saw_agent_completed = false;
+    var saw_dispatch_record = false;
+    for (state.eventsList()) |event| {
+        if (std.mem.eql(u8, event.event_type, "work.agent.completed") and
+            std.mem.eql(u8, event.source, source) and
+            std.mem.eql(u8, event.subject_type, "work_run") and
+            std.mem.eql(u8, event.subject_id, run.id))
+        {
+            saw_agent_completed = true;
+        }
+        if (std.mem.eql(u8, event.event_type, "dispatcher.executed")) {
+            saw_dispatch_record = true;
+        }
+    }
+    try std.testing.expect(saw_agent_completed);
+    try std.testing.expect(saw_dispatch_record);
+}
+
+test "dispatcher run_agent failure records failed work run instead of success" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    try fixture.paths.ensureDirs();
+
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    try createTriggerOrderWithTarget(
+        allocator,
+        fixture.paths,
+        "ops",
+        "missing-agent",
+        "review.failed",
+        "T0",
+        "run_agent",
+        "nullclaw/missing-agent",
+        "hello",
+    );
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "review.failed",
+        .source = "test",
+        .title = "Review failed",
+        .created_at_ms = 200,
+    });
+
+    const result = try runOnce(allocator, fixture.paths, &state, 300, .{});
+    try std.testing.expectEqual(@as(usize, 0), result.executed);
+    try std.testing.expectEqual(@as(usize, 1), result.failed);
+    try std.testing.expectEqual(@as(usize, 1), state.workRunsList().len);
+    const run = state.workRunsList()[0];
+    try std.testing.expectEqualStrings("agent", run.kind);
+    try std.testing.expectEqualStrings("failed", run.status);
+
+    var saw_agent_failed = false;
+    var saw_dispatch_failed = false;
+    var saw_dispatch_executed = false;
+    for (state.eventsList()) |event| {
+        if (std.mem.eql(u8, event.event_type, "work.agent.failed") and
+            std.mem.eql(u8, event.subject_type, "work_run") and
+            std.mem.eql(u8, event.subject_id, run.id))
+        {
+            saw_agent_failed = true;
+        }
+        if (std.mem.eql(u8, event.event_type, "dispatcher.failed")) {
+            saw_dispatch_failed = true;
+        }
+        if (std.mem.eql(u8, event.event_type, "dispatcher.executed")) {
+            saw_dispatch_executed = true;
+        }
+    }
+    try std.testing.expect(saw_agent_failed);
+    try std.testing.expect(saw_dispatch_failed);
+    try std.testing.expect(!saw_dispatch_executed);
 }
 
 test "dispatcher is idempotent when cursor is reset" {

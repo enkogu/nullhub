@@ -87,6 +87,36 @@ pub const ApprovalInput = struct {
     created_at_ms: i64,
 };
 
+pub const WorkRun = struct {
+    id: []const u8,
+    space_id: []const u8,
+    kind: []const u8,
+    status: []const u8,
+    order_id: []const u8 = "",
+    trigger_event_id: u64 = 0,
+    target: []const u8 = "",
+    instructions: []const u8 = "",
+    summary: []const u8 = "",
+    evidence_ref: []const u8 = "",
+    created_at_ms: i64,
+    updated_at_ms: i64,
+};
+
+pub const WorkRunInput = struct {
+    id: []const u8,
+    space_id: []const u8,
+    kind: []const u8,
+    status: []const u8,
+    order_id: []const u8 = "",
+    trigger_event_id: u64 = 0,
+    target: []const u8 = "",
+    instructions: []const u8 = "",
+    summary: []const u8 = "",
+    evidence_ref: []const u8 = "",
+    created_at_ms: i64,
+    updated_at_ms: i64,
+};
+
 pub const DecideApprovalError = error{
     ApprovalNotFound,
     AlreadyDecided,
@@ -219,6 +249,7 @@ const JsonState = struct {
     spaces: []const Space = &.{},
     events: []const Event = &.{},
     approvals: []const Approval = &.{},
+    work_runs: []const WorkRun = &.{},
     saved_providers: []const SavedProvider = &.{},
     saved_channels: []const SavedChannel = &.{},
 };
@@ -410,6 +441,42 @@ fn duplicateApproval(allocator: std.mem.Allocator, approval: Approval) !Approval
     };
 }
 
+fn duplicateWorkRun(allocator: std.mem.Allocator, run: WorkRun) !WorkRun {
+    const owned_id = try allocator.dupe(u8, run.id);
+    errdefer allocator.free(owned_id);
+    const owned_space_id = try allocator.dupe(u8, run.space_id);
+    errdefer allocator.free(owned_space_id);
+    const owned_kind = try allocator.dupe(u8, run.kind);
+    errdefer allocator.free(owned_kind);
+    const owned_status = try allocator.dupe(u8, run.status);
+    errdefer allocator.free(owned_status);
+    const owned_order_id = try allocator.dupe(u8, run.order_id);
+    errdefer allocator.free(owned_order_id);
+    const owned_target = try allocator.dupe(u8, run.target);
+    errdefer allocator.free(owned_target);
+    const owned_instructions = try allocator.dupe(u8, run.instructions);
+    errdefer allocator.free(owned_instructions);
+    const owned_summary = try allocator.dupe(u8, run.summary);
+    errdefer allocator.free(owned_summary);
+    const owned_evidence_ref = try allocator.dupe(u8, run.evidence_ref);
+    errdefer allocator.free(owned_evidence_ref);
+
+    return .{
+        .id = owned_id,
+        .space_id = owned_space_id,
+        .kind = owned_kind,
+        .status = owned_status,
+        .order_id = owned_order_id,
+        .trigger_event_id = run.trigger_event_id,
+        .target = owned_target,
+        .instructions = owned_instructions,
+        .summary = owned_summary,
+        .evidence_ref = owned_evidence_ref,
+        .created_at_ms = run.created_at_ms,
+        .updated_at_ms = run.updated_at_ms,
+    };
+}
+
 fn freeApprovalStrings(allocator: std.mem.Allocator, approval: Approval) void {
     allocator.free(approval.space_id);
     allocator.free(approval.kind);
@@ -419,6 +486,18 @@ fn freeApprovalStrings(allocator: std.mem.Allocator, approval: Approval) void {
     allocator.free(approval.summary);
     allocator.free(approval.status);
     allocator.free(approval.feedback);
+}
+
+fn freeWorkRunStrings(allocator: std.mem.Allocator, run: WorkRun) void {
+    allocator.free(run.id);
+    allocator.free(run.space_id);
+    allocator.free(run.kind);
+    allocator.free(run.status);
+    allocator.free(run.order_id);
+    allocator.free(run.target);
+    allocator.free(run.instructions);
+    allocator.free(run.summary);
+    allocator.free(run.evidence_ref);
 }
 
 fn freeEventStrings(allocator: std.mem.Allocator, event: Event) void {
@@ -443,6 +522,7 @@ pub const State = struct {
     spaces: std.array_list.Managed(Space),
     events: std.array_list.Managed(Event),
     approvals: std.array_list.Managed(Approval),
+    work_runs: std.array_list.Managed(WorkRun),
     saved_providers: std.array_list.Managed(SavedProvider),
     saved_channels: std.array_list.Managed(SavedChannel),
     path: []const u8,
@@ -455,6 +535,7 @@ pub const State = struct {
             .spaces = std.array_list.Managed(Space).init(allocator),
             .events = std.array_list.Managed(Event).init(allocator),
             .approvals = std.array_list.Managed(Approval).init(allocator),
+            .work_runs = std.array_list.Managed(WorkRun).init(allocator),
             .saved_providers = std.array_list.Managed(SavedProvider).init(allocator),
             .saved_channels = std.array_list.Managed(SavedChannel).init(allocator),
             .path = allocator.dupe(u8, path) catch @panic("OOM"),
@@ -499,6 +580,11 @@ pub const State = struct {
             freeApprovalStrings(self.allocator, approval);
         }
         self.approvals.deinit();
+
+        for (self.work_runs.items) |run| {
+            freeWorkRunStrings(self.allocator, run);
+        }
+        self.work_runs.deinit();
 
         for (self.saved_channels.items) |sc| {
             self.freeSavedChannelStrings(sc);
@@ -590,6 +676,12 @@ pub const State = struct {
             const owned_approval = try duplicateApproval(allocator, approval);
             errdefer freeApprovalStrings(allocator, owned_approval);
             try state.approvals.append(owned_approval);
+        }
+
+        for (parsed.value.work_runs) |run| {
+            const owned_run = try duplicateWorkRun(allocator, run);
+            errdefer freeWorkRunStrings(allocator, owned_run);
+            try state.work_runs.append(owned_run);
         }
 
         for (parsed.value.saved_providers) |sp| {
@@ -690,6 +782,7 @@ pub const State = struct {
             .spaces = self.spaces.items,
             .events = self.events.items,
             .approvals = self.approvals.items,
+            .work_runs = self.work_runs.items,
             .saved_providers = self.saved_providers.items,
             .saved_channels = self.saved_channels.items,
         };
@@ -902,6 +995,40 @@ pub const State = struct {
         errdefer freeEventStrings(self.allocator, owned_event);
         try self.events.append(owned_event);
         return self.events.items[self.events.items.len - 1];
+    }
+
+    // ─── Work Runs ───────────────────────────────────────────────────────
+
+    pub fn workRunsList(self: *State) []const WorkRun {
+        return self.work_runs.items;
+    }
+
+    pub fn getWorkRun(self: *State, id: []const u8) ?WorkRun {
+        for (self.work_runs.items) |run| {
+            if (std.mem.eql(u8, run.id, id)) return run;
+        }
+        return null;
+    }
+
+    pub fn addWorkRun(self: *State, input: WorkRunInput) !WorkRun {
+        const run = WorkRun{
+            .id = input.id,
+            .space_id = input.space_id,
+            .kind = input.kind,
+            .status = input.status,
+            .order_id = input.order_id,
+            .trigger_event_id = input.trigger_event_id,
+            .target = input.target,
+            .instructions = input.instructions,
+            .summary = input.summary,
+            .evidence_ref = input.evidence_ref,
+            .created_at_ms = input.created_at_ms,
+            .updated_at_ms = input.updated_at_ms,
+        };
+        const owned_run = try duplicateWorkRun(self.allocator, run);
+        errdefer freeWorkRunStrings(self.allocator, owned_run);
+        try self.work_runs.append(owned_run);
+        return self.work_runs.items[self.work_runs.items.len - 1];
     }
 
     // ─── Approvals ──────────────────────────────────────────────────────
@@ -1473,6 +1600,51 @@ test "events append and persist in id order" {
         try std.testing.expectEqualStrings("ops", events[0].space_id);
         try std.testing.expectEqualStrings("hub.lifecycle.started", events[0].event_type);
         try std.testing.expectEqualStrings("{\"version\":\"test\"}", events[0].payload_json);
+    }
+}
+
+test "work runs append and persist" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    const path = try fixture.path(allocator, "state.json");
+    defer allocator.free(path);
+
+    {
+        var s = State.init(allocator, path);
+        defer s.deinit();
+
+        const run = try s.addWorkRun(.{
+            .id = "dispatcher:order:one:event:1",
+            .space_id = "ops",
+            .kind = "workflow",
+            .status = "running",
+            .order_id = "one",
+            .trigger_event_id = 1,
+            .target = "wf-1",
+            .instructions = "ship it",
+            .summary = "Dispatcher started a durable workflow work run.",
+            .created_at_ms = 1000,
+            .updated_at_ms = 1000,
+        });
+        try std.testing.expectEqualStrings("workflow", run.kind);
+        try s.save();
+    }
+
+    {
+        var s = try State.load(allocator, path);
+        defer s.deinit();
+
+        const runs = s.workRunsList();
+        try std.testing.expectEqual(@as(usize, 1), runs.len);
+        try std.testing.expectEqualStrings("dispatcher:order:one:event:1", runs[0].id);
+        try std.testing.expectEqualStrings("ops", runs[0].space_id);
+        try std.testing.expectEqualStrings("workflow", runs[0].kind);
+        try std.testing.expectEqualStrings("running", runs[0].status);
+        try std.testing.expectEqualStrings("one", runs[0].order_id);
+        try std.testing.expectEqual(@as(u64, 1), runs[0].trigger_event_id);
+        try std.testing.expectEqualStrings("wf-1", runs[0].target);
+        try std.testing.expectEqualStrings("ship it", runs[0].instructions);
     }
 }
 
