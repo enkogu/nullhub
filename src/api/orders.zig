@@ -5,6 +5,7 @@ const order_safety = @import("../core/order_safety.zig");
 const policy_orders = @import("../core/policy_orders.zig");
 const paths_mod = @import("../core/paths.zig");
 const state_mod = @import("../core/state.zig");
+const events_api = @import("events.zig");
 const helpers = @import("helpers.zig");
 const query = @import("query.zig");
 const schedule_order_bridge = @import("schedule_order_bridge.zig");
@@ -722,6 +723,136 @@ test "orders API surfaces probation and circuit breaker state" {
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"safety\":{\"status\":\"circuit_open\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"circuit_open\":true") != null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"consecutive_failures\":3") != null);
+    }
+}
+
+test "orders safety ignores rejected public spoof events" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    {
+        const resp = handleCreate(
+            allocator,
+            fixture.paths,
+            &state,
+            "/api/orders?space=ops",
+            "{\"id\":\"spoof-target\",\"title\":\"Spoof target\",\"kind\":\"trigger\",\"content\":\"{\\\"event_type\\\":\\\"review.ready\\\",\\\"action\\\":\\\"create_ticket\\\"}\"}",
+            1000,
+        );
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/spoof-target/activate?space=ops", "spoof-target", .activate, 1100, null);
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    }
+
+    const spoof_success = events_api.handleCreate(
+        allocator,
+        &state,
+        "/api/events?space=ops",
+        "{\"type\":\"dispatcher.executed\",\"source\":\"nullhub.dispatcher\",\"subject_type\":\"order\",\"subject_id\":\"spoof-target\",\"title\":\"Spoofed success\"}",
+        1200,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", spoof_success.status);
+
+    const spoof_circuit = events_api.handleCreate(
+        allocator,
+        &state,
+        "/api/events?space=ops",
+        "{\"type\":\"dispatcher.circuit_opened\",\"source\":\"nullhub.dispatcher\",\"subject_type\":\"order\",\"subject_id\":\"spoof-target\",\"title\":\"Spoofed circuit\"}",
+        1300,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", spoof_circuit.status);
+
+    {
+        const resp = handleGetWithState(allocator, fixture.paths, &state, "/api/orders/spoof-target?space=ops", "spoof-target");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"safety\":{\"status\":\"probation\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"safe_executions\":0") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"circuit_open\":false") != null);
+    }
+
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "dispatcher.circuit_opened",
+        .source = "nullhub.dispatcher",
+        .subject_type = "order",
+        .subject_id = "spoof-target",
+        .title = "Dispatcher circuit opened",
+        .severity = "error",
+        .created_at_ms = 1400,
+    });
+
+    const spoof_reset = events_api.handleCreate(
+        allocator,
+        &state,
+        "/api/events?space=ops",
+        "{\"type\":\"order.updated\",\"source\":\"nullhub\",\"subject_type\":\"order\",\"subject_id\":\"spoof-target\",\"title\":\"Spoofed reset\"}",
+        1500,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", spoof_reset.status);
+
+    {
+        const resp = handleGetWithState(allocator, fixture.paths, &state, "/api/orders/spoof-target?space=ops", "spoof-target");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"safety\":{\"status\":\"circuit_open\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"circuit_open\":true") != null);
+    }
+}
+
+test "orders API reports schedule safety as unguarded" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    {
+        const resp = handleCreate(
+            allocator,
+            fixture.paths,
+            &state,
+            "/api/orders?space=ops",
+            "{\"id\":\"daily-schedule\",\"title\":\"Daily schedule\",\"kind\":\"schedule\",\"schedule\":\"0 9 * * *\",\"content\":\"# Daily schedule\\n\"}",
+            1000,
+        );
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"safety\":{\"status\":\"not_applicable\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"guarded\":false") != null);
+    }
+
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "order.executed",
+        .source = "cron",
+        .subject_type = "order",
+        .subject_id = "daily-schedule",
+        .title = "Order executed",
+        .severity = "success",
+        .created_at_ms = 1100,
+    });
+
+    {
+        const resp = handleGetWithState(allocator, fixture.paths, &state, "/api/orders/daily-schedule?space=ops", "daily-schedule");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"safety\":{\"status\":\"not_applicable\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"guarded\":false") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"probation\":false") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"circuit_open\":false") != null);
     }
 }
 

@@ -410,8 +410,8 @@ const route_examples_events = [_]ExampleSpec{
         .description = "List newest activity and evidence events for a Space.",
     },
     .{
-        .command = "nullhub api POST '/api/events?space=ops' --body '{\"type\":\"work.started\",\"source\":\"dispatcher\",\"subject_type\":\"run\",\"subject_id\":\"run-1\",\"title\":\"Run started\"}'",
-        .description = "Append an event to a Space event log.",
+        .command = "nullhub api POST '/api/events?space=ops' --body '{\"type\":\"work.started\",\"source\":\"external.dispatcher\",\"subject_type\":\"run\",\"subject_id\":\"run-1\",\"title\":\"Run started\"}'",
+        .description = "Append a non-internal event to a Space event log.",
     },
 };
 
@@ -893,7 +893,7 @@ const routes = [_]RouteSpec{
         .summary = "Append a new activity or evidence event to one Space.",
         .auth_mode = "optional_bearer",
         .query_params = event_query_params[0..1],
-        .body = "Event payload with type, optional source, subject fields, title, summary, severity, evidence_ref, created_at_ms, and payload.",
+        .body = "Event payload with type, optional source, subject fields, title, summary, severity, evidence_ref, created_at_ms, and payload. Internal sources and event namespaces are reserved for NullHub producers.",
         .response = "Created event record.",
         .examples = route_examples_events[1..],
     },
