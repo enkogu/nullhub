@@ -16,6 +16,7 @@ const managed_skills = @import("../managed_skills.zig");
 const manifest_mod = @import("../core/manifest.zig");
 const durable_file = @import("../core/durable_file.zig");
 const managed_cli = @import("managed_cli.zig");
+const events_api = @import("events.zig");
 const event_producers = @import("event_producers.zig");
 const proxy_api = @import("proxy.zig");
 const nullclaw_web_channel = @import("../core/nullclaw_web_channel.zig");
@@ -8842,6 +8843,12 @@ test "dispatch emits event for nulltickets run transition" {
     try std.testing.expectEqualStrings("nulltickets", events[0].source);
     try std.testing.expectEqualStrings("ticket_run", events[0].subject_type);
     try std.testing.expectEqualStrings("run-1", events[0].subject_id);
+
+    const events_resp = events_api.handleList(allocator, &s, "/api/events?space=ops&type=work.ticket.transitioned");
+    defer allocator.free(events_resp.body);
+    try std.testing.expectEqualStrings("200 OK", events_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"work.ticket.transitioned\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"subject_id\":\"run-1\"") != null);
 }
 
 test "dispatch routes GET integration action for nullclaw nullwatch telemetry" {
@@ -10246,6 +10253,13 @@ test "dispatch routes cron detail and lifecycle actions" {
     try std.testing.expectEqualStrings("cron", events[1].source);
     try std.testing.expectEqualStrings("cron_job", events[1].subject_type);
     try std.testing.expectEqualStrings("job-1", events[1].subject_id);
+
+    const events_resp = events_api.handleList(allocator, &s, "/api/events?space=ops&type=work.cron.executed");
+    defer allocator.free(events_resp.body);
+    try std.testing.expectEqualStrings("200 OK", events_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"work.cron.executed\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"source\":\"cron\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"subject_id\":\"job-1\"") != null);
 }
 
 test "dispatch routes config mutation actions" {
