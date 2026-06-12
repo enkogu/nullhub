@@ -10,6 +10,7 @@
     { label: 'Tasks', href: '/work/tasks' },
     { label: 'Loop Runs', href: '/work/loops/runs', activePrefixes: ['/work/runs'] },
     { label: 'Artifacts', href: '/work/artifacts' },
+    { label: 'Results', href: '/work/results' },
     { label: 'Reports', href: '/work/reports' },
   ];
 
