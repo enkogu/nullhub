@@ -6,6 +6,7 @@ const paths_mod = @import("../core/paths.zig");
 const state_mod = @import("../core/state.zig");
 const helpers = @import("helpers.zig");
 const query = @import("query.zig");
+const schedule_order_bridge = @import("schedule_order_bridge.zig");
 const spaces_api = @import("spaces.zig");
 
 const appendEscaped = helpers.appendEscaped;
@@ -189,13 +190,33 @@ pub fn handleUpdate(allocator: std.mem.Allocator, paths: paths_mod.Paths, state:
     return helpers.jsonOk(response);
 }
 
-pub fn handleTransition(allocator: std.mem.Allocator, paths: paths_mod.Paths, state: *state_mod.State, target: []const u8, order_id: []const u8, transition: orders.Transition, now_ms: i64) helpers.ApiResponse {
+pub fn handleTransition(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    state: *state_mod.State,
+    target: []const u8,
+    order_id: []const u8,
+    transition: orders.Transition,
+    now_ms: i64,
+    cron_api: ?schedule_order_bridge.CronApi,
+) helpers.ApiResponse {
     const space_id = requiredSpaceQueryAlloc(allocator, target) catch |err| switch (err) {
         error.MissingSpace => return helpers.badRequest("{\"error\":\"space query is required\"}"),
         error.InvalidSpace => return helpers.badRequest("{\"error\":\"invalid space id\"}"),
         else => return helpers.serverError(),
     };
     defer allocator.free(space_id);
+
+    const current_order = orders.get(allocator, paths, space_id, order_id) catch |err| switch (err) {
+        error.InvalidOrderId => return helpers.badRequest("{\"error\":\"invalid order id\"}"),
+        error.OrderNotFound => return helpers.notFound(),
+        else => return helpers.serverError(),
+    };
+    defer current_order.deinit(allocator);
+
+    if (schedule_order_bridge.beforeTransition(allocator, paths, state, cron_api, current_order, transition, now_ms)) |bridge_resp| {
+        return bridge_resp;
+    }
 
     const order = orders.transition(allocator, paths, space_id, order_id, transition, now_ms) catch |err| switch (err) {
         error.InvalidOrderId => return helpers.badRequest("{\"error\":\"invalid order id\"}"),
@@ -236,13 +257,32 @@ pub fn handleSchedule(allocator: std.mem.Allocator, paths: paths_mod.Paths, stat
     return helpers.jsonOk(response);
 }
 
-pub fn handleDelete(allocator: std.mem.Allocator, paths: paths_mod.Paths, state: *state_mod.State, target: []const u8, order_id: []const u8, now_ms: i64) helpers.ApiResponse {
+pub fn handleDelete(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    state: *state_mod.State,
+    target: []const u8,
+    order_id: []const u8,
+    now_ms: i64,
+    cron_api: ?schedule_order_bridge.CronApi,
+) helpers.ApiResponse {
     const space_id = requiredSpaceQueryAlloc(allocator, target) catch |err| switch (err) {
         error.MissingSpace => return helpers.badRequest("{\"error\":\"space query is required\"}"),
         error.InvalidSpace => return helpers.badRequest("{\"error\":\"invalid space id\"}"),
         else => return helpers.serverError(),
     };
     defer allocator.free(space_id);
+
+    const current_order = orders.get(allocator, paths, space_id, order_id) catch |err| switch (err) {
+        error.InvalidOrderId => return helpers.badRequest("{\"error\":\"invalid order id\"}"),
+        error.OrderNotFound => return helpers.notFound(),
+        else => return helpers.serverError(),
+    };
+    defer current_order.deinit(allocator);
+
+    if (schedule_order_bridge.beforeDelete(allocator, paths, cron_api, current_order)) |bridge_resp| {
+        return bridge_resp;
+    }
 
     const order = orders.remove(allocator, paths, space_id, order_id) catch |err| switch (err) {
         error.InvalidOrderId => return helpers.badRequest("{\"error\":\"invalid order id\"}"),
@@ -448,7 +488,7 @@ test "orders API creates updates schedules transitions and emits events" {
 
     const transitions = [_]orders.Transition{ .activate, .pause, .resume_order, .draft, .archive };
     for (transitions, 0..) |transition, idx| {
-        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/order-1/activate?space=ops", "order-1", transition, 1300 + @as(i64, @intCast(idx)));
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/order-1/activate?space=ops", "order-1", transition, 1300 + @as(i64, @intCast(idx)), null);
         defer allocator.free(resp.body);
         try std.testing.expectEqualStrings("200 OK", resp.status);
     }
@@ -477,7 +517,7 @@ test "orders API deletes records without treating archive as delete" {
     }
 
     {
-        const archive_resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/order-1/archive?space=ops", "order-1", .archive, 1100);
+        const archive_resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/order-1/archive?space=ops", "order-1", .archive, 1100, null);
         defer allocator.free(archive_resp.body);
         try std.testing.expectEqualStrings("200 OK", archive_resp.status);
 
@@ -488,7 +528,7 @@ test "orders API deletes records without treating archive as delete" {
     }
 
     {
-        const delete_resp = handleDelete(allocator, fixture.paths, &state, "/api/orders/order-1?space=ops", "order-1", 1200);
+        const delete_resp = handleDelete(allocator, fixture.paths, &state, "/api/orders/order-1?space=ops", "order-1", 1200, null);
         defer allocator.free(delete_resp.body);
         try std.testing.expectEqualStrings("200 OK", delete_resp.status);
         try std.testing.expect(std.mem.indexOf(u8, delete_resp.body, "\"status\":\"deleted\"") != null);

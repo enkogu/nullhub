@@ -43,6 +43,7 @@ pub const process = @import("supervisor/process.zig");
 pub const registry = @import("installer/registry.zig");
 pub const report = @import("report.zig");
 pub const report_api = @import("api/report.zig");
+pub const schedule_order_bridge_api = @import("api/schedule_order_bridge.zig");
 pub const report_cli = @import("report_cli.zig");
 pub const report_schema = @import("report_schema.zig");
 pub const server = @import("server.zig");
@@ -109,6 +110,7 @@ test {
     _ = registry;
     _ = report;
     _ = report_api;
+    _ = schedule_order_bridge_api;
     _ = report_cli;
     _ = report_schema;
     _ = server;
