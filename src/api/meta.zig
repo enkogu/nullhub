@@ -435,6 +435,14 @@ const route_examples_market = [_]ExampleSpec{
         .command = "nullhub api GET '/api/market/installed?space=ops' --pretty",
         .description = "List manifests installed in a selected Space library.",
     },
+    .{
+        .command = "nullhub api POST '/api/market/export?space=ops' '{\"scope\":\"space\",\"id\":\"export.ops.blueprint\"}' --pretty",
+        .description = "Export selected Space data as a local package manifest.",
+    },
+    .{
+        .command = "nullhub api GET '/api/market/library/export.ops.blueprint.json?space=ops' --pretty",
+        .description = "Download an exported package manifest from the selected Space library.",
+    },
 };
 
 const route_examples_instances = [_]ExampleSpec{
@@ -603,6 +611,29 @@ const routes = [_]RouteSpec{
         .query_params = market_query_params[0..],
         .response = "Package manifest array loaded from the selected Space market library.",
         .examples = route_examples_market[1..],
+    },
+    .{
+        .id = "market.export.post",
+        .method = "POST",
+        .path_template = "/api/market/export",
+        .category = "market",
+        .summary = "Export a Space, selection, or single item into a local package manifest.",
+        .auth_mode = "optional_bearer",
+        .query_params = market_query_params[0..],
+        .body = "JSON body with scope=space|selection|single, optional id/name/version, and optional selection/single refs.",
+        .response = "Export result with package id, library file path, download URL, and manifest JSON.",
+        .examples = route_examples_market[2..3],
+    },
+    .{
+        .id = "market.library.get",
+        .method = "GET",
+        .path_template = "/api/market/library/{package}.json",
+        .category = "market",
+        .summary = "Download a package manifest from the selected Space library.",
+        .auth_mode = "optional_bearer",
+        .query_params = market_query_params[0..],
+        .response = "Package manifest JSON.",
+        .examples = route_examples_market[3..],
     },
     .{
         .id = "wizard.free_port",
@@ -1871,6 +1902,8 @@ test "jsonAlloc includes stable route metadata" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"meta.routes.get\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.catalog.get\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.installed.get\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.export.post\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.library.get\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"orders.delete\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"method\": \"DELETE\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "/api/instances/{component}/{name}") != null);
@@ -1884,6 +1917,8 @@ test "textAlloc renders grouped route list" {
     try std.testing.expect(std.mem.indexOf(u8, text, "[market]") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/market/catalog") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/market/installed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "POST /api/market/export") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/market/library/{package}.json") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/meta/routes") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/spec") != null);
 }
