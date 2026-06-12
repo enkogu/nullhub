@@ -18,6 +18,7 @@ pub const helpers = @import("api/helpers.zig");
 pub const instances_api = @import("api/instances.zig");
 pub const logs_api = @import("api/logs.zig");
 pub const main = @import("main.zig");
+pub const market_api = @import("api/market.zig");
 pub const manager = @import("supervisor/manager.zig");
 pub const managed_skills = @import("managed_skills.zig");
 pub const meta_api = @import("api/meta.zig");
@@ -82,6 +83,7 @@ test {
     _ = instances_api;
     _ = logs_api;
     _ = main;
+    _ = market_api;
     _ = manager;
     _ = managed_skills;
     _ = meta_api;

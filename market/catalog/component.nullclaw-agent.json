@@ -1,0 +1,35 @@
+{
+  "id": "builtin.nullclaw-agent",
+  "name": "NullClaw Agent Component",
+  "version": "1.0.0",
+  "scale": "component",
+  "summary": "Base managed agent runtime component for a Space.",
+  "requires": [
+    {
+      "kind": "secret_ref",
+      "name": "model_provider",
+      "secret_ref": "providers.default.api_key"
+    }
+  ],
+  "contributes": [
+    {
+      "kind": "team_capability",
+      "name": "agent-runtime"
+    }
+  ],
+  "config": {
+    "component": "nullclaw",
+    "launch_mode": "managed"
+  },
+  "seeds": [],
+  "extends": [],
+  "charter": {
+    "mission": "Run one managed agent runtime without adding a separate workflow surface.",
+    "autonomy_bounds": [
+      "Use configured provider secret refs only"
+    ],
+    "metrics": [
+      "runtime_health"
+    ]
+  }
+}

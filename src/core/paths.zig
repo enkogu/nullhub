@@ -11,6 +11,7 @@ const builtin = @import("builtin");
 /// ├── state.json
 /// ├── mission-control/replays/{id}.json
 /// ├── manifests/{component}@{version}.json
+/// ├── spaces/{space_id}/market/library/{package}.json
 /// ├── bin/{component}-{version} (or bin/{component} for dev-local)
 /// ├── instances/{component}/{name}/
 /// │   ├── instance.json
@@ -82,6 +83,18 @@ pub const Paths = struct {
         const filename = try std.fmt.allocPrint(allocator, "{s}.md", .{order_id});
         defer allocator.free(filename);
         return std.fs.path.join(allocator, &.{ self.root, "spaces", space_id, "orders", filename });
+    }
+
+    /// `{root}/spaces/{space_id}/market/library`
+    pub fn spacePackageLibraryDir(self: Paths, allocator: std.mem.Allocator, space_id: []const u8) ![]const u8 {
+        return std.fs.path.join(allocator, &.{ self.root, "spaces", space_id, "market", "library" });
+    }
+
+    /// `{root}/spaces/{space_id}/market/library/{package_id}.json`
+    pub fn spacePackageLibraryManifest(self: Paths, allocator: std.mem.Allocator, space_id: []const u8, package_id: []const u8) ![]const u8 {
+        const filename = try std.fmt.allocPrint(allocator, "{s}.json", .{package_id});
+        defer allocator.free(filename);
+        return std.fs.path.join(allocator, &.{ self.root, "spaces", space_id, "market", "library", filename });
     }
 
     // ── Component paths ──────────────────────────────────────────────
@@ -318,6 +331,14 @@ test "paths resolve under custom root" {
     const order_doc = try p.spaceOrderDoc(allocator, "ops", "order-1");
     defer allocator.free(order_doc);
     try std.testing.expectEqualStrings("/tmp/test-nullhub/spaces/ops/orders/order-1.md", order_doc);
+
+    const package_library = try p.spacePackageLibraryDir(allocator, "ops");
+    defer allocator.free(package_library);
+    try std.testing.expectEqualStrings("/tmp/test-nullhub/spaces/ops/market/library", package_library);
+
+    const package_manifest = try p.spacePackageLibraryManifest(allocator, "ops", "builtin.ops-desk");
+    defer allocator.free(package_manifest);
+    try std.testing.expectEqualStrings("/tmp/test-nullhub/spaces/ops/market/library/builtin.ops-desk.json", package_manifest);
 
     const ui = try p.uiModule(allocator, "nullclaw-chat-ui", "1.2.0");
     defer allocator.free(ui);
