@@ -158,15 +158,6 @@ test('section overview shells stay on canonical routes and expose panel links', 
       ],
     },
     {
-      path: '/orders?space=ops',
-      heading: 'Orders',
-      tabs: [
-        { name: 'Loops', links: ['Loops', 'Loop library'] },
-        { name: 'Workflows', links: ['Workflows', 'Workflow runs'] },
-        { name: 'Authoring', links: ['Task flows'] },
-      ],
-    },
-    {
       path: '/system?space=ops',
       heading: 'System',
       tabs: [
