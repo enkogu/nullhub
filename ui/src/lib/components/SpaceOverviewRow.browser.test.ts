@@ -13,7 +13,7 @@ test('renders aggregate counts and spend for a Space', async () => {
   await expect.element(screen.getByRole('button', { name: 'Select Operations' })).toBeVisible();
   await expect.element(screen.getByText('Operations')).toBeVisible();
   await expect.element(screen.getByText('4')).toBeVisible();
-  await expect.element(screen.getByText('2')).toBeVisible();
+  await expect.element(screen.getByText('2', { exact: true })).toBeVisible();
   await expect.element(screen.getByText('$12.35')).toBeVisible();
 });
 
