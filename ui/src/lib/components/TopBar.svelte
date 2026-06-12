@@ -2,11 +2,12 @@
   import { onMount } from "svelte";
   import { browser } from "$app/environment";
   import { api } from "$lib/api/client";
-  import { readLocalSessionUser } from "$lib/sessionState";
+  import { fallbackSessionUser, readLocalSessionUser } from "$lib/sessionState";
 
   let hubOk = $state(true);
-  let userEmail = $state("Local session");
-  let userInitial = $state("N");
+  const fallbackUser = fallbackSessionUser();
+  let userEmail = $state(fallbackUser.name);
+  let userInitial = $state(fallbackUser.initial);
   let accountMenuOpen = $state(false);
   let statusPollDelay = 750;
 
@@ -18,8 +19,9 @@
       userEmail = user.name;
       userInitial = user.initial;
     } catch {
-      userEmail = "Local session";
-      userInitial = "N";
+      const user = fallbackSessionUser();
+      userEmail = user.name;
+      userInitial = user.initial;
     }
   }
 

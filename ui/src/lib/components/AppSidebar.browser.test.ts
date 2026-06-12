@@ -1,12 +1,49 @@
-import { expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test } from "vitest";
 import { render } from "vitest-browser-svelte";
+import { installApiFixture, jsonFixture, type InstalledApiFixture } from "$lib/api/__fixtures__/backend";
 import AppSidebarFixture from "./AppSidebar.fixture.svelte";
+
+const transparentAvatar =
+	"data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==";
+
+let fixture: InstalledApiFixture | null = null;
 
 function sidebarItem(container: ParentNode, key: string): HTMLElement {
 	const item = container.querySelector<HTMLElement>(`[data-app-sidebar-item="${key}"]`);
 	expect(item).not.toBeNull();
 	return item as HTMLElement;
 }
+
+function installSessionFixture(body: unknown, status = 200) {
+	fixture?.restore();
+	fixture = installApiFixture([
+		{
+			method: "GET",
+			path: "/api/me/bootstrap",
+			handler: () => jsonFixture(body, { status }),
+		},
+	]);
+}
+
+function storePocketBaseAuth(value: unknown) {
+	localStorage.setItem("pocketbase_auth", JSON.stringify(value));
+}
+
+beforeEach(() => {
+	localStorage.removeItem("pocketbase_auth");
+	installSessionFixture({
+		user: {
+			name: "Test Operator",
+			email: "operator@example.com",
+		},
+	});
+});
+
+afterEach(() => {
+	fixture?.restore();
+	fixture = null;
+	localStorage.removeItem("pocketbase_auth");
+});
 
 test("marks the active primary route", async () => {
 	const screen = await render(AppSidebarFixture, {
@@ -104,4 +141,84 @@ test("renders the producer Space switcher in the actual sidebar shell", async ()
 
 	await screen.getByRole("menuitem", { name: /Lab paused 1 pending 1 live \$1\.25 spend/ }).click();
 	await expect.element(screen.getByRole("button", { name: /Lab 1 pending/ })).toBeVisible();
+});
+
+test("renders authenticated PocketBase session name, email, and avatar", async () => {
+	installSessionFixture({
+		user: {
+			id: "usr_ada",
+			name: "Ada Lovelace",
+			email: "ada@example.com",
+			avatar_url: transparentAvatar,
+		},
+	});
+
+	const screen = await render(AppSidebarFixture);
+
+	await expect.element(screen.getByText("Ada Lovelace")).toBeVisible();
+	await expect.element(screen.getByText("ada@example.com")).toBeVisible();
+
+	const avatar = screen.container.querySelector<HTMLImageElement>("[data-app-sidebar-avatar]");
+	expect(avatar).not.toBeNull();
+	expect(avatar?.getAttribute("src")).toBe(transparentAvatar);
+	expect(fixture?.requests.map((request) => request.path)).toContain("/api/me/bootstrap");
+});
+
+test("renders an authenticated initial when no avatar URL is available", async () => {
+	installSessionFixture({
+		user: {
+			name: "Grace Hopper",
+			email: "grace@example.com",
+		},
+	});
+
+	const screen = await render(AppSidebarFixture);
+
+	await expect.element(screen.getByText("Grace Hopper")).toBeVisible();
+	await expect.element(screen.getByText("grace@example.com")).toBeVisible();
+
+	const initial = screen.container.querySelector<HTMLElement>("[data-app-sidebar-initial]");
+	expect(initial?.textContent).toBe("G");
+	expect(screen.container.querySelector("[data-app-sidebar-avatar]")).toBeNull();
+});
+
+test("falls back to neutral workspace identity when no authenticated user is available", async () => {
+	installSessionFixture({ message: "Authentication is required" }, 401);
+
+	const screen = await render(AppSidebarFixture);
+
+	await expect.element(screen.getByText("Workspace user")).toBeVisible();
+	await expect.element(screen.getByText("Workspace access")).toBeVisible();
+	expect(screen.container.textContent).not.toContain("Volksdroid");
+	expect(screen.container.textContent).not.toContain("Local session");
+});
+
+test("uses stored OAuth avatar with the authenticated server identity and keeps the sign-out route a full reload", async () => {
+	storePocketBaseAuth({
+		token: "stored-token",
+		record: {
+			name: "Stored User",
+			email: "stored@example.com",
+			avatar_url: transparentAvatar,
+		},
+	});
+	installSessionFixture({
+		user: {
+			name: "Server User",
+			email: "server@example.com",
+		},
+	});
+
+	const screen = await render(AppSidebarFixture);
+
+	await expect.element(screen.getByText("Server User")).toBeVisible();
+	await expect.element(screen.getByText("server@example.com")).toBeVisible();
+
+	const avatar = screen.container.querySelector<HTMLImageElement>("[data-app-sidebar-avatar]");
+	expect(avatar?.getAttribute("src")).toBe(transparentAvatar);
+
+	const signOut = await screen.getByRole("link", { name: "Sign out" }).element();
+	expect(signOut.getAttribute("href")).toBe("/logout");
+	expect(signOut.hasAttribute("data-sveltekit-reload")).toBe(true);
+	expect(fixture?.requests.at(-1)?.headers.get("authorization")).toBe("Bearer stored-token");
 });

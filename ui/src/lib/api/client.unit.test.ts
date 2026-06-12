@@ -31,6 +31,17 @@ function installSelectedSpace(spaceId: string | null) {
   };
 }
 
+function installLocalAuthToken(token: string) {
+  Object.defineProperty(globalThis, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: vi.fn((key: string) =>
+        key === 'pocketbase_auth' ? JSON.stringify({ token, record: { email: 'ada@example.com' } }) : null,
+      ),
+    },
+  });
+}
+
 afterEach(() => {
   fixture?.restore();
   fixture = null;
@@ -49,6 +60,40 @@ describe('api client fake backend fixture', () => {
     expect(fixture.requests[0]).toMatchObject({
       method: 'GET',
       path: '/api/status',
+    });
+  });
+
+  test('reads the authenticated PocketBase session through the control-plane bootstrap route', async () => {
+    installLocalAuthToken('session-token');
+    fixture = installApiFixture([
+      {
+        method: 'GET',
+        path: '/api/me/bootstrap',
+        handler: (request) => {
+          expect(request.headers.get('authorization')).toBe('Bearer session-token');
+          return jsonFixture({
+            user: {
+              id: 'usr_live',
+              name: 'Ada Lovelace',
+              email: 'ada@example.com',
+              avatar_url: 'https://cdn.example.test/ada.png',
+            },
+          });
+        },
+      },
+    ]);
+
+    await expect(api.getCurrentSession()).resolves.toEqual({
+      user: {
+        id: 'usr_live',
+        name: 'Ada Lovelace',
+        email: 'ada@example.com',
+        avatar_url: 'https://cdn.example.test/ada.png',
+      },
+    });
+    expect(fixture.requests[0]).toMatchObject({
+      method: 'GET',
+      path: '/api/me/bootstrap',
     });
   });
 

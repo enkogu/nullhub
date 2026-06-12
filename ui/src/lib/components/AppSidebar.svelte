@@ -141,14 +141,16 @@
 	import { api } from "$lib/api/client";
 	import { ALL_SPACES_STORAGE_VALUE } from "$lib/api/spaces";
 	import { pollWhileVisible } from "$lib/poll";
-	import { readLocalSessionUser } from "$lib/sessionState";
+	import { fallbackSessionUser, readLocalSessionUser, sessionUserFromBootstrap } from "$lib/sessionState";
 	import SpaceSwitcher from "$lib/components/team-switcher.svelte";
 	import type { ComponentProps, Snippet } from "svelte";
 
 	type UserInfo = {
+		id?: string;
 		name: string;
 		email: string;
 		initial: string;
+		avatarUrl: string;
 	};
 
 	let {
@@ -187,11 +189,7 @@
 	let selectedSpaceId = $state("");
 	let shortcutPrefix = $state(false);
 	let shortcutTimer: ReturnType<typeof setTimeout> | undefined;
-	let user = $state<UserInfo>({
-		name: "Volksdroid",
-		email: "Local session",
-		initial: "V",
-	});
+	let user = $state<UserInfo>(fallbackSessionUser());
 
 	let currentPath = $derived(activePath ?? $page.url.pathname);
 	let selectedSwitcherSpaceId = $derived(selectedSpaceId === ALL_SPACES_STORAGE_VALUE ? null : selectedSpaceId || null);
@@ -223,13 +221,23 @@
 		return legacyLinks.some((item) => startsWithSegment(currentPath, item.url));
 	}
 
-	function readCurrentUser() {
+	async function readCurrentUser() {
 		if (!browser) return;
 
+		let localUser = fallbackSessionUser();
 		try {
-			user = readLocalSessionUser();
+			localUser = readLocalSessionUser();
+			user = localUser;
 		} catch {
-			user = { name: "Local session", email: "Workspace access", initial: "V" };
+			user = fallbackSessionUser();
+		}
+
+		try {
+			const session = await api.getCurrentSession();
+			const authenticatedUser = sessionUserFromBootstrap(session, localUser);
+			if (authenticatedUser) user = authenticatedUser;
+		} catch {
+			// Local standalone shells may not have the PocketBase control plane.
 		}
 	}
 
@@ -298,7 +306,7 @@
 	}
 
 	onMount(() => {
-		readCurrentUser();
+		void readCurrentUser();
 		if (!pollHubStatus) return () => resetShortcutPrefix();
 
 		const statusTimer = setTimeout(() => void loadStatus(), 500);
@@ -458,10 +466,22 @@
 					{#snippet child({ props })}
 						<a href="/settings" {...props}>
 							<div
-								class="bg-sidebar-accent text-sidebar-accent-foreground flex size-8 items-center justify-center rounded-lg border"
+								class="bg-sidebar-accent text-sidebar-accent-foreground flex size-8 overflow-hidden rounded-lg border"
 								aria-hidden="true"
 							>
-								{user.initial}
+								{#if user.avatarUrl}
+									<img
+										class="size-full object-cover"
+										src={user.avatarUrl}
+										alt=""
+										data-app-sidebar-avatar
+										onerror={() => {
+											user = { ...user, avatarUrl: "" };
+										}}
+									/>
+								{:else}
+									<span class="flex size-full items-center justify-center" data-app-sidebar-initial>{user.initial}</span>
+								{/if}
 							</div>
 							<div class="grid flex-1 text-start text-sm leading-tight">
 								<span class="truncate font-medium">{user.name}</span>
