@@ -27,6 +27,7 @@ const channels_api = @import("api/channels.zig");
 const events_api = @import("api/events.zig");
 const approvals_api = @import("api/approvals.zig");
 const orders_api = @import("api/orders.zig");
+const charter_api = @import("api/charter.zig");
 const event_producers = @import("api/event_producers.zig");
 const helpers = @import("api/helpers.zig");
 const schedule_order_bridge = @import("api/schedule_order_bridge.zig");
@@ -1678,6 +1679,19 @@ pub const Server = struct {
         if (approvals_api.decideIdFromTarget(target)) |approval_id| {
             if (std.mem.eql(u8, method, "POST")) {
                 const resp = approvals_api.handleDecide(allocator, self.state, target, approval_id, body, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+
+        // Charter API — /api/charter?space={id}
+        if (charter_api.isCharterPath(target)) {
+            if (std.mem.eql(u8, method, "GET")) {
+                const resp = charter_api.handleGet(allocator, self.paths, target);
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            if (std.mem.eql(u8, method, "PUT")) {
+                const resp = charter_api.handlePut(allocator, self.paths, self.state, target, body, std_compat.time.milliTimestamp());
                 return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
             }
             return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
@@ -3588,6 +3602,63 @@ test "route /api/orders CRUD transitions and emits events" {
     defer std.testing.allocator.free(doc_path);
     const doc_file = try std_compat.fs.openFileAbsolute(doc_path, .{});
     defer doc_file.close();
+}
+
+test "route /api/charter stores file-backed charter and injects policy bootstrap" {
+    const allocator = std.testing.allocator;
+    var ctx = TestContext.init(allocator);
+    defer ctx.deinit(allocator);
+
+    try ctx.state.addInstance("nullclaw", "ops-agent", .{ .version = "dev-local", .space_id = "ops" });
+
+    {
+        const resp = ctx.route(
+            allocator,
+            "PUT",
+            "/api/charter?space=ops",
+            "{\"stage\":\"alpha\",\"mission\":\"Keep operators focused.\",\"autonomy_bounds\":\"Ask before destructive work.\",\"autonomy_defaults\":\"T1 until approved.\",\"metrics\":\"cycle time\"}",
+        );
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"stage\":\"alpha\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "T1 until approved.") != null);
+    }
+
+    {
+        const resp = ctx.route(allocator, "GET", "/api/charter?space=ops", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "Keep operators focused.") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"doc_path\":\"charter.md\"") != null);
+    }
+
+    const charter_path = try ctx.paths.spaceCharterDoc(allocator, "ops");
+    defer allocator.free(charter_path);
+    const charter_doc = try std_compat.fs.readFileAbsolute(allocator, charter_path, 1024 * 1024);
+    defer allocator.free(charter_doc);
+    try std.testing.expect(std.mem.indexOf(u8, charter_doc, "## Autonomy Defaults") != null);
+    try std.testing.expect(std.mem.indexOf(u8, charter_doc, "T1 until approved.") != null);
+
+    const workspace_dir = try ctx.paths.instanceWorkspaceDir(allocator, "nullclaw", "ops-agent");
+    defer allocator.free(workspace_dir);
+    const orders_path = try std.fs.path.join(allocator, &.{ workspace_dir, "ORDERS.md" });
+    defer allocator.free(orders_path);
+    const config_path = try std.fs.path.join(allocator, &.{ workspace_dir, "CONFIG.md" });
+    defer allocator.free(config_path);
+
+    const orders_bytes = try std_compat.fs.readFileAbsolute(allocator, orders_path, 32 * 1024);
+    defer allocator.free(orders_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, "## Space Charter") != null);
+    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, "Keep operators focused.") != null);
+
+    const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, 36 * 1024);
+    defer allocator.free(config_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "NULLHUB:MANAGED_POLICY_ORDERS:BEGIN") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "Ask before destructive work.") != null);
+
+    const events = ctx.state.eventsList();
+    try std.testing.expectEqual(@as(usize, 1), events.len);
+    try std.testing.expectEqualStrings("charter.updated", events[0].event_type);
 }
 
 test "route schedule order transitions bridge to nullclaw cron and emit order executed" {
