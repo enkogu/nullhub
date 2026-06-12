@@ -30,6 +30,18 @@ function createSpacesApi(spaces: Space[]): SpacesApi {
       kind: input.kind ?? 'workspace',
       stage: input.stage ?? 'active',
     })),
+    getSpaceOverview: vi.fn(async (spaceId) => ({
+      spaceId,
+      pendingCount: 0,
+      liveCount: 0,
+      spendUsd: null,
+    })),
+    listSpaceOverviews: vi.fn(async () =>
+      spaces.map((space) => ({
+        space,
+        aggregate: { spaceId: space.id, pendingCount: 0, liveCount: 0, spendUsd: null },
+      })),
+    ),
     scopedPath: vi.fn((path) => path),
   };
 }

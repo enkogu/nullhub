@@ -6,6 +6,36 @@ export const fixtureSpaces: Space[] = [
   { id: 'lab', name: 'Lab', kind: 'workspace', stage: 'paused' },
 ];
 
+const fixtureSpaceAggregates = {
+  ops: {
+    approvals: [
+      { id: 1, space_id: 'ops', status: 'pending' },
+      { id: 2, space_id: 'ops', status: 'pending' },
+    ],
+    events: [
+      { id: 10, space_id: 'ops', title: 'Ops run active' },
+      { id: 11, space_id: 'ops', title: 'Ops follow-up active' },
+      { id: 12, space_id: 'ops', title: 'Ops review active' },
+    ],
+    usage: {
+      totals: { total_cost_usd: 12.3456, total_tokens: 24000, requests: 24 },
+      by_instance: [],
+      by_model: [],
+      timeseries: [],
+    },
+  },
+  lab: {
+    approvals: [{ id: 3, space_id: 'lab', status: 'pending' }],
+    events: [{ id: 20, space_id: 'lab', title: 'Lab run active' }],
+    usage: {
+      totals: { spend_usd: 1.25, total_tokens: 5000, requests: 5 },
+      by_instance: [],
+      by_model: [],
+      timeseries: [],
+    },
+  },
+} as const;
+
 export type SpacesFixtureState = {
   spaces: Space[];
 };
@@ -51,6 +81,48 @@ export function createSpacesFixtureRoutes(state: SpacesFixtureState = createSpac
 
         state.spaces[index] = { ...state.spaces[index], ...(bodyJson as Partial<Space>) };
         return jsonFixture(state.spaces[index]);
+      },
+    },
+    {
+      method: 'GET',
+      path: (request) => request.url.pathname === '/api/approvals',
+      handler: (request) => {
+        const space = request.url.searchParams.get('space') as keyof typeof fixtureSpaceAggregates | null;
+        const aggregate = space ? fixtureSpaceAggregates[space] : undefined;
+        return jsonFixture({
+          approvals: aggregate?.approvals ?? [],
+          has_more: false,
+          next_cursor: null,
+        });
+      },
+    },
+    {
+      method: 'GET',
+      path: (request) => request.url.pathname === '/api/events',
+      handler: (request) => {
+        const space = request.url.searchParams.get('space') as keyof typeof fixtureSpaceAggregates | null;
+        const aggregate = space ? fixtureSpaceAggregates[space] : undefined;
+        return jsonFixture({
+          events: aggregate?.events ?? [],
+          has_more: false,
+          next_cursor: null,
+        });
+      },
+    },
+    {
+      method: 'GET',
+      path: (request) => request.url.pathname === '/api/usage',
+      handler: (request) => {
+        const space = request.url.searchParams.get('space') as keyof typeof fixtureSpaceAggregates | null;
+        const aggregate = space ? fixtureSpaceAggregates[space] : undefined;
+        return jsonFixture(
+          aggregate?.usage ?? {
+            totals: { total_tokens: 0, requests: 0 },
+            by_instance: [],
+            by_model: [],
+            timeseries: [],
+          },
+        );
       },
     },
   ];

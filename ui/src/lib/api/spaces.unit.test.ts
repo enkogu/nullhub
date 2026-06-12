@@ -45,4 +45,28 @@ describe('spaces API client', () => {
     );
     expect(spacesApi.scopedPath('/providers', { spaceId: null, params: { reveal: true } })).toBe('/providers?reveal=true');
   });
+
+  test('lists per-space overview aggregates through scoped typed reads', async () => {
+    fixture = installApiFixture(createSpacesFixtureRoutes());
+
+    await expect(spacesApi.listSpaceOverviews({ usageWindow: '7d' })).resolves.toEqual([
+      {
+        space: { id: 'ops', name: 'Operations', kind: 'workspace', stage: 'active' },
+        aggregate: { spaceId: 'ops', pendingCount: 2, liveCount: 3, spendUsd: 12.3456 },
+      },
+      {
+        space: { id: 'lab', name: 'Lab', kind: 'workspace', stage: 'paused' },
+        aggregate: { spaceId: 'lab', pendingCount: 1, liveCount: 1, spendUsd: 1.25 },
+      },
+    ]);
+    expect(fixture.requests.map((request) => request.path)).toEqual([
+      '/api/spaces',
+      '/api/approvals?space=ops&status=pending&limit=100',
+      '/api/events?space=ops&limit=100',
+      '/api/usage?space=ops&window=7d',
+      '/api/approvals?space=lab&status=pending&limit=100',
+      '/api/events?space=lab&limit=100',
+      '/api/usage?space=lab&window=7d',
+    ]);
+  });
 });
