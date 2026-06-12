@@ -28,7 +28,7 @@ test('market catalog renders populated package grid, filters, and package detail
   await expect(page.getByRole('heading', { name: 'Market' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Built-in Loop Templates' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'MCP Server Starters' })).toBeVisible();
-  await expect(page.getByText('Installed', { exact: true })).toBeVisible();
+  await expect(page.getByText('Installed', { exact: true }).first()).toBeVisible();
   await expect(page.getByLabel('Market recommendation stages')).toContainText('Foundation');
   await expect(page.getByLabel('Market recommendation stages')).toContainText('Capability');
 
@@ -53,12 +53,51 @@ test('market catalog renders populated package grid, filters, and package detail
   expect(runtimeErrors).toEqual([]);
 });
 
+test('market pack wizard exports a selected package and refreshes My Packages', async ({ page }, testInfo) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
+  const requests: string[] = [];
+  await installNullHubFixtureRoutes(page, { requests });
+
+  await page.goto('/market?space=ops');
+  await expect(page.getByRole('heading', { name: 'Space packages' })).toBeVisible();
+
+  await page.getByRole('tab', { name: 'Pack wizard' }).click();
+  await page.getByRole('radio', { name: /Selection/ }).click();
+  await page.getByRole('checkbox', { name: /NullClaw Agent Component/ }).check();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('textbox', { name: 'Package id' }).fill('export.ops.agent-kit');
+  await page.getByRole('textbox', { name: 'Name' }).fill('Ops Agent Kit');
+  await page.getByRole('textbox', { name: 'Summary' }).fill('Reusable package exported from the Operations Space.');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await page.getByRole('button', { name: 'Export package' }).click();
+
+  await expect(page.getByText('Export created')).toBeVisible();
+  await expect(page.getByText('export.ops.agent-kit').first()).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Download JSON' })).toHaveAttribute(
+    'href',
+    '/api/market/library/export.ops.agent-kit.json?space=ops',
+  );
+
+  await page.getByRole('tab', { name: 'My Packages' }).click();
+  await expect(page.getByRole('heading', { name: 'Ops Agent Kit' })).toBeVisible();
+  await expect(page.getByText('My package', { exact: true })).toBeVisible();
+
+  const screenshotPath = testInfo.outputPath('market-pack-wizard.png');
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  console.log(`screenshot: ${screenshotPath}`);
+
+  expect(requests).toContain('/api/market/export?space=ops');
+  expect(requests.filter((request) => request === '/api/market/installed?space=ops').length).toBeGreaterThanOrEqual(2);
+  expect(failedResponses).toEqual([]);
+  expect(runtimeErrors).toEqual([]);
+});
+
 test('market catalog renders loading state while package reads are pending', async ({ page }) => {
   await installNullHubFixtureRoutes(page, { marketCatalogDelayMs: 1200 });
 
   await page.goto('/market?space=ops');
 
-  await expect(page.getByRole('status')).toContainText('Loading Market');
+  await expect(page.getByRole('status').filter({ hasText: 'Loading Market' })).toContainText('Loading Market');
 });
 
 test('market catalog renders empty state from an empty built-in catalog', async ({ page }) => {

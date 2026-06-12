@@ -17,6 +17,7 @@ type NullHubFixtureOptions = {
   marketCatalogDelayMs?: number;
   marketInstalled?: JsonBody;
   marketInstalledStatus?: number;
+  marketExportStatus?: number;
   loopCatalog?: JsonBody;
   loopCatalogStatus?: number;
   nullticketsPipelines?: Record<string, unknown>[];
@@ -980,7 +981,25 @@ async function marketCatalogRoute(route: Route, options: NullHubFixtureOptions) 
   await fulfillJson(route, options.marketCatalog || fixtureMarketCatalog);
 }
 
-async function marketInstalledRoute(route: Route, options: NullHubFixtureOptions) {
+function packageListFromFixture(body: JsonBody | undefined, fallback: JsonBody): Record<string, unknown>[] {
+  const source = (body || fallback) as Record<string, unknown>;
+  const packages = Array.isArray(source) ? source : source.packages;
+  return Array.isArray(packages) ? packages.map((pkg) => ({ ...(pkg as Record<string, unknown>) })) : [];
+}
+
+function exportedScaleForScope(scope: string): string {
+  if (scope === 'selection') return 'kit';
+  if (scope === 'single') return 'component';
+  return 'blueprint';
+}
+
+function exportedNameForScope(scope: string): string {
+  if (scope === 'selection') return 'Exported Selection Kit';
+  if (scope === 'single') return 'Exported Component';
+  return 'Exported Space Blueprint';
+}
+
+async function marketInstalledRoute(route: Route, options: NullHubFixtureOptions, marketLibrary: Record<string, unknown>[]) {
   recordRequest(route, options);
   if (options.marketInstalledStatus && options.marketInstalledStatus >= 400) {
     await fulfillJson(route, { error: 'Installed package library unavailable.' }, options.marketInstalledStatus);
@@ -991,7 +1010,66 @@ async function marketInstalledRoute(route: Route, options: NullHubFixtureOptions
     await fulfillJson(route, { error: 'space query is required' }, 400);
     return;
   }
-  await fulfillJson(route, options.marketInstalled || fixtureMarketInstalled);
+  await fulfillJson(route, { packages: marketLibrary });
+}
+
+async function marketExportRoute(route: Route, options: NullHubFixtureOptions, marketLibrary: Record<string, unknown>[]) {
+  recordRequest(route, options);
+  if (options.marketExportStatus && options.marketExportStatus >= 400) {
+    await fulfillJson(route, { error: 'Package export failed.' }, options.marketExportStatus);
+    return;
+  }
+  const url = new URL(route.request().url());
+  const space = url.searchParams.get('space');
+  if (!space) {
+    await fulfillJson(route, { error: 'space query is required' }, 400);
+    return;
+  }
+  if (route.request().method() !== 'POST') {
+    await fulfillJson(route, { error: 'method not allowed' }, 405);
+    return;
+  }
+
+  const payload = route.request().postDataJSON() as Record<string, unknown> | null;
+  const scope = String(payload?.scope || 'space');
+  const scale = String(payload?.scale || exportedScaleForScope(scope));
+  const packageId = String(payload?.id || payload?.package_id || `export.${space}.${scale}.fixture`);
+  const name = String(payload?.name || exportedNameForScope(scope));
+  const summary = String(payload?.summary || 'Fixture package exported from the selected Space.');
+  const version = String(payload?.version || '1.0.0');
+  const selection = (payload?.selection || {}) as Record<string, unknown>;
+  const selectedPackages = Array.isArray(selection.packages) ? selection.packages.map((item) => String(item)) : [];
+  const single = (payload?.single || {}) as Record<string, unknown>;
+  const singlePackage = String(single.id || '');
+  const extendsPackages = scope === 'selection' ? selectedPackages : scope === 'single' && singlePackage ? [singlePackage] : [];
+  const exportedPackage = {
+    id: packageId,
+    name,
+    version,
+    scale,
+    summary,
+    requires: [],
+    contributes: [{ kind: 'package', name }],
+    config: { export: { source_space: space, scope } },
+    seeds: scope === 'space' ? [{ kind: 'space', id: space, name: space }] : [],
+    extends: extendsPackages,
+    charter: {
+      mission: `Exported package from ${space}.`,
+      autonomy_bounds: ['Export contains tenant data seeds and secret refs only'],
+      metrics: ['package_exports'],
+    },
+  };
+  const existingIndex = marketLibrary.findIndex((pkg) => String(pkg.id) === packageId);
+  if (existingIndex >= 0) marketLibrary[existingIndex] = exportedPackage;
+  else marketLibrary.push(exportedPackage);
+
+  await fulfillJson(route, {
+    status: 'exported',
+    package_id: packageId,
+    file: `/tmp/nullhub/spaces/${space}/packages/${packageId}.json`,
+    download_url: `/api/market/library/${packageId}.json?space=${space}`,
+    package: exportedPackage,
+  }, 201);
 }
 
 function matchesFixtureSpace(record: Record<string, unknown>, space: string | null): boolean {
@@ -1322,6 +1400,7 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   const tasks = options.nullticketsTasks || [];
   const artifacts = (options.nullticketsArtifacts || []).map((artifact) => ({ ...artifact }));
   const runEvents = (options.nullticketsRunEvents || []).map((event) => ({ ...event }));
+  const marketLibrary = packageListFromFixture(options.marketInstalled, fixtureMarketInstalled);
 
   await page.route('**/site.webmanifest', (route) =>
     fulfillJson(route, { name: 'NullHub', short_name: 'NullHub', start_url: '/', display: 'standalone' }),
@@ -1341,8 +1420,10 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/components', (route) => fulfillJson(route, fixtureComponents));
   await page.route('**/api/market/catalog**', (route) => marketCatalogRoute(route, options));
   await page.route('**/nullhub-api/market/catalog**', (route) => marketCatalogRoute(route, options));
-  await page.route('**/api/market/installed**', (route) => marketInstalledRoute(route, options));
-  await page.route('**/nullhub-api/market/installed**', (route) => marketInstalledRoute(route, options));
+  await page.route('**/api/market/installed**', (route) => marketInstalledRoute(route, options, marketLibrary));
+  await page.route('**/nullhub-api/market/installed**', (route) => marketInstalledRoute(route, options, marketLibrary));
+  await page.route('**/api/market/export**', (route) => marketExportRoute(route, options, marketLibrary));
+  await page.route('**/nullhub-api/market/export**', (route) => marketExportRoute(route, options, marketLibrary));
   await page.route('**/api/settings', (route) => fulfillJson(route, fixtureSettings));
   await page.route('**/nullhub-api/settings', (route) => fulfillJson(route, fixtureSettings));
   await page.route('**/api/service/status', (route) => fulfillJson(route, fixtureServiceStatus));

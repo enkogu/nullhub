@@ -162,6 +162,12 @@ export type {
 export type {
   PackageCharter,
   PackageContribution,
+  PackageExportRequest,
+  PackageExportResult,
+  PackageExportScale,
+  PackageExportScope,
+  PackageExportSelection,
+  PackageExportSingle,
   PackageItemType,
   PackageListPage,
   PackageListParams,

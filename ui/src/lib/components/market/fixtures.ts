@@ -88,3 +88,12 @@ export const rawMarketPackages = [
 ];
 
 export const marketPackages: PackageManifest[] = rawMarketPackages.map(normalizePackageManifest);
+
+export const exportedMarketPackage: PackageManifest = normalizePackageManifest({
+  ...rawMarketPackages[1],
+  id: 'export.ops.loop-kit',
+  name: 'Ops Loop Kit',
+  summary: 'Exported package generated from the Operations Space library.',
+  config: { export: { source_space: 'ops', scope: 'selection' } },
+  extends: ['builtin.loop-templates'],
+});

@@ -69,6 +69,44 @@ export type PackageListParams = {
   spaceId?: SpaceSelection;
 };
 
+export type PackageExportScope = 'space' | 'selection' | 'single';
+export type PackageExportScale = 'blueprint' | 'kit' | 'component';
+
+export type PackageExportSelection = {
+  packages?: string[];
+  orders?: string[];
+  instances?: Array<string | { component?: string; name?: string; id?: string }>;
+  providers?: Array<string | number>;
+  channels?: Array<string | number>;
+};
+
+export type PackageExportSingle = {
+  kind: 'package' | 'order' | 'instance' | 'provider' | 'channel';
+  id: string;
+  component?: string;
+};
+
+export type PackageExportRequest = {
+  id?: string;
+  packageId?: string;
+  name?: string;
+  version?: string;
+  summary?: string;
+  scope: PackageExportScope;
+  scale?: PackageExportScale;
+  selection?: PackageExportSelection;
+  single?: PackageExportSingle;
+};
+
+export type PackageExportResult = {
+  status: string;
+  packageId: string;
+  file: string;
+  downloadUrl: string;
+  package: PackageManifest;
+  raw: Record<string, unknown>;
+};
+
 function requireSpaceId(spaceId: SpaceSelection | undefined): string {
   const resolved = spaceId === undefined ? selectedSpaceFromEnvironment() : spaceId;
   if (!resolved) throw new Error('Packages API requires a selected Space.');
@@ -245,8 +283,47 @@ function normalizePackageList(raw: unknown): PackageListPage {
   return { packages: list.map(normalizePackageManifest) };
 }
 
+function normalizePackageExportResult(raw: unknown): PackageExportResult {
+  const item = recordValue(raw);
+  return {
+    status: stringValue(item.status),
+    packageId: stringValue(item.package_id || item.packageId),
+    file: stringValue(item.file),
+    downloadUrl: stringValue(item.download_url || item.downloadUrl),
+    package: normalizePackageManifest(item.package),
+    raw: item,
+  };
+}
+
+function exportScaleForScope(scope: PackageExportScope): PackageExportScale {
+  if (scope === 'space') return 'blueprint';
+  if (scope === 'selection') return 'kit';
+  return 'component';
+}
+
+function serializeExportRequest(input: PackageExportRequest): Record<string, unknown> {
+  const payload: Record<string, unknown> = {
+    scope: input.scope,
+    scale: input.scale || exportScaleForScope(input.scope),
+  };
+  const id = input.id || input.packageId;
+  if (id) payload.id = id;
+  if (input.name) payload.name = input.name;
+  if (input.version) payload.version = input.version;
+  if (input.summary) payload.summary = input.summary;
+  if (input.selection) payload.selection = input.selection;
+  if (input.single) payload.single = input.single;
+  return payload;
+}
+
 export function packageDetailHref(packageId: string): string {
   return `/market/${encodePathSegment(packageId)}`;
+}
+
+export function packageLibraryDownloadHref(packageId: string, spaceId?: SpaceSelection): string {
+  const resolvedSpaceId = spaceId === undefined ? selectedSpaceFromEnvironment() : spaceId;
+  if (!resolvedSpaceId) return '';
+  return `/api/market/library/${encodePathSegment(packageId)}.json?space=${encodeURIComponent(resolvedSpaceId)}`;
 }
 
 export function createPackagesApi(request: RequestFn, withQuery: WithQueryFn) {
@@ -255,6 +332,11 @@ export function createPackagesApi(request: RequestFn, withQuery: WithQueryFn) {
       normalizePackageList(await request<unknown>('/market/catalog')),
     listInstalledPackages: async (params: PackageListParams = {}): Promise<PackageListPage> =>
       normalizePackageList(await request<unknown>(withQuery('/market/installed', { space: requireSpaceId(params.spaceId) }))),
+    exportPackage: async (input: PackageExportRequest, params: PackageListParams = {}): Promise<PackageExportResult> =>
+      normalizePackageExportResult(await request<unknown>(withQuery('/market/export', { space: requireSpaceId(params.spaceId) }), {
+        method: 'POST',
+        body: JSON.stringify(serializeExportRequest(input)),
+      })),
   };
 }
 
