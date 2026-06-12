@@ -613,7 +613,7 @@ test "orders API enact and suspend update managed ORDERS.md" {
     }
 
     {
-        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/policy-1/enact?space=ops", "policy-1", .activate, 1100);
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/policy-1/enact?space=ops", "policy-1", .activate, 1100, null);
         defer allocator.free(resp.body);
         try std.testing.expectEqualStrings("200 OK", resp.status);
     }
@@ -638,7 +638,7 @@ test "orders API enact and suspend update managed ORDERS.md" {
     }
 
     {
-        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/policy-1/suspend?space=ops", "policy-1", .pause, 1200);
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/policy-1/suspend?space=ops", "policy-1", .pause, 1200, null);
         defer allocator.free(resp.body);
         try std.testing.expectEqualStrings("200 OK", resp.status);
     }
@@ -691,7 +691,7 @@ test "orders API emits warning event for unsupported policy bootstrap backend" {
     }
 
     {
-        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/policy-unsupported/enact?space=ops", "policy-unsupported", .activate, 1100);
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/policy-unsupported/enact?space=ops", "policy-unsupported", .activate, 1100, null);
         defer allocator.free(resp.body);
         try std.testing.expectEqualStrings("200 OK", resp.status);
     }
