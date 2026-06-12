@@ -1,0 +1,82 @@
+{
+  "id": "builtin.order-templates",
+  "name": "Order Template Starters",
+  "version": "1.0.0",
+  "scale": "kit",
+  "summary": "Built-in schedule, policy, Loop, and Workflow order templates for durable workspace mandates.",
+  "requires": [
+    {
+      "kind": "package",
+      "id": "builtin.loop-templates"
+    },
+    {
+      "kind": "package",
+      "id": "builtin.workflow-starters"
+    }
+  ],
+  "contributes": [
+    {
+      "kind": "order_template",
+      "name": "Daily Operating Brief"
+    },
+    {
+      "kind": "order_template",
+      "name": "Weekly Policy Review"
+    },
+    {
+      "kind": "order_template",
+      "name": "Deploy Verification Mandate"
+    }
+  ],
+  "config": {
+    "taxonomy": "order_templates",
+    "install_target": "orders.template_library"
+  },
+  "seeds": [
+    {
+      "kind": "order_template",
+      "slug": "daily-operating-brief",
+      "title": "Daily Operating Brief",
+      "order_kind": "schedule",
+      "status": "draft",
+      "schedule": "0 9 * * 1-5",
+      "summary": "Prepare a short daily operating brief with blockers, active work, and required approvals.",
+      "content": "---\ntype: schedule\nowner: operations\ncadence: weekday-morning\n---\n# Daily Operating Brief\n\n## Goal\nProduce a concise daily brief for the selected Space.\n\n## Include\n- Active Orders and Work runs\n- Blockers requiring human input\n- Evidence links for completed work\n- Next actions with owners\n\n## Exit\nThe brief is ready for human review."
+    },
+    {
+      "kind": "order_template",
+      "slug": "weekly-policy-review",
+      "title": "Weekly Policy Review",
+      "order_kind": "policy",
+      "status": "draft",
+      "schedule": "0 10 * * 1",
+      "summary": "Review active policies, suspended orders, and stale automation assumptions once per week.",
+      "content": "---\ntype: policy\nowner: operations\ncadence: weekly\n---\n# Weekly Policy Review\n\n## Goal\nKeep active Space policies accurate and auditable.\n\n## Review\n- Active and suspended Orders\n- Required secrets and provider refs\n- Loops that failed to exit cleanly\n- Workflow templates that need updated evidence gates\n\n## Exit\nPolicy changes are drafted or explicitly deferred with owner and date."
+    },
+    {
+      "kind": "order_template",
+      "slug": "deploy-verification-mandate",
+      "title": "Deploy Verification Mandate",
+      "order_kind": "loop",
+      "status": "draft",
+      "schedule": "manual",
+      "summary": "Run deploy verification until smoke checks pass and release evidence is attached.",
+      "content": "---\ntype: loop\nloop_template: deploy-verification\nowner: delivery\n---\n# Deploy Verification Mandate\n\n## Goal\nUse the Deploy Verification Loop for every release that changes runtime behavior.\n\n## Required Evidence\n- Build or release identifier\n- Smoke command output\n- Route or API proof\n- Rollback decision if checks fail\n\n## Exit\nAll smoke checks pass or rollback is completed and documented."
+    }
+  ],
+  "extends": [
+    "builtin.loop-templates",
+    "builtin.workflow-starters"
+  ],
+  "charter": {
+    "mission": "Seed durable Order documents that make recurring work visible and reviewable.",
+    "autonomy_bounds": [
+      "Templates are drafts until explicitly enacted",
+      "External sends and production deploys require review"
+    ],
+    "metrics": [
+      "order_templates_installed",
+      "orders_enacted_from_templates"
+    ]
+  }
+}

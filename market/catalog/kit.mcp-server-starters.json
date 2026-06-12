@@ -1,0 +1,99 @@
+{
+  "id": "builtin.mcp-server-starters",
+  "name": "MCP Server Starters",
+  "version": "1.0.0",
+  "scale": "kit",
+  "summary": "Starter MCP server definitions for docs lookup, file-scoped work, and optional web search.",
+  "requires": [
+    {
+      "kind": "package",
+      "id": "builtin.nullclaw-agent"
+    },
+    {
+      "kind": "secret_ref",
+      "name": "optional_search_api_key",
+      "secret_ref": "providers.search.api_key"
+    }
+  ],
+  "contributes": [
+    {
+      "kind": "mcp_server",
+      "name": "context7-docs"
+    },
+    {
+      "kind": "mcp_server",
+      "name": "workspace-files"
+    },
+    {
+      "kind": "mcp_server",
+      "name": "search"
+    }
+  ],
+  "config": {
+    "taxonomy": "mcp_servers",
+    "install_target": "nullclaw.config.mcp_servers",
+    "secrets": [
+      {
+        "name": "optional_search_api_key",
+        "secret_ref": "providers.search.api_key"
+      }
+    ]
+  },
+  "seeds": [
+    {
+      "kind": "mcp_server",
+      "name": "context7-docs",
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "env": {},
+      "description": "Library documentation lookup for implementation tasks."
+    },
+    {
+      "kind": "mcp_server",
+      "name": "workspace-files",
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "{{workspace.root}}"
+      ],
+      "env": {},
+      "description": "Scoped filesystem access for the selected workspace root."
+    },
+    {
+      "kind": "mcp_server",
+      "name": "search",
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-brave-search"
+      ],
+      "env": {
+        "BRAVE_API_KEY": {
+          "secret_ref": "providers.search.api_key"
+        }
+      },
+      "description": "Optional web search MCP server using a configured provider secret ref."
+    }
+  ],
+  "extends": [
+    "builtin.nullclaw-agent"
+  ],
+  "charter": {
+    "mission": "Expose common local tools to agents through auditable MCP server definitions.",
+    "autonomy_bounds": [
+      "MCP server env values use secret refs only",
+      "Filesystem server is scoped to the selected workspace root"
+    ],
+    "metrics": [
+      "mcp_servers_configured",
+      "mcp_tool_calls_succeeded"
+    ]
+  }
+}

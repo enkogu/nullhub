@@ -1,0 +1,133 @@
+{
+  "id": "builtin.workflow-starters",
+  "name": "Built-in Workflow Starters",
+  "version": "1.0.0",
+  "scale": "kit",
+  "summary": "Local NullBoiler workflow templates for multi-step handoffs and evidence collection.",
+  "requires": [
+    {
+      "kind": "component",
+      "name": "nullboiler"
+    },
+    {
+      "kind": "package",
+      "id": "builtin.nullclaw-agent"
+    }
+  ],
+  "contributes": [
+    {
+      "kind": "workflow_template",
+      "name": "Evidence-Gated Delivery"
+    },
+    {
+      "kind": "workflow_template",
+      "name": "Research to Order Draft"
+    }
+  ],
+  "config": {
+    "taxonomy": "workflows",
+    "install_target": "nullboiler.workflow_library",
+    "workflow_engine": "nullboiler"
+  },
+  "seeds": [
+    {
+      "kind": "workflow_template",
+      "slug": "evidence-gated-delivery",
+      "name": "Evidence-Gated Delivery",
+      "description": "Plan, execute, verify, and summarize a deliverable with an explicit evidence gate.",
+      "payload": {
+        "id": "evidence-gated-delivery",
+        "name": "Evidence-Gated Delivery",
+        "state_schema": {
+          "goal": "string",
+          "evidence": "array"
+        },
+        "nodes": {
+          "plan": {
+            "role": "planner",
+            "prompt_template": "Create a short execution plan for {{goal}}."
+          },
+          "execute": {
+            "role": "operator",
+            "prompt_template": "Execute the plan and collect evidence."
+          },
+          "verify": {
+            "role": "reviewer",
+            "prompt_template": "Verify the evidence and identify blockers."
+          },
+          "summarize": {
+            "role": "reporter",
+            "prompt_template": "Summarize outcome, tests, artifacts, and residual risk."
+          }
+        },
+        "edges": [
+          {
+            "from": "plan",
+            "to": "execute"
+          },
+          {
+            "from": "execute",
+            "to": "verify"
+          },
+          {
+            "from": "verify",
+            "to": "summarize"
+          }
+        ]
+      }
+    },
+    {
+      "kind": "workflow_template",
+      "slug": "research-to-order-draft",
+      "name": "Research to Order Draft",
+      "description": "Convert source research into a durable Order draft with citations and follow-up checks.",
+      "payload": {
+        "id": "research-to-order-draft",
+        "name": "Research to Order Draft",
+        "state_schema": {
+          "question": "string",
+          "sources": "array",
+          "order_draft": "object"
+        },
+        "nodes": {
+          "research": {
+            "role": "researcher",
+            "prompt_template": "Collect source-grounded findings for {{question}}."
+          },
+          "draft_order": {
+            "role": "operator",
+            "prompt_template": "Convert the findings into a policy or schedule Order draft."
+          },
+          "review": {
+            "role": "reviewer",
+            "prompt_template": "Check the draft for unsupported claims, missing owner, and missing cadence."
+          }
+        },
+        "edges": [
+          {
+            "from": "research",
+            "to": "draft_order"
+          },
+          {
+            "from": "draft_order",
+            "to": "review"
+          }
+        ]
+      }
+    }
+  ],
+  "extends": [
+    "builtin.nullclaw-agent"
+  ],
+  "charter": {
+    "mission": "Seed workflow templates that coordinate agents through explicit review and evidence steps.",
+    "autonomy_bounds": [
+      "Workflow templates do not include provider credentials",
+      "Human review remains the default before external publication"
+    ],
+    "metrics": [
+      "workflow_templates_installed",
+      "workflow_runs_completed"
+    ]
+  }
+}
