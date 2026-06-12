@@ -95,6 +95,7 @@ test('confirms suspend action before invoking the callback', async () => {
     },
   });
 
+  await expect.element(screen.getByRole('button', { name: 'Edit' })).toBeDisabled();
   await screen.getByRole('button', { name: 'Suspend' }).click();
   await expect.element(screen.getByRole('dialog', { name: 'Suspend order' })).toBeVisible();
   expect(onSuspend).not.toHaveBeenCalled();
