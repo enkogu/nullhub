@@ -80,6 +80,7 @@ pub fn main(init: std.process.Init) !void {
             sup_thread.detach();
 
             srv.reconcileInstancesOnBoot();
+            try srv.startDispatcher();
 
             if (!opts.no_open) {
                 const browser_thread = try std.Thread.spawn(.{}, delayedOpenBrowser, .{
