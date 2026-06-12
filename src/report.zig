@@ -251,6 +251,11 @@ fn loadIssueTemplate(
     return buildFallbackTemplate(&arena, report_type);
 }
 
+/// Test-only override: when set, local template paths (../<repo>/...) resolve
+/// relative to this directory instead of the process cwd, so tests can supply
+/// fixture checkouts instead of depending on sibling repos being checked out.
+var test_template_root: ?std_compat.fs.Dir = null;
+
 fn loadTemplateFromLocal(
     allocator: std.mem.Allocator,
     repo: cli.ReportRepo,
@@ -259,7 +264,11 @@ fn loadTemplateFromLocal(
     const local_path = report_schema.localTemplatePathAlloc(allocator, repo, report_type) catch return null;
     defer allocator.free(local_path);
 
-    return std_compat.fs.cwd().readFileAlloc(allocator, local_path, 256 * 1024) catch null;
+    const dir = if (builtin.is_test)
+        test_template_root orelse std_compat.fs.cwd()
+    else
+        std_compat.fs.cwd();
+    return dir.readFileAlloc(allocator, local_path, 256 * 1024) catch null;
 }
 
 fn loadTemplateFromRemote(
@@ -1142,8 +1151,108 @@ test "buildTitle feature" {
     try std.testing.expectEqualStrings("[Feature]: Add dark mode", title);
 }
 
+// Fixture issue templates mirroring the upstream repos' .github/ISSUE_TEMPLATE
+// files, so the "uses local template" tests don't depend on sibling checkouts
+// (../nullclaw, ../NullBoiler) existing next to this repo.
+const bug_template_fixture =
+    \\name: Bug Report
+    \\description: Report a bug in nullclaw
+    \\labels: [bug]
+    \\body:
+    \\  - type: textarea
+    \\    id: description
+    \\    attributes:
+    \\      label: Description
+    \\      description: What happened?
+    \\    validations:
+    \\      required: true
+    \\
+    \\  - type: textarea
+    \\    id: expected
+    \\    attributes:
+    \\      label: Expected behavior
+    \\      description: What did you expect to happen?
+    \\
+    \\  - type: textarea
+    \\    id: reproduce
+    \\    attributes:
+    \\      label: Steps to reproduce
+    \\      description: How can we reproduce this?
+    \\
+    \\  - type: input
+    \\    id: version
+    \\    attributes:
+    \\      label: Version
+    \\      description: "nullclaw version or commit hash"
+    \\      placeholder: "v2026.2.19"
+    \\
+    \\  - type: dropdown
+    \\    id: os
+    \\    attributes:
+    \\      label: OS
+    \\      options:
+    \\        - Linux
+    \\        - macOS
+    \\        - Docker
+    \\        - Other
+    \\
+;
+
+const feature_template_fixture =
+    \\name: Feature Request
+    \\description: Suggest a new feature
+    \\labels: [enhancement]
+    \\body:
+    \\  - type: textarea
+    \\    id: description
+    \\    attributes:
+    \\      label: Description
+    \\      description: What would you like to see added?
+    \\    validations:
+    \\      required: true
+    \\
+    \\  - type: textarea
+    \\    id: motivation
+    \\    attributes:
+    \\      label: Motivation
+    \\      description: Why is this feature useful?
+    \\
+;
+
+/// Creates `<tmp>/<checkout_dir>/.github/ISSUE_TEMPLATE/<file_name>` and
+/// returns `<tmp>/cwd`, the directory from which `../<checkout_dir>/...`
+/// resolves to the fixture. Caller must close the returned dir.
+fn makeTemplateFixture(
+    tmp: *std.testing.TmpDir,
+    checkout_dir: []const u8,
+    file_name: []const u8,
+    data: []const u8,
+) !std_compat.fs.Dir {
+    const allocator = std.testing.allocator;
+    const tmp_root = std_compat.fs.Dir.wrap(tmp.dir);
+
+    const template_dir = try std.fs.path.join(allocator, &.{ checkout_dir, ".github", "ISSUE_TEMPLATE" });
+    defer allocator.free(template_dir);
+    try tmp_root.makePath(template_dir);
+
+    const template_path = try std.fs.path.join(allocator, &.{ template_dir, file_name });
+    defer allocator.free(template_path);
+    try tmp_root.writeFile(.{ .sub_path = template_path, .data = data });
+
+    try tmp_root.makePath("cwd");
+    return tmp_root.openDir("cwd", .{});
+}
+
 test "buildBody uses local bug template when available" {
     const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const fixture_cwd = try makeTemplateFixture(&tmp, "nullclaw", "bug_report.yml", bug_template_fixture);
+    defer fixture_cwd.close();
+    test_template_root = fixture_cwd;
+    defer test_template_root = null;
+
     const info = SystemInfo{
         .version = "2026.3.13",
         .platform_key = "aarch64-macos",
@@ -1231,6 +1340,14 @@ test "buildBody falls back when repo template is unavailable" {
 
 test "buildBody uses local feature template when available" {
     const allocator = std.testing.allocator;
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const fixture_cwd = try makeTemplateFixture(&tmp, "NullBoiler", "feature_request.yml", feature_template_fixture);
+    defer fixture_cwd.close();
+    test_template_root = fixture_cwd;
+    defer test_template_root = null;
+
     const info = SystemInfo{
         .version = "2026.3.13",
         .platform_key = "aarch64-macos",
