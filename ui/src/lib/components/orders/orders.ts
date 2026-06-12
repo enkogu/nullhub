@@ -384,7 +384,53 @@ export function normalizeOrderEditorDraft(input: Partial<OrderEditorDraft> = {})
 export function isValidCronExpression(expression: string): boolean {
   const fields = clean(expression).split(/\s+/).filter(Boolean);
   if (fields.length !== 5) return false;
-  return fields.every((field) => /^[\d*/,\-]+$/.test(field));
+  return fields.every((field, index) => isValidCronField(field, cronFieldBounds[index]));
+}
+
+type CronFieldBounds = { min: number; max: number };
+
+const cronFieldBounds: CronFieldBounds[] = [
+  { min: 0, max: 59 },
+  { min: 0, max: 23 },
+  { min: 1, max: 31 },
+  { min: 1, max: 12 },
+  { min: 0, max: 7 },
+];
+
+function isValidCronField(field: string, bounds: CronFieldBounds): boolean {
+  return field.split(',').every((part) => part.length > 0 && isValidCronFieldPart(part, bounds));
+}
+
+function isValidCronFieldPart(part: string, bounds: CronFieldBounds): boolean {
+  const stepParts = part.split('/');
+  if (stepParts.length > 2) return false;
+
+  const span = stepParts[0];
+  const step = stepParts[1];
+  if (step !== undefined && !isCronNumberInRange(step, { min: 1, max: bounds.max - bounds.min + 1 })) {
+    return false;
+  }
+
+  if (span === '*') return true;
+
+  const rangeParts = span.split('-');
+  if (rangeParts.length === 1) return isCronNumberInRange(rangeParts[0], bounds);
+  if (rangeParts.length !== 2) return false;
+
+  const start = parseCronNumber(rangeParts[0]);
+  const end = parseCronNumber(rangeParts[1]);
+  return start !== null && end !== null && start <= end && isCronNumberInRange(start, bounds) && isCronNumberInRange(end, bounds);
+}
+
+function parseCronNumber(value: string): number | null {
+  if (!/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) ? parsed : null;
+}
+
+function isCronNumberInRange(value: string | number, bounds: CronFieldBounds): boolean {
+  const parsed = typeof value === 'number' ? value : parseCronNumber(value);
+  return parsed !== null && parsed >= bounds.min && parsed <= bounds.max;
 }
 
 function twoDigit(value: number): string {

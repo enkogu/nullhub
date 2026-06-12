@@ -56,6 +56,36 @@ test('validates schedule drafts and saves a valid cron document', async () => {
   await expect.element(screen.getByText('Draft passed validation.')).toBeVisible();
 });
 
+test('rejects impossible raw cron values before saving schedule drafts', async () => {
+  const onSaveDraft = vi.fn();
+  const screen = await render(OrderEditor, {
+    props: {
+      draft: {
+        type: 'schedule',
+        title: 'Bad cron',
+        schedule: '99 99 * * *',
+        body: orderBodySkeleton(),
+      },
+      onSaveDraft,
+    },
+  });
+
+  await expect.element(screen.getByText('Preview:', { exact: false })).toBeVisible();
+  await expect.element(screen.getByText('Enter a five-field cron expression.')).toBeVisible();
+  await screen.getByRole('button', { name: 'Save draft' }).click();
+  await expect.element(screen.getByText('Enter a valid five-field cron expression.')).toBeVisible();
+  expect(onSaveDraft).not.toHaveBeenCalled();
+
+  setInput(screen.container.querySelector<HTMLInputElement>('#order-editor-cron')!, '59 23 31 12 7');
+  await screen.getByRole('button', { name: 'Save draft' }).click();
+  await vi.waitFor(() => expect(onSaveDraft).toHaveBeenCalledTimes(1));
+  expect(onSaveDraft.mock.calls[0][0]).toMatchObject({
+    type: 'schedule',
+    title: 'Bad cron',
+    schedule: '59 23 31 12 7',
+  });
+});
+
 test('validates policy agent scope separately from schedule cron', async () => {
   const onSaveDraft = vi.fn();
   const screen = await render(OrderEditor, {
