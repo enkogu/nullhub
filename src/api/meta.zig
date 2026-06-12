@@ -338,6 +338,7 @@ const module_name_params = [_]ParamSpec{module_name_param};
 const component_name_params = [_]ParamSpec{component_name_param};
 const wizard_component_params = [_]ParamSpec{wizard_component_param};
 const usage_query_params = [_]ParamSpec{window_query};
+const usage_space_query_params = [_]ParamSpec{ window_query, space_query };
 const reveal_query_params = [_]ParamSpec{reveal_query};
 const space_query_params = [_]ParamSpec{space_query};
 const event_query_params = [_]ParamSpec{ required_event_space_query, event_type_query, event_source_query, event_subject_type_query, event_subject_id_query, event_severity_query, event_limit_query, event_cursor_query };
@@ -542,10 +543,10 @@ const routes = [_]RouteSpec{
         .method = "GET",
         .path_template = "/api/usage",
         .category = "usage",
-        .summary = "Aggregate usage across the whole hub.",
+        .summary = "Aggregate usage across the whole hub or one selected Space.",
         .auth_mode = "optional_bearer",
-        .query_params = usage_query_params[0..],
-        .response = "Cross-instance usage summary.",
+        .query_params = usage_space_query_params[0..],
+        .response = "Cross-instance usage summary, optionally filtered by the space query parameter.",
     },
     .{
         .id = "settings.get",
