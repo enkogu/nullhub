@@ -237,6 +237,7 @@
 			const authenticatedUser = sessionUserFromBootstrap(session, localUser);
 			if (authenticatedUser) user = authenticatedUser;
 		} catch {
+			user = fallbackSessionUser();
 			// Local standalone shells may not have the PocketBase control plane.
 		}
 	}

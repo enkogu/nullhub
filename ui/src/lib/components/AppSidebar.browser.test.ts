@@ -193,6 +193,27 @@ test("falls back to neutral workspace identity when no authenticated user is ava
 	expect(screen.container.textContent).not.toContain("Local session");
 });
 
+test("clears stale local identity when session bootstrap rejects it", async () => {
+	storePocketBaseAuth({
+		token: "expired-token",
+		record: {
+			name: "Stale Operator",
+			email: "stale@example.com",
+			avatar_url: transparentAvatar,
+		},
+	});
+	installSessionFixture({ message: "Authentication is required" }, 401);
+
+	const screen = await render(AppSidebarFixture);
+
+	await expect.element(screen.getByText("Workspace user")).toBeVisible();
+	await expect.element(screen.getByText("Workspace access")).toBeVisible();
+	expect(screen.container.textContent).not.toContain("Stale Operator");
+	expect(screen.container.textContent).not.toContain("stale@example.com");
+	expect(screen.container.querySelector("[data-app-sidebar-avatar]")).toBeNull();
+	expect(fixture?.requests.at(-1)?.headers.get("authorization")).toBe("Bearer expired-token");
+});
+
 test("uses stored OAuth avatar with the authenticated server identity and keeps the sign-out route a full reload", async () => {
 	storePocketBaseAuth({
 		token: "stored-token",
