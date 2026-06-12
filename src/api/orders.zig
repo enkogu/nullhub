@@ -136,12 +136,14 @@ pub fn handleCreate(allocator: std.mem.Allocator, paths: paths_mod.Paths, state:
         .title = title,
         .summary = stringField(root, "summary") orelse "",
         .kind = stringField(root, "kind") orelse "mandate",
+        .goal = goalField(root) orelse "",
         .schedule = stringField(root, "schedule") orelse "",
         .content = stringField(root, "content") orelse stringField(root, "body") orelse "",
         .created_at_ms = intField(root, "created_at_ms") orelse now_ms,
         .updated_at_ms = intField(root, "updated_at_ms") orelse now_ms,
     }) catch |err| switch (err) {
         error.InvalidOrderId => return helpers.badRequest("{\"error\":\"invalid order id\"}"),
+        error.MissingMandateGoal => return helpers.badRequest("{\"error\":\"mandate goal is required\"}"),
         error.DuplicateOrder => return .{ .status = "409 Conflict", .content_type = "application/json", .body = "{\"error\":\"order already exists\"}" },
         else => return helpers.serverError(),
     };
@@ -173,12 +175,14 @@ pub fn handleUpdate(allocator: std.mem.Allocator, paths: paths_mod.Paths, state:
         .title = stringField(root, "title"),
         .summary = stringField(root, "summary"),
         .kind = stringField(root, "kind"),
+        .goal = goalField(root),
         .schedule = stringField(root, "schedule"),
         .content = stringField(root, "content") orelse stringField(root, "body"),
         .status = status,
         .updated_at_ms = intField(root, "updated_at_ms") orelse now_ms,
     }) catch |err| switch (err) {
         error.InvalidOrderId => return helpers.badRequest("{\"error\":\"invalid order id\"}"),
+        error.MissingMandateGoal => return helpers.badRequest("{\"error\":\"mandate goal is required\"}"),
         error.OrderNotFound => return helpers.notFound(),
         else => return helpers.serverError(),
     };
@@ -220,6 +224,7 @@ pub fn handleTransition(
 
     const order = orders.transition(allocator, paths, space_id, order_id, transition, now_ms) catch |err| switch (err) {
         error.InvalidOrderId => return helpers.badRequest("{\"error\":\"invalid order id\"}"),
+        error.MissingMandateGoal => return helpers.badRequest("{\"error\":\"mandate goal is required\"}"),
         error.OrderNotFound => return helpers.notFound(),
         else => return helpers.serverError(),
     };
@@ -392,6 +397,10 @@ fn stringField(root: std.json.ObjectMap, key: []const u8) ?[]const u8 {
     };
 }
 
+fn goalField(root: std.json.ObjectMap) ?[]const u8 {
+    return stringField(root, "goal") orelse stringField(root, "goal_id") orelse stringField(root, "goal_ref");
+}
+
 fn intField(root: std.json.ObjectMap, key: []const u8) ?i64 {
     return switch (root.get(key) orelse return null) {
         .integer => |value| @intCast(value),
@@ -429,6 +438,8 @@ fn appendOrderJson(buf: *std.array_list.Managed(u8), order: orders.Order) !void 
     try appendEscaped(buf, order.summary);
     try buf.appendSlice("\",\"kind\":\"");
     try appendEscaped(buf, order.kind);
+    try buf.appendSlice("\",\"goal\":\"");
+    try appendEscaped(buf, order.goal);
     try buf.appendSlice("\",\"status\":\"");
     try appendEscaped(buf, order.status);
     try buf.appendSlice("\",\"schedule\":\"");
@@ -466,10 +477,11 @@ test "orders API creates updates schedules transitions and emits events" {
     defer state.deinit();
 
     {
-        const resp = handleCreate(allocator, fixture.paths, &state, "/api/orders?space=ops", "{\"title\":\"Morning report\",\"summary\":\"Daily brief\",\"content\":\"# Brief\\n\"}", 1000);
+        const resp = handleCreate(allocator, fixture.paths, &state, "/api/orders?space=ops", "{\"title\":\"Morning report\",\"summary\":\"Daily brief\",\"goal\":\"daily-brief-published\",\"content\":\"# Brief\\n\"}", 1000);
         defer allocator.free(resp.body);
         try std.testing.expectEqualStrings("201 Created", resp.status);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":\"order-1\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"goal\":\"daily-brief-published\"") != null);
     }
 
     {
@@ -542,6 +554,42 @@ test "orders API deletes records without treating archive as delete" {
     try std.testing.expectEqualStrings("order.created", events[0].event_type);
     try std.testing.expectEqualStrings("order.archived", events[1].event_type);
     try std.testing.expectEqualStrings("order.deleted", events[2].event_type);
+}
+
+test "orders API rejects activating mandate orders without a goal" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    {
+        const resp = handleCreate(allocator, fixture.paths, &state, "/api/orders?space=ops", "{\"title\":\"Reach subscriber target\"}", 1000);
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/order-1/activate?space=ops", "order-1", .activate, 1100, null);
+        try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "mandate goal is required") != null);
+    }
+
+    {
+        const resp = handleUpdate(allocator, fixture.paths, &state, "/api/orders/order-1?space=ops", "order-1", "{\"goal_id\":\"subscribers-50\"}", 1200);
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"goal\":\"subscribers-50\"") != null);
+    }
+
+    {
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/order-1/activate?space=ops", "order-1", .activate, 1300, null);
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"active\"") != null);
+    }
 }
 
 test "orders API rejects traversal space ids before writing files" {

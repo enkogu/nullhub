@@ -11,6 +11,7 @@ const test_helpers = @import("../test_helpers.zig");
 
 pub const source = "nullhub.dispatcher";
 pub const default_interval_ms: u64 = 1000;
+pub const default_mandate_check_cadence_ms: i64 = 60 * 1000;
 
 const Cursor = struct {
     last_event_id: u64 = 0,
@@ -93,6 +94,24 @@ pub const TriggerSpec = struct {
     instructions: ?[]const u8 = null,
 };
 
+pub const MandateConditionSpec = struct {
+    event_type: []const u8,
+    unmet_event_type: ?[]const u8 = null,
+    source: ?[]const u8 = null,
+    subject_type: ?[]const u8 = null,
+    subject_id: ?[]const u8 = null,
+};
+
+pub const MandateSpec = struct {
+    goal: []const u8,
+    condition: MandateConditionSpec,
+    check_cadence_ms: i64 = default_mandate_check_cadence_ms,
+    tier: Tier = .t1,
+    action: ActionKind = .run_agent,
+    target: ?[]const u8 = null,
+    instructions: ?[]const u8 = null,
+};
+
 const ParsedTriggerSpec = struct {
     tree: ?std.json.Parsed(std.json.Value) = null,
     spec: TriggerSpec,
@@ -101,6 +120,37 @@ const ParsedTriggerSpec = struct {
         if (self.tree) |*tree| tree.deinit();
         self.* = undefined;
     }
+};
+
+const ParsedMandateSpec = struct {
+    tree: ?std.json.Parsed(std.json.Value) = null,
+    spec: MandateSpec,
+
+    fn deinit(self: *ParsedMandateSpec) void {
+        if (self.tree) |*tree| tree.deinit();
+        self.* = undefined;
+    }
+};
+
+const MandateConditionState = struct {
+    holds: bool,
+    event_id: u64 = 0,
+};
+
+const MandateProgressState = struct {
+    completed: bool = false,
+    last_check_ms: i64 = 0,
+    last_completion_event_id: u64 = 0,
+};
+
+const MandateEvaluationResult = struct {
+    matched_orders: usize = 0,
+    executed: usize = 0,
+    failed: usize = 0,
+    approvals_created: usize = 0,
+    rearmed: usize = 0,
+    completed: usize = 0,
+    mutated_state: bool = false,
 };
 
 pub const DispatchContext = struct {
@@ -259,6 +309,8 @@ pub const RunResult = struct {
     failed: usize = 0,
     approvals_created: usize = 0,
     skipped_idempotent: usize = 0,
+    mandates_rearmed: usize = 0,
+    mandates_completed: usize = 0,
 };
 
 pub const Poller = struct {
@@ -403,6 +455,19 @@ pub fn runOnce(
         }
     }
 
+    const active_mandates = try collectActiveMandateOrders(allocator, paths, state);
+    defer freeOrders(allocator, active_mandates);
+    for (active_mandates) |order| {
+        const evaluation = try evaluateMandateOrder(allocator, paths, state, order, now_ms, options);
+        result.matched_orders += evaluation.matched_orders;
+        result.executed += evaluation.executed;
+        result.failed += evaluation.failed;
+        result.approvals_created += evaluation.approvals_created;
+        result.mandates_rearmed += evaluation.rearmed;
+        result.mandates_completed += evaluation.completed;
+        if (evaluation.mutated_state) mutated_state = true;
+    }
+
     if (mutated_state) try state.save();
     if (options.save_cursor and result.cursor_after != cursor.last_event_id) {
         cursor.last_event_id = result.cursor_after;
@@ -419,6 +484,358 @@ fn freeOrders(allocator: std.mem.Allocator, orders: []orders_mod.Order) void {
 
 fn isActiveTriggerOrder(order: orders_mod.Order) bool {
     return std.mem.eql(u8, order.kind, "trigger") and std.mem.eql(u8, order.status, "active");
+}
+
+fn isActiveMandateOrder(order: orders_mod.Order) bool {
+    return std.ascii.eqlIgnoreCase(order.kind, "mandate") and std.mem.eql(u8, order.status, "active");
+}
+
+fn collectActiveMandateOrders(allocator: std.mem.Allocator, paths: paths_mod.Paths, state: *state_mod.State) ![]orders_mod.Order {
+    var result = std.array_list.Managed(orders_mod.Order).init(allocator);
+    errdefer {
+        for (result.items) |order| order.deinit(allocator);
+        result.deinit();
+    }
+
+    var seen_spaces = std.array_list.Managed([]const u8).init(allocator);
+    defer seen_spaces.deinit();
+
+    for (state.spacesList()) |space| {
+        try collectActiveMandatesForSpace(allocator, paths, space.id, &seen_spaces, &result);
+    }
+    for (state.eventsList()) |event| {
+        try collectActiveMandatesForSpace(allocator, paths, event.space_id, &seen_spaces, &result);
+    }
+    try collectActiveMandatesFromSpaceDirs(allocator, paths, &seen_spaces, &result);
+
+    return result.toOwnedSlice();
+}
+
+fn collectActiveMandatesFromSpaceDirs(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    seen_spaces: *std.array_list.Managed([]const u8),
+    result: *std.array_list.Managed(orders_mod.Order),
+) !void {
+    const spaces_dir = try std.fs.path.join(allocator, &.{ paths.root, "spaces" });
+    defer allocator.free(spaces_dir);
+
+    var dir = std_compat.fs.openDirAbsolute(spaces_dir, .{ .iterate = true }) catch |err| switch (err) {
+        error.FileNotFound => return,
+        else => return err,
+    };
+    defer dir.close();
+
+    var it = dir.iterate();
+    while (try it.next()) |entry| {
+        if (entry.kind != .directory) continue;
+        try collectActiveMandatesForSpace(allocator, paths, entry.name, seen_spaces, result);
+    }
+}
+
+fn collectActiveMandatesForSpace(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    space_id: []const u8,
+    seen_spaces: *std.array_list.Managed([]const u8),
+    result: *std.array_list.Managed(orders_mod.Order),
+) !void {
+    if (!spaces_api.isValidSpaceId(space_id)) return;
+    for (seen_spaces.items) |seen| {
+        if (std.mem.eql(u8, seen, space_id)) return;
+    }
+    try seen_spaces.append(space_id);
+
+    const loaded = try orders_mod.list(allocator, paths, space_id);
+    defer allocator.free(loaded);
+    for (loaded) |order| {
+        if (isActiveMandateOrder(order)) {
+            errdefer order.deinit(allocator);
+            try result.append(order);
+        } else {
+            order.deinit(allocator);
+        }
+    }
+}
+
+fn evaluateMandateOrder(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    state: *state_mod.State,
+    order: orders_mod.Order,
+    now_ms: i64,
+    options: RunOptions,
+) !MandateEvaluationResult {
+    var result = MandateEvaluationResult{};
+    var parsed_spec = parseMandateSpec(allocator, order) catch return result;
+    defer parsed_spec.deinit();
+    const spec = parsed_spec.spec;
+    const cadence_ms = @max(@as(i64, 1), spec.check_cadence_ms);
+    const events = state.eventsList();
+    var progress = mandateProgressState(order, events);
+    const condition = latestMandateConditionState(spec, order.space_id, events);
+
+    if (progress.completed and condition.holds) return result;
+    if (progress.completed and !condition.holds) {
+        if (condition.event_id == 0 or condition.event_id <= progress.last_completion_event_id) return result;
+        try appendMandateLifecycleEvent(allocator, state, order, spec, "mandate.rearmed", "Mandate re-armed", "Goal condition no longer holds.", "warning", condition, false, now_ms);
+        result.rearmed += 1;
+        result.mutated_state = true;
+        progress.completed = false;
+        progress.last_check_ms = 0;
+    }
+
+    if (progress.last_check_ms > 0 and now_ms - progress.last_check_ms < cadence_ms) return result;
+    result.matched_orders += 1;
+
+    if (condition.holds) {
+        try appendMandateLifecycleEvent(allocator, state, order, spec, "mandate.completed", "Mandate completed", "Goal condition holds.", "success", condition, true, now_ms);
+        result.completed += 1;
+        result.mutated_state = true;
+        return result;
+    }
+
+    try appendMandateLifecycleEvent(allocator, state, order, spec, "mandate.evaluated", "Mandate evaluated", "Goal condition is not met; dispatcher is continuing work.", "info", condition, false, now_ms);
+    result.mutated_state = true;
+
+    const action_spec = TriggerSpec{
+        .event_type = "mandate.check",
+        .tier = spec.tier,
+        .action = spec.action,
+        .target = spec.target,
+        .instructions = spec.instructions,
+    };
+    const synthetic_event = state_mod.Event{
+        .id = syntheticMandateEventId(now_ms, condition.event_id),
+        .space_id = order.space_id,
+        .event_type = "mandate.check",
+        .source = source,
+        .subject_type = "order",
+        .subject_id = order.id,
+        .title = order.title,
+        .summary = "Mandate check cadence elapsed.",
+        .created_at_ms = now_ms,
+    };
+    const key = try mandateDispatchKey(allocator, order.id, now_ms);
+    defer allocator.free(key);
+    const ctx = DispatchContext{
+        .paths = paths,
+        .order = order,
+        .event = synthetic_event,
+        .spec = action_spec,
+        .idempotency_key = key,
+        .now_ms = now_ms,
+    };
+
+    switch (spec.tier) {
+        .t0 => {
+            const outcome = try options.executors.execute(allocator, state, ctx);
+            if (outcome.succeeded) {
+                try appendDispatchRecord(allocator, state, order, synthetic_event, action_spec, null, "dispatcher.executed", now_ms);
+                result.executed += 1;
+            } else {
+                try appendDispatchRecord(allocator, state, order, synthetic_event, action_spec, null, "dispatcher.failed", now_ms);
+                result.failed += 1;
+            }
+        },
+        .t1, .t2 => {
+            const approval = try ensureApproval(allocator, state, order, synthetic_event, action_spec, now_ms);
+            try appendDispatchRecord(allocator, state, order, synthetic_event, action_spec, approval.id, "dispatcher.approval_requested", now_ms);
+            result.approvals_created += 1;
+        },
+    }
+    return result;
+}
+
+fn parseMandateSpec(allocator: std.mem.Allocator, order: orders_mod.Order) !ParsedMandateSpec {
+    const trimmed_content = std.mem.trim(u8, order.content, &std.ascii.whitespace);
+    if (trimmed_content.len == 0 or trimmed_content[0] != '{') return error.InvalidMandateSpec;
+    var tree = try std.json.parseFromSlice(std.json.Value, allocator, trimmed_content, .{
+        .allocate = .alloc_always,
+    });
+    errdefer tree.deinit();
+    const root = switch (tree.value) {
+        .object => |obj| obj,
+        else => return error.InvalidMandateSpec,
+    };
+    const spec = parseMandateSpecObject(order, root) orelse return error.InvalidMandateSpec;
+    return .{ .tree = tree, .spec = spec };
+}
+
+fn parseMandateSpecObject(order: orders_mod.Order, root: std.json.ObjectMap) ?MandateSpec {
+    const condition_obj = objectField(root, "condition") orelse objectField(root, "completion") orelse root;
+    const event_type = stringField(condition_obj, "event_type") orelse
+        stringField(condition_obj, "met_event_type") orelse
+        stringField(root, "condition_event_type") orelse
+        stringField(root, "met_event_type") orelse
+        return null;
+    const action_obj = objectField(root, "action");
+    const action_name = (if (action_obj) |obj|
+        stringField(obj, "type") orelse stringField(obj, "kind")
+    else if (stringValue(root.get("action"))) |value|
+        value
+    else
+        null) orelse stringField(root, "executor") orelse stringField(root, "action_type") orelse return null;
+    const action = ActionKind.fromString(action_name) orelse return null;
+    const tier_value = stringField(root, "tier") orelse if (action_obj) |obj| stringField(obj, "tier") else null;
+    const tier = if (tier_value) |value| Tier.fromString(value) orelse .t1 else .t1;
+    const cadence = i64Field(root, "check_cadence_ms") orelse
+        i64Field(root, "cadence_ms") orelse
+        i64Field(root, "check_interval_ms") orelse
+        i64Field(condition_obj, "check_cadence_ms") orelse
+        default_mandate_check_cadence_ms;
+    const goal = firstNonEmpty(&.{
+        order.goal,
+        stringField(root, "goal"),
+        stringField(root, "goal_id"),
+        stringField(root, "goal_ref"),
+        goalObjectString(root),
+    }) orelse return null;
+
+    return .{
+        .goal = goal,
+        .condition = .{
+            .event_type = event_type,
+            .unmet_event_type = stringField(condition_obj, "unmet_event_type") orelse
+                stringField(condition_obj, "false_event_type") orelse
+                stringField(root, "unmet_event_type"),
+            .source = optionalStringField(condition_obj, root, "source"),
+            .subject_type = optionalStringField(condition_obj, root, "subject_type"),
+            .subject_id = optionalStringField(condition_obj, root, "subject_id"),
+        },
+        .check_cadence_ms = if (cadence > 0) cadence else default_mandate_check_cadence_ms,
+        .tier = tier,
+        .action = action,
+        .target = optionalActionString(action_obj, root),
+        .instructions = optionalStringField(action_obj, root, "instructions") orelse
+            optionalStringField(action_obj, root, "prompt") orelse
+            optionalStringField(action_obj, root, "message"),
+    };
+}
+
+fn firstNonEmpty(values: []const ?[]const u8) ?[]const u8 {
+    for (values) |maybe_value| {
+        const value = maybe_value orelse continue;
+        if (std.mem.trim(u8, value, &std.ascii.whitespace).len > 0) return value;
+    }
+    return null;
+}
+
+fn goalObjectString(root: std.json.ObjectMap) ?[]const u8 {
+    const goal_obj = objectField(root, "goal") orelse return null;
+    return stringField(goal_obj, "id") orelse stringField(goal_obj, "ref") orelse stringField(goal_obj, "title") orelse stringField(goal_obj, "name");
+}
+
+fn i64Field(root: std.json.ObjectMap, key: []const u8) ?i64 {
+    return switch (root.get(key) orelse return null) {
+        .integer => |value| @intCast(value),
+        else => null,
+    };
+}
+
+fn mandateProgressState(order: orders_mod.Order, events: []const state_mod.Event) MandateProgressState {
+    var latest_completion_id: u64 = 0;
+    var latest_rearm_id: u64 = 0;
+    var last_check_ms: i64 = 0;
+    for (events) |event| {
+        if (!std.mem.eql(u8, event.source, source)) continue;
+        if (!std.mem.eql(u8, event.subject_type, "order")) continue;
+        if (!std.mem.eql(u8, event.subject_id, order.id)) continue;
+        if (!std.mem.startsWith(u8, event.event_type, "mandate.")) continue;
+        last_check_ms = @max(last_check_ms, event.created_at_ms);
+        if (std.mem.eql(u8, event.event_type, "mandate.completed")) latest_completion_id = event.id;
+        if (std.mem.eql(u8, event.event_type, "mandate.rearmed")) latest_rearm_id = event.id;
+    }
+    return .{
+        .completed = latest_completion_id > latest_rearm_id,
+        .last_check_ms = last_check_ms,
+        .last_completion_event_id = latest_completion_id,
+    };
+}
+
+fn latestMandateConditionState(spec: MandateSpec, space_id: []const u8, events: []const state_mod.Event) MandateConditionState {
+    var latest_met_id: u64 = 0;
+    var latest_unmet_id: u64 = 0;
+    for (events) |event| {
+        if (!std.mem.eql(u8, event.space_id, space_id)) continue;
+        if (!eventMatchesMandateCondition(spec.condition, event)) continue;
+        if (std.mem.eql(u8, event.event_type, spec.condition.event_type)) {
+            latest_met_id = event.id;
+        } else if (spec.condition.unmet_event_type) |unmet_event_type| {
+            if (std.mem.eql(u8, event.event_type, unmet_event_type)) latest_unmet_id = event.id;
+        }
+    }
+    const latest = @max(latest_met_id, latest_unmet_id);
+    return .{
+        .holds = latest_met_id != 0 and latest_met_id >= latest_unmet_id,
+        .event_id = latest,
+    };
+}
+
+fn eventMatchesMandateCondition(condition: MandateConditionSpec, event: state_mod.Event) bool {
+    const event_type_matches = std.mem.eql(u8, event.event_type, condition.event_type) or
+        (condition.unmet_event_type != null and std.mem.eql(u8, event.event_type, condition.unmet_event_type.?));
+    if (!event_type_matches) return false;
+    if (condition.source) |value| {
+        if (!std.mem.eql(u8, value, event.source)) return false;
+    }
+    if (condition.subject_type) |value| {
+        if (!std.mem.eql(u8, value, event.subject_type)) return false;
+    }
+    if (condition.subject_id) |value| {
+        if (!std.mem.eql(u8, value, event.subject_id)) return false;
+    }
+    return true;
+}
+
+fn appendMandateLifecycleEvent(
+    allocator: std.mem.Allocator,
+    state: *state_mod.State,
+    order: orders_mod.Order,
+    spec: MandateSpec,
+    event_type: []const u8,
+    title_prefix: []const u8,
+    summary: []const u8,
+    severity: []const u8,
+    condition: MandateConditionState,
+    condition_met: bool,
+    now_ms: i64,
+) !void {
+    const payload = try std.json.Stringify.valueAlloc(allocator, .{
+        .order_id = order.id,
+        .goal = spec.goal,
+        .condition_event_type = spec.condition.event_type,
+        .condition_event_id = condition.event_id,
+        .condition_met = condition_met,
+        .check_cadence_ms = spec.check_cadence_ms,
+        .tier = spec.tier.string(),
+        .action = spec.action.string(),
+    }, .{});
+    defer allocator.free(payload);
+    const title = try std.fmt.allocPrint(allocator, "{s}: {s}", .{ title_prefix, order.title });
+    defer allocator.free(title);
+    _ = try state.addEvent(.{
+        .space_id = order.space_id,
+        .event_type = event_type,
+        .source = source,
+        .subject_type = "order",
+        .subject_id = order.id,
+        .title = title,
+        .summary = summary,
+        .severity = severity,
+        .payload_json = payload,
+        .created_at_ms = now_ms,
+    });
+}
+
+fn syntheticMandateEventId(now_ms: i64, condition_event_id: u64) u64 {
+    if (condition_event_id != 0) return condition_event_id;
+    if (now_ms <= 0) return 0;
+    return @intCast(now_ms);
+}
+
+fn mandateDispatchKey(allocator: std.mem.Allocator, order_id: []const u8, now_ms: i64) ![]u8 {
+    return std.fmt.allocPrint(allocator, "dispatcher:mandate:{s}:check:{d}", .{ order_id, now_ms });
 }
 
 fn parseTriggerSpec(allocator: std.mem.Allocator, order: orders_mod.Order) !ParsedTriggerSpec {
@@ -836,6 +1253,38 @@ fn createTriggerOrderWithTarget(
     defer active.deinit(allocator);
 }
 
+fn createMandateOrder(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    space_id: []const u8,
+    id: []const u8,
+    goal: []const u8,
+    met_event_type: []const u8,
+    unmet_event_type: []const u8,
+    check_cadence_ms: i64,
+    tier: []const u8,
+    action: []const u8,
+) !void {
+    const content = try std.fmt.allocPrint(allocator,
+        \\{{"condition":{{"event_type":"{s}","unmet_event_type":"{s}"}},"check_cadence_ms":{d},"tier":"{s}","action":{{"type":"{s}","target":"test-target","instructions":"continue until the goal is met"}}}}
+    , .{ met_event_type, unmet_event_type, check_cadence_ms, tier, action });
+    defer allocator.free(content);
+
+    const created = try orders_mod.create(allocator, paths, space_id, .{
+        .id = id,
+        .title = id,
+        .kind = "mandate",
+        .goal = goal,
+        .content = content,
+        .created_at_ms = 100,
+        .updated_at_ms = 100,
+    });
+    defer created.deinit(allocator);
+
+    const active = try orders_mod.transition(allocator, paths, space_id, id, .activate, 101);
+    defer active.deinit(allocator);
+}
+
 fn writeTestBinary(
     allocator: std.mem.Allocator,
     paths: paths_mod.Paths,
@@ -933,6 +1382,141 @@ test "dispatcher matches active trigger orders in event space" {
     try std.testing.expectEqual(@as(usize, 1), result.matched_orders);
     try std.testing.expectEqual(@as(usize, 1), result.executed);
     try std.testing.expectEqual(@as(usize, 1), recorder.create_ticket_count);
+}
+
+test "dispatcher mandate completes when condition already holds" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    try fixture.paths.ensureDirs();
+
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+    _ = try state.addSpace(.{ .id = "ops", .name = "Ops" });
+
+    try createMandateOrder(allocator, fixture.paths, "ops", "subscriber-mandate", "subscriber-goal", "subscribers.goal_met", "subscribers.goal_unmet", 1000, "T0", "create_ticket");
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "subscribers.goal_met",
+        .source = "test",
+        .title = "Subscriber goal met",
+        .created_at_ms = 200,
+    });
+
+    var recorder = Recorder{};
+    const first = try runOnce(allocator, fixture.paths, &state, 1000, .{ .executors = recorder.executors() });
+    try std.testing.expectEqual(@as(usize, 1), first.matched_orders);
+    try std.testing.expectEqual(@as(usize, 0), first.executed);
+    try std.testing.expectEqual(@as(usize, 1), first.mandates_completed);
+    try std.testing.expectEqual(@as(usize, 0), recorder.create_ticket_count);
+
+    const second = try runOnce(allocator, fixture.paths, &state, 2000, .{ .executors = recorder.executors() });
+    try std.testing.expectEqual(@as(usize, 0), second.mandates_completed);
+
+    var completed_count: usize = 0;
+    for (state.eventsList()) |event| {
+        if (std.mem.eql(u8, event.event_type, "mandate.completed")) {
+            completed_count += 1;
+            try std.testing.expectEqualStrings("success", event.severity);
+            try std.testing.expect(std.mem.indexOf(u8, event.payload_json, "\"condition_met\":true") != null);
+            try std.testing.expect(std.mem.indexOf(u8, event.payload_json, "\"goal\":\"subscriber-goal\"") != null);
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 1), completed_count);
+}
+
+test "dispatcher mandate executes unmet condition on cadence" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    try fixture.paths.ensureDirs();
+
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    try createMandateOrder(allocator, fixture.paths, "ops", "queue-mandate", "queue-empty", "queue.empty", "", 1000, "T0", "create_ticket");
+
+    var recorder = Recorder{};
+    const first = try runOnce(allocator, fixture.paths, &state, 1000, .{ .executors = recorder.executors() });
+    try std.testing.expectEqual(@as(usize, 1), first.matched_orders);
+    try std.testing.expectEqual(@as(usize, 1), first.executed);
+    try std.testing.expectEqual(@as(usize, 1), recorder.create_ticket_count);
+
+    const throttled = try runOnce(allocator, fixture.paths, &state, 1500, .{ .executors = recorder.executors() });
+    try std.testing.expectEqual(@as(usize, 0), throttled.matched_orders);
+    try std.testing.expectEqual(@as(usize, 1), recorder.create_ticket_count);
+
+    const due_again = try runOnce(allocator, fixture.paths, &state, 2100, .{ .executors = recorder.executors() });
+    try std.testing.expectEqual(@as(usize, 1), due_again.matched_orders);
+    try std.testing.expectEqual(@as(usize, 1), due_again.executed);
+    try std.testing.expectEqual(@as(usize, 2), recorder.create_ticket_count);
+
+    var evaluated_count: usize = 0;
+    for (state.eventsList()) |event| {
+        if (std.mem.eql(u8, event.event_type, "mandate.evaluated")) evaluated_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), evaluated_count);
+}
+
+test "dispatcher mandate re-arms after flapping condition" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    try fixture.paths.ensureDirs();
+
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+    _ = try state.addSpace(.{ .id = "ops", .name = "Ops" });
+
+    try createMandateOrder(allocator, fixture.paths, "ops", "lead-mandate", "lead-reactivation", "lead.goal_met", "lead.goal_unmet", 1000, "T0", "create_ticket");
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "lead.goal_met",
+        .source = "test",
+        .title = "Lead goal met",
+        .created_at_ms = 200,
+    });
+
+    var recorder = Recorder{};
+    const completed = try runOnce(allocator, fixture.paths, &state, 1000, .{ .executors = recorder.executors() });
+    try std.testing.expectEqual(@as(usize, 1), completed.mandates_completed);
+
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "lead.goal_unmet",
+        .source = "test",
+        .title = "Lead goal regressed",
+        .created_at_ms = 1100,
+    });
+    const rearmed = try runOnce(allocator, fixture.paths, &state, 1200, .{ .executors = recorder.executors() });
+    try std.testing.expectEqual(@as(usize, 1), rearmed.mandates_rearmed);
+    try std.testing.expectEqual(@as(usize, 1), rearmed.executed);
+    try std.testing.expectEqual(@as(usize, 1), recorder.create_ticket_count);
+
+    _ = try state.addEvent(.{
+        .space_id = "ops",
+        .event_type = "lead.goal_met",
+        .source = "test",
+        .title = "Lead goal restored",
+        .created_at_ms = 2200,
+    });
+    const completed_again = try runOnce(allocator, fixture.paths, &state, 2300, .{ .executors = recorder.executors() });
+    try std.testing.expectEqual(@as(usize, 1), completed_again.mandates_completed);
+
+    var completed_count: usize = 0;
+    var rearmed_count: usize = 0;
+    for (state.eventsList()) |event| {
+        if (std.mem.eql(u8, event.event_type, "mandate.completed")) completed_count += 1;
+        if (std.mem.eql(u8, event.event_type, "mandate.rearmed")) rearmed_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 2), completed_count);
+    try std.testing.expectEqual(@as(usize, 1), rearmed_count);
 }
 
 test "dispatcher default T0 executor creates durable workflow run" {

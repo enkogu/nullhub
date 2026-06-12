@@ -71,6 +71,7 @@ pub const Order = struct {
     title: []const u8,
     summary: []const u8 = "",
     kind: []const u8 = "mandate",
+    goal: []const u8 = "",
     status: []const u8 = "draft",
     schedule: []const u8 = "",
     doc_path: []const u8 = "",
@@ -84,6 +85,7 @@ pub const Order = struct {
         allocator.free(self.title);
         allocator.free(self.summary);
         allocator.free(self.kind);
+        allocator.free(self.goal);
         allocator.free(self.status);
         allocator.free(self.schedule);
         allocator.free(self.doc_path);
@@ -96,6 +98,7 @@ pub const OrderInput = struct {
     title: []const u8,
     summary: []const u8 = "",
     kind: []const u8 = "mandate",
+    goal: []const u8 = "",
     schedule: []const u8 = "",
     content: []const u8 = "",
     created_at_ms: i64,
@@ -106,6 +109,7 @@ pub const OrderUpdate = struct {
     title: ?[]const u8 = null,
     summary: ?[]const u8 = null,
     kind: ?[]const u8 = null,
+    goal: ?[]const u8 = null,
     schedule: ?[]const u8 = null,
     content: ?[]const u8 = null,
     status: ?Status = null,
@@ -196,6 +200,7 @@ pub fn create(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []
         .title = input.title,
         .summary = input.summary,
         .kind = if (input.kind.len > 0) input.kind else "mandate",
+        .goal = input.goal,
         .status = "draft",
         .schedule = input.schedule,
         .doc_path = rel_doc_path,
@@ -239,14 +244,19 @@ pub fn update(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []
         }
     }
     const idx = found_idx orelse return error.OrderNotFound;
+    const next_kind = update_fields.kind orelse table.orders[idx].kind;
+    const next_goal = update_fields.goal orelse table.orders[idx].goal;
+    const next_status = if (update_fields.status) |status| status.string() else table.orders[idx].status;
+    try validateOrderState(next_kind, next_status, next_goal);
 
     var updated = try ownedOrder(allocator, .{
         .id = table.orders[idx].id,
         .space_id = table.orders[idx].space_id,
         .title = update_fields.title orelse table.orders[idx].title,
         .summary = update_fields.summary orelse table.orders[idx].summary,
-        .kind = update_fields.kind orelse table.orders[idx].kind,
-        .status = if (update_fields.status) |status| status.string() else table.orders[idx].status,
+        .kind = next_kind,
+        .goal = next_goal,
+        .status = next_status,
         .schedule = update_fields.schedule orelse table.orders[idx].schedule,
         .doc_path = table.orders[idx].doc_path,
         .content = update_fields.content orelse table.orders[idx].content,
@@ -340,6 +350,7 @@ pub fn renderMarkdown(allocator: std.mem.Allocator, order: Order) ![]const u8 {
     try appendFrontmatterLine(&buf, "title", order.title);
     try appendFrontmatterLine(&buf, "summary", order.summary);
     try appendFrontmatterLine(&buf, "kind", order.kind);
+    try appendFrontmatterLine(&buf, "goal", order.goal);
     try appendFrontmatterLine(&buf, "status", order.status);
     try appendFrontmatterLine(&buf, "schedule", order.schedule);
     try appendFrontmatterLine(&buf, "doc_path", order.doc_path);
@@ -378,6 +389,8 @@ pub fn parseMarkdown(allocator: std.mem.Allocator, bytes: []const u8) StoreError
     defer allocator.free(summary);
     const kind = try parseFrontmatterScalarOrDefaultAlloc(allocator, parsed.kind, "mandate");
     defer allocator.free(kind);
+    const goal = try parseFrontmatterScalarOrDefaultAlloc(allocator, parsed.goal, "");
+    defer allocator.free(goal);
     const status = try parseFrontmatterScalarOrDefaultAlloc(allocator, parsed.status, "");
     defer allocator.free(status);
     const schedule_value = try parseFrontmatterScalarOrDefaultAlloc(allocator, parsed.schedule, "");
@@ -386,12 +399,14 @@ pub fn parseMarkdown(allocator: std.mem.Allocator, bytes: []const u8) StoreError
     defer allocator.free(doc_path);
 
     if (Status.fromString(status) == null) return error.InvalidStatus;
+    try validateOrderState(kind, status, goal);
     return ownedOrder(allocator, .{
         .id = id,
         .space_id = space_id,
         .title = title,
         .summary = summary,
         .kind = kind,
+        .goal = goal,
         .status = status,
         .schedule = schedule_value,
         .doc_path = doc_path,
@@ -407,6 +422,7 @@ const ParsedFrontmatter = struct {
     title: ?[]const u8 = null,
     summary: ?[]const u8 = null,
     kind: ?[]const u8 = null,
+    goal: ?[]const u8 = null,
     status: ?[]const u8 = null,
     schedule: ?[]const u8 = null,
     doc_path: ?[]const u8 = null,
@@ -419,6 +435,7 @@ const ParsedFrontmatter = struct {
         if (std.mem.eql(u8, key, "title")) self.title = value;
         if (std.mem.eql(u8, key, "summary")) self.summary = value;
         if (std.mem.eql(u8, key, "kind")) self.kind = value;
+        if (std.mem.eql(u8, key, "goal") or std.mem.eql(u8, key, "goal_id") or std.mem.eql(u8, key, "goal_ref")) self.goal = value;
         if (std.mem.eql(u8, key, "status")) self.status = value;
         if (std.mem.eql(u8, key, "schedule")) self.schedule = value;
         if (std.mem.eql(u8, key, "doc_path")) self.doc_path = value;
@@ -575,6 +592,7 @@ fn ownedOrder(allocator: std.mem.Allocator, order: Order) !Order {
         .title = try allocator.dupe(u8, order.title),
         .summary = try allocator.dupe(u8, order.summary),
         .kind = try allocator.dupe(u8, order.kind),
+        .goal = try allocator.dupe(u8, order.goal),
         .status = try allocator.dupe(u8, order.status),
         .schedule = try allocator.dupe(u8, order.schedule),
         .doc_path = try allocator.dupe(u8, order.doc_path),
@@ -586,6 +604,12 @@ fn ownedOrder(allocator: std.mem.Allocator, order: Order) !Order {
 
 fn cloneOrder(allocator: std.mem.Allocator, order: Order) !Order {
     return ownedOrder(allocator, order);
+}
+
+fn validateOrderState(kind: []const u8, status: []const u8, goal: []const u8) !void {
+    if (!std.ascii.eqlIgnoreCase(kind, "mandate")) return;
+    if (!std.mem.eql(u8, status, Status.active.string())) return;
+    if (std.mem.trim(u8, goal, &std.ascii.whitespace).len == 0) return error.MissingMandateGoal;
 }
 
 fn nextOrderId(allocator: std.mem.Allocator, orders: []const Order) ![]u8 {
@@ -770,6 +794,7 @@ test "orders reads markdown documents before derived orders table" {
         .title = "Markdown title",
         .summary = "Markdown summary.",
         .kind = "mandate",
+        .goal = "queue-empty",
         .status = "active",
         .schedule = "event:queue.changed",
         .doc_path = created.doc_path,
@@ -883,6 +908,7 @@ test "orders status transitions update durable status" {
 
     const created = try create(allocator, fixture.paths, "ops", .{
         .title = "Keep system current",
+        .goal = "system-current",
         .created_at_ms = 1000,
         .updated_at_ms = 1000,
     });
@@ -909,6 +935,32 @@ test "orders status transitions update durable status" {
     try std.testing.expectEqualStrings("archived", archived.status);
 }
 
+test "orders require a goal before mandate activation" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+
+    const created = try create(allocator, fixture.paths, "ops", .{
+        .title = "Reach subscriber target",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer created.deinit(allocator);
+
+    try std.testing.expectError(error.MissingMandateGoal, transition(allocator, fixture.paths, "ops", created.id, .activate, 1100));
+
+    const goal_bound = try update(allocator, fixture.paths, "ops", created.id, .{
+        .goal = "subscribers-50",
+        .updated_at_ms = 1200,
+    });
+    defer goal_bound.deinit(allocator);
+    try std.testing.expectEqualStrings("subscribers-50", goal_bound.goal);
+
+    const active = try transition(allocator, fixture.paths, "ops", created.id, .activate, 1300);
+    defer active.deinit(allocator);
+    try std.testing.expectEqualStrings("active", active.status);
+}
+
 test "orders markdown frontmatter round trips" {
     const allocator = std.testing.allocator;
     const original = try ownedOrder(allocator, .{
@@ -933,6 +985,7 @@ test "orders markdown frontmatter round trips" {
     const parsed = try parseMarkdown(allocator, markdown);
     defer parsed.deinit(allocator);
     try std.testing.expectEqualStrings(original.id, parsed.id);
+    try std.testing.expectEqualStrings(original.goal, parsed.goal);
     try std.testing.expectEqualStrings(original.status, parsed.status);
     try std.testing.expectEqualStrings(original.content, parsed.content);
     try std.testing.expectEqual(@as(i64, 800), parsed.updated_at_ms);
