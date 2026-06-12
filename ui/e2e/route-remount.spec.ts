@@ -182,6 +182,7 @@ test('section overview shells stay on canonical routes and expose panel links', 
     const url = new URL(page.url());
     expect(url.pathname).toBe(pathOnly(item.path));
     await expect(page.getByRole('heading', { name: item.heading })).toBeVisible();
+    await expect(page.locator('.header-breadcrumb').getByText(item.heading, { exact: true })).toBeVisible();
     await expect(page.locator('[data-slot="section-overview"]')).toBeVisible();
     for (const tab of item.tabs) {
       await page.getByRole('tab', { name: tab.name }).click();

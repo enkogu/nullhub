@@ -2,21 +2,7 @@
   import { defineMeta } from "@storybook/addon-svelte-csf";
   import SectionOverview from "./SectionOverview.svelte";
 
-  const { Story } = defineMeta({
-    title: "Components/SectionOverview",
-    component: SectionOverview,
-  });
-</script>
-
-{#snippet overviewTemplate(args)}
-  <div class="max-w-5xl">
-    <SectionOverview {...args} />
-  </div>
-{/snippet}
-
-<Story
-  name="Team"
-  args={{
+  const teamOverviewArgs = {
     title: "Team",
     subtitle: "Agents, instances, roles, skills, and runtime capabilities for the selected space.",
     primaryHref: "/team/agents",
@@ -46,6 +32,52 @@
         ],
       },
     ],
+  };
+
+  const { Story } = defineMeta({
+    title: "Components/SectionOverview",
+    component: SectionOverview,
+  });
+</script>
+
+{#snippet overviewTemplate(args)}
+  <div class="max-w-5xl">
+    <SectionOverview {...args} />
+  </div>
+{/snippet}
+
+<Story name="Populated" args={teamOverviewArgs} template={overviewTemplate} />
+<Story
+  name="Loading"
+  args={{
+    ...teamOverviewArgs,
+    state: "loading",
+    loadingTitle: "Loading Team",
+    loadingDescription: "Fetching team sections for the selected space.",
+  }}
+  template={overviewTemplate}
+/>
+<Story
+  name="Empty"
+  args={{
+    ...teamOverviewArgs,
+    state: "empty",
+    emptyTitle: "No Team panels",
+    emptyDescription: "Team panels will appear once this space has agents, instances, or capabilities.",
+    emptyActionLabel: "Open agents",
+    emptyActionHref: "/team/agents",
+  }}
+  template={overviewTemplate}
+/>
+<Story
+  name="Error"
+  args={{
+    ...teamOverviewArgs,
+    state: "error",
+    errorTitle: "Unable to load Team",
+    errorMessage: "Team overview data could not be fetched.",
+    errorDetails: "GET /api/team/overview -> 503",
+    retryLabel: "Retry",
   }}
   template={overviewTemplate}
 />
