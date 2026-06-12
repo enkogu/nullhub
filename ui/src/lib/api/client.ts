@@ -615,7 +615,7 @@ export const nullBoilerApi = createNullBoilerApi(request, withQuery);
 export const api = {
   getStatus: () => request<any>('/status'),
   getGlobalUsage: (window: '24h' | '7d' | '30d' | 'all' = '24h') =>
-    request<any>(`/usage?window=${window}`),
+    request<any>(withQuery('/usage', { window })),
   getComponents: () => request<any>('/components'),
   getInstances: () => request<any>('/instances'),
   getWizard: (component: string, version = '') =>

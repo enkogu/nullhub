@@ -107,6 +107,7 @@
 	const systemLinks = [
 		{ title: "Providers", url: "/providers" },
 		{ title: "Channels", url: "/channels" },
+		{ title: "Usage", url: "/system/usage" },
 		{ title: "Settings", url: "/settings" },
 		{ title: "Observability", url: "/nullwatch" },
 	];

@@ -80,4 +80,12 @@ export const appShellCommandSections: AppShellCommandSection[] = [
 		shortcut: "S",
 		keywords: ["providers", "channels", "settings", "observability"],
 	},
+	{
+		key: "system-usage",
+		title: "System Usage",
+		url: "/system/usage",
+		detail: "Token usage, spend signal, and agent usage totals.",
+		shortcut: "U",
+		keywords: ["usage", "spend", "tokens", "requests"],
+	},
 ];

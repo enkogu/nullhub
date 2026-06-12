@@ -4,6 +4,7 @@
   import { onMount } from "svelte";
   import { pollWhileVisible } from "$lib/poll";
   import LogViewer from "$lib/components/LogViewer.svelte";
+  import AgentOverview from "$lib/components/AgentOverview.svelte";
   import ConfigEditor from "$lib/components/ConfigEditor.svelte";
   import NullClawChatSurface from "$lib/components/NullClawChatSurface.svelte";
   import InstanceHistoryPanel from "$lib/components/InstanceHistoryPanel.svelte";
@@ -24,6 +25,7 @@
     setSelectedBoilerInstance,
     setSelectedTicketsInstance,
   } from "$lib/nullstack/backendSelection";
+  import { agentDetailHashForTab, normalizeAgentDetailTab } from "$lib/components/agentDetailTabs";
   import { instanceRoute } from "$lib/nullstack/path";
   import { PageHeader } from "$lib/components/ui/page-header";
   import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
@@ -55,9 +57,10 @@
   let onboardingStatus = $state<any>(null);
   let lastUsageRefreshAt = $state(0);
   type UsageWindow = "24h" | "7d" | "30d" | "all";
-  let usageWindow = $state<UsageWindow>("24h");
+  let usageWindow = $state<UsageWindow>("7d");
   let usageData = $state<any>(null);
   let usageLoading = $state(false);
+  let usageError = $state("");
   let standaloneCopyState = $state<"idle" | "copied" | "error">("idle");
   let standaloneCopyTimer: ReturnType<typeof setTimeout> | null = null;
   let integration = $state<any>(null);
@@ -86,6 +89,7 @@
   let ticketClaimTtl = $state("300000");
   let claimedTicket = $state<any>(null);
   let lastTicketsRefreshAt = $state(0);
+  let routeHashReady = $state(false);
   let refreshInFlight = false;
   let refreshQueued = false;
   let refreshRequestSeq = 0;
@@ -235,14 +239,22 @@
 
   function hashTab(): string {
     const value = window.location.hash.replace(/^#/, "");
+    if (supportsAgentData) return normalizeAgentDetailTab(value);
     return routeTabs.has(value) ? value : "";
   }
 
   function syncTabHash(tab: string) {
     if (typeof window === "undefined") return;
+    const hash = supportsAgentData ? agentDetailHashForTab(tab) : tab;
     const url = new URL(window.location.href);
-    url.hash = tab;
+    url.hash = hash;
     window.history.replaceState(null, "", url);
+  }
+
+  function applyHashTab() {
+    const tab = hashTab();
+    if (tab) activeTab = tab;
+    routeHashReady = true;
   }
 
   function extractModel(cfg: any): string | null {
@@ -820,15 +832,19 @@
     if (!supportsUsage) {
       usageData = null;
       usageLoading = false;
+      usageError = "";
       return;
     }
     const now = Date.now();
     if (!force && now - lastUsageRefreshAt < 15_000) return;
     lastUsageRefreshAt = now;
     usageLoading = true;
+    usageError = "";
     try {
       usageData = await api.getUsage(component, name, usageWindow);
+      usageError = "";
     } catch {
+      usageError = "Usage data could not be loaded.";
       usageData = {
         window: usageWindow,
         rows: [],
@@ -920,6 +936,15 @@
   $effect(() => {
     component;
     name;
+    if (supportsAgentData) {
+      const normalized = normalizeAgentDetailTab(activeTab);
+      if (!normalized) {
+        activeTab = "overview";
+      } else if (normalized !== activeTab) {
+        activeTab = normalized;
+      }
+      return;
+    }
     if (activeTab === "chat" && !supportsChat) {
       activeTab = "overview";
     }
@@ -944,7 +969,7 @@
   });
 
   $effect(() => {
-    if (routeTabs.has(activeTab)) syncTabHash(activeTab);
+    if (routeHashReady && routeTabs.has(activeTab)) syncTabHash(activeTab);
   });
 
   $effect(() => {
@@ -963,10 +988,13 @@
     if (!component || !name) return;
     if (initializedRouteKey === instanceRouteKey) return;
     initializedRouteKey = instanceRouteKey;
+    routeHashReady = false;
+    activeTab = "overview";
     instance = null;
     config = null;
     providerHealth = null;
     usageData = null;
+    usageError = "";
     integration = null;
     integrationError = null;
     linkingIntegration = false;
@@ -997,15 +1025,13 @@
     lastUsageRefreshAt = 0;
     lastIntegrationRefreshAt = 0;
     integrationRequestSeq += 1;
+    if (typeof window !== "undefined") {
+      queueMicrotask(applyHashTab);
+    }
     void refresh(true, true);
   });
 
   onMount(() => {
-    const applyHashTab = () => {
-      const tab = hashTab();
-      if (tab) activeTab = tab;
-    };
-
     applyHashTab();
     window.addEventListener("hashchange", applyHashTab);
 
@@ -1210,18 +1236,20 @@
   <Tabs bind:value={activeTab} class="instance-tabs">
     <TabsList>
       <TabsTrigger value="overview">Overview</TabsTrigger>
-      {#if supportsChat}
+      {#if supportsAgentData}
+        <TabsTrigger value="memory">Knowledge</TabsTrigger>
+        <TabsTrigger value="skills">Skills</TabsTrigger>
+        <TabsTrigger value="mcp">Integrations</TabsTrigger>
+        <TabsTrigger value="cron">Schedules</TabsTrigger>
+        <TabsTrigger value="history">Sessions</TabsTrigger>
         <TabsTrigger value="chat">
           Chat{#if !providerStatus.configured}<span class="tab-warn">!</span>{/if}
         </TabsTrigger>
-      {/if}
-      {#if supportsAgentData}
-        <TabsTrigger value="history">History</TabsTrigger>
-        <TabsTrigger value="memory">Memory</TabsTrigger>
-        <TabsTrigger value="skills">Skills</TabsTrigger>
-        <TabsTrigger value="mcp">MCP</TabsTrigger>
         <TabsTrigger value="hooks">Hooks</TabsTrigger>
-        <TabsTrigger value="cron">Cron</TabsTrigger>
+      {:else if supportsChat}
+        <TabsTrigger value="chat">
+          Chat{#if !providerStatus.configured}<span class="tab-warn">!</span>{/if}
+        </TabsTrigger>
       {/if}
       {#if supportsTicketsUi}
         <TabsTrigger value="tickets">Tickets</TabsTrigger>
@@ -1238,7 +1266,120 @@
 
   <div class="tab-content">
     {#if activeTab === "overview"}
-      <div class="overview-grid">
+      {#if supportsAgentData}
+        <AgentOverview
+          {component}
+          {name}
+          {instance}
+          {modelName}
+          {providerStatus}
+          providerHealth={providerHealthCurrent}
+          providerHealthLoading={providerHealthLoading}
+          providerHintText={providerHintText}
+          providerOk={providerDotOk}
+          {usageData}
+          {usageLoading}
+          {usageError}
+          onRefreshUsage={() => void refreshUsage(true)}
+          onToggleAutoStart={toggleAutoStart}
+          onToggleVerbose={supportsVerboseStartup ? toggleVerbose : undefined}
+        />
+        {#if supportsIntegration}
+          <div class="overview-grid agent-overview-followup">
+            <Card class="info-card integration-card">
+              <div class="integration-header">
+                <span class="label">Telemetry</span>
+                {#if linkedWatch}
+                  <span class="integration-badge">Linked</span>
+                {/if}
+              </div>
+
+              {#if integrationLoading && !integration}
+                <span class="integration-muted">Loading integration status...</span>
+              {:else if integrationError}
+                <span class="integration-error">{integrationError}</span>
+              {:else}
+                <div class="integration-block">
+                  <span class="integration-title">Observer</span>
+                  {#if linkedWatch}
+                    <span class="mono">{linkedWatch.name}:{linkedWatch.port}</span>
+                  {:else if currentTelemetryLink}
+                    <span class="integration-muted mono">{currentTelemetryLink.endpoint}</span>
+                  {:else}
+                    <span class="integration-muted">No NullWatch linked yet.</span>
+                  {/if}
+                </div>
+
+                {#if currentTelemetryLink}
+                  <div class="integration-block">
+                    <span class="integration-title">OTLP</span>
+                    <div class="integration-stats compact">
+                      <div>
+                        <span class="stat-label">Endpoint</span>
+                        <span class="mono">{currentTelemetryLink.endpoint}</span>
+                      </div>
+                      <div>
+                        <span class="stat-label">Service</span>
+                        <span class="mono">{currentTelemetryLink.service_name || "-"}</span>
+                      </div>
+                      <div>
+                        <span class="stat-label">Auth</span>
+                        <span>{currentTelemetryLink.auth_header ? "Bearer" : "None"}</span>
+                      </div>
+                      <div>
+                        <span class="stat-label">Source Header</span>
+                        <span>{currentTelemetryLink.source_header ? "On" : "Off"}</span>
+                      </div>
+                    </div>
+                  </div>
+                {/if}
+
+                {#if watchOptions.length > 0}
+                  <div class="integration-form">
+                    <Label class="integration-field">
+                      <span>Local observer</span>
+                      <Select bind:value={selectedWatch} disabled={linkingIntegration}>
+                        <option value="">Select NullWatch</option>
+                        {#each watchOptions as watch}
+                          <option value={watch.name}>
+                            {watch.name} ({watch.port}){watch.running ? "" : " - stopped"}
+                          </option>
+                        {/each}
+                      </Select>
+                    </Label>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      class="integration-btn"
+                      onclick={linkNullWatch}
+                      disabled={linkingIntegration || !selectedWatch}
+                    >
+                      {linkingIntegration
+                        ? "Linking..."
+                        : linkedWatch
+                          ? "Relink NullWatch"
+                          : "Link NullWatch"}
+                    </Button>
+                    {#if linkedWatch}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        class="integration-btn"
+                        href={`/system/observability?watch=${encodeURIComponent(linkedWatch.name)}`}
+                      >
+                        Open NullWatch
+                      </Button>
+                    {/if}
+                  </div>
+                {:else}
+                  <span class="integration-muted">Install NullWatch to link telemetry.</span>
+                {/if}
+              {/if}
+            </Card>
+          </div>
+        {/if}
+      {:else}
+        <div class="overview-grid">
         <Card class="info-card">
           <span class="label">Status</span>
           <Badge variant={statusVariant}>{statusValue}</Badge>
@@ -1893,7 +2034,8 @@
             {/if}
           </Card>
         {/if}
-      </div>
+        </div>
+      {/if}
     {:else if activeTab === "history"}
       {#key instanceRouteKey}
         <InstanceHistoryPanel {component} {name} active={activeTab === "history"} />
@@ -2136,6 +2278,9 @@
   :global(.usage-card),
   :global(.integration-card) {
     grid-column: 1 / -1;
+  }
+  .agent-overview-followup {
+    margin-top: 1rem;
   }
 
   .label {
