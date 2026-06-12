@@ -65,6 +65,32 @@ pub const CreateOptions = struct {
     notify_sender: approval_notify.Sender = .{},
 };
 
+pub const ProducerApprovalInput = struct {
+    space_id: []const u8,
+    kind: []const u8 = "signature",
+    queue: []const u8 = "",
+    target_ref: []const u8 = "",
+    title: []const u8,
+    summary: []const u8 = "",
+    created_at_ms: i64,
+};
+
+pub fn createProducerApproval(state: *state_mod.State, input: ProducerApprovalInput, now_ms: i64) !state_mod.Approval {
+    if (!isValidKind(input.kind)) return error.InvalidApprovalKind;
+    const approval = try state.addApproval(.{
+        .space_id = input.space_id,
+        .kind = input.kind,
+        .queue = input.queue,
+        .target_ref = input.target_ref,
+        .title = input.title,
+        .summary = input.summary,
+        .created_at_ms = input.created_at_ms,
+    });
+    try appendApprovalEvent(state, approval, "approval.created", "Approval created", now_ms);
+    try state.save();
+    return approval;
+}
+
 pub fn handleCreate(allocator: std.mem.Allocator, state: *state_mod.State, target: []const u8, body: []const u8, now_ms: i64, options: CreateOptions) helpers.ApiResponse {
     const space_id = requiredSpaceQueryAlloc(allocator, target) catch |err| switch (err) {
         error.MissingSpace => return helpers.badRequest("{\"error\":\"space query is required\"}"),
@@ -106,7 +132,7 @@ pub fn handleCreate(allocator: std.mem.Allocator, state: *state_mod.State, targe
     const summary = stringField(root, "summary") orelse "";
     const created_at_ms = if (root.get("created_at_ms")) |value| parseI64(value) orelse now_ms else now_ms;
 
-    const approval = state.addApproval(.{
+    const approval = createProducerApproval(state, .{
         .space_id = space_id,
         .kind = kind,
         .queue = queue,
@@ -114,12 +140,7 @@ pub fn handleCreate(allocator: std.mem.Allocator, state: *state_mod.State, targe
         .title = title,
         .summary = summary,
         .created_at_ms = created_at_ms,
-    }) catch return helpers.serverError();
-
-    appendApprovalEvent(state, approval, "approval.created", "Approval created", now_ms) catch
-        return helpers.serverError();
-
-    state.save() catch return helpers.serverError();
+    }, now_ms) catch return helpers.serverError();
 
     // Best-effort Telegram ping (ncm-ie7m): never fails the create request.
     _ = approval_notify.notifyApprovalCreated(allocator, state, approval, options.base_url, options.notify_sender);

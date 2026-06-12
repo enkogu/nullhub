@@ -6160,8 +6160,19 @@ pub fn dispatch(
                 handleCronRuns(allocator, s, paths, parsed_cron.component, parsed_cron.name, parsed_cron.job_id.?, target)
             else
                 methodNotAllowed(),
-            .run => if (std.mem.eql(u8, method, "POST"))
-                handleCronCommandWithJob(
+            .run => if (std.mem.eql(u8, method, "POST")) blk: {
+                if (schedule_order_bridge.beforeCronRun(
+                    allocator,
+                    paths,
+                    s,
+                    parsed_cron.component,
+                    parsed_cron.name,
+                    parsed_cron.job_id.?,
+                    std_compat.time.milliTimestamp(),
+                )) |gate_resp| {
+                    break :blk gate_resp;
+                }
+                break :blk handleCronCommandWithJob(
                     allocator,
                     s,
                     paths,
@@ -6171,9 +6182,8 @@ pub fn dispatch(
                     &.{ "cron", "run", parsed_cron.job_id.? },
                     "ran",
                     "cron_run_failed",
-                )
-            else
-                methodNotAllowed(),
+                );
+            } else methodNotAllowed(),
             .pause => if (std.mem.eql(u8, method, "POST"))
                 handleCronCommandWithJob(
                     allocator,

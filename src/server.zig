@@ -2014,6 +2014,9 @@ pub const Server = struct {
             const resp = nullboiler_api.handle(allocator, method, target, body, .{
                 .boiler_url = selectBackendUrl(env_boiler_url, managed_boiler, requested_boiler),
                 .boiler_token = selectBackendToken(env_boiler_token, managed_boiler, requested_boiler),
+                .state = self.state,
+                .boiler_instance = if (managed_boiler) |cfg| cfg.name else requested_boiler,
+                .now_ms = std_compat.time.milliTimestamp(),
             });
             event_producers.emitNullBoilerTransition(
                 allocator,
@@ -3682,6 +3685,93 @@ test "route schedule order transitions bridge to nullclaw cron and emit order ex
         const cron = try readServerTestCronStore(allocator, ctx.paths, "nullclaw", "my-agent");
         defer allocator.free(cron);
         try std.testing.expectEqualStrings("[]\n", cron);
+    }
+}
+
+test "route T1 schedule order cron run creates approval before execution" {
+    const builtin = @import("builtin");
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var ctx = TestContext.init(allocator);
+    defer ctx.deinit(allocator);
+    try ctx.paths.ensureDirs();
+
+    try ctx.state.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0", .space_id = "ops" });
+    try writeServerTestCronStore(allocator, ctx.paths, "nullclaw", "my-agent", "[]");
+
+    const script =
+        \\#!/bin/sh
+        \\set -eu
+        \\home="${NULLCLAW_HOME:?}"
+        \\if [ "$1" = "cron" ] && [ "$2" = "add-agent" ] && [ "$3" = "0 9 * * *" ] && [ "$5" = "--session-target" ] && [ "$6" = "order-1" ]; then
+        \\  cat > "${home}/cron.json" <<EOF
+        \\[{"id":"job-order-1","expression":"0 9 * * *","prompt":"Send brief","paused":false,"one_shot":false}]
+        \\EOF
+        \\  exit 0
+        \\fi
+        \\if [ "$1" = "cron" ] && [ "$2" = "run" ] && [ "$3" = "job-order-1" ]; then
+        \\  exit 0
+        \\fi
+        \\if [ "$1" = "cron" ] && [ "$2" = "runs" ] && [ "$3" = "job-order-1" ] && [ "$4" = "--limit" ] && [ "$5" = "5" ] && [ "$6" = "--json" ]; then
+        \\  printf '%s\n' '{"runs":[{"id":"run-1","job_id":"job-order-1","status":"ok"}],"total":1}'
+        \\  exit 0
+        \\fi
+        \\echo "unexpected args: $*" >&2
+        \\exit 1
+        \\
+    ;
+    try writeServerTestBinary(allocator, ctx.paths, "nullclaw", "1.0.0", script);
+
+    {
+        const resp = ctx.route(
+            allocator,
+            "POST",
+            "/api/orders?space=ops",
+            "{\"title\":\"Morning report\",\"kind\":\"schedule\",\"schedule\":\"0 9 * * *\",\"content\":\"tier: T1\\nSend brief\"}",
+        );
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const resp = ctx.route(allocator, "POST", "/api/orders/order-1/activate?space=ops", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    }
+
+    {
+        const resp = ctx.route(allocator, "POST", "/api/instances/nullclaw/my-agent/cron/job-order-1/run", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("202 Accepted", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"approval_required\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"tier\":\"T1\"") != null);
+        try std.testing.expectEqual(@as(usize, 1), ctx.state.approvalsList().len);
+        try std.testing.expectEqualStrings("pending", ctx.state.approvalsList()[0].status);
+    }
+
+    {
+        const resp = ctx.route(allocator, "GET", "/api/events?space=ops&type=order.executed", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"events\":[]") != null);
+    }
+
+    _ = try ctx.state.decideApproval(1, "approved", "", 3000);
+
+    {
+        const resp = ctx.route(allocator, "POST", "/api/instances/nullclaw/my-agent/cron/job-order-1/run", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"ran\"") != null);
+    }
+
+    {
+        const resp = ctx.route(allocator, "GET", "/api/events?space=ops&type=order.executed", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.executed\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"run_ref\":\"run-1\"") != null);
     }
 }
 
