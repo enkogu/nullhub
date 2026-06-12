@@ -12,6 +12,8 @@ type NullHubFixtureOptions = {
   ordersStatus?: number;
   approvals?: Record<string, unknown>[];
   approvalsStatus?: number;
+  charter?: Record<string, unknown>;
+  charterStatus?: number;
   marketCatalog?: JsonBody;
   marketCatalogStatus?: number;
   marketCatalogDelayMs?: number;
@@ -422,6 +424,16 @@ const fixtureOrders = [
   },
 ];
 
+const fixtureCharter = {
+  space_id: 'ops',
+  stage: 'alpha',
+  mission: 'Keep operator work visible, reviewed, and moving.',
+  autonomy_bounds: 'Ask before destructive work.\nUse configured provider refs only.',
+  autonomy_defaults: 'T1 until a policy order raises the tier.',
+  metrics: 'open approvals\ncycle time\nweekly spend',
+  doc_path: 'charter.md',
+};
+
 export const fixtureApprovals = [
   {
     id: 3,
@@ -783,6 +795,74 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions, request
     return orderSpace === space;
   });
   await fulfillJson(route, { orders });
+}
+
+async function charterRoute(
+  route: Route,
+  options: NullHubFixtureOptions,
+  charters: Record<string, Record<string, unknown>>,
+) {
+  recordRequest(route, options);
+  if (options.charterStatus && options.charterStatus >= 400) {
+    await fulfillJson(route, { error: 'Charter unavailable.' }, options.charterStatus);
+    return;
+  }
+
+  const url = new URL(route.request().url());
+  const space = url.searchParams.get('space');
+  if (!space) {
+    await fulfillJson(route, { error: 'space query is required' }, 400);
+    return;
+  }
+
+  if (!charters[space]) {
+    charters[space] = {
+      space_id: space,
+      stage: 'draft',
+      mission: '',
+      autonomy_bounds: '',
+      autonomy_defaults: 'T1',
+      metrics: '',
+      doc_path: 'charter.md',
+    };
+  }
+
+  if (route.request().method() === 'GET') {
+    await fulfillJson(route, charters[space]);
+    return;
+  }
+
+  if (route.request().method() === 'PUT') {
+    const payload = route.request().postDataJSON() as Record<string, unknown> | null;
+    const stage = String(payload?.stage || '').trim();
+    if (!stage) {
+      await fulfillJson(route, { error: 'stage is required' }, 400);
+      return;
+    }
+
+    const next = {
+      space_id: space,
+      stage,
+      mission: String(payload?.mission || ''),
+      autonomy_bounds: String(payload?.autonomy_bounds || ''),
+      autonomy_defaults: String(payload?.autonomy_defaults || 'T1'),
+      metrics: String(payload?.metrics || ''),
+      doc_path: 'charter.md',
+    };
+    if (Object.values(next).some((value) => String(value).includes('NULLHUB:CHARTER_FIELD:'))) {
+      await fulfillJson(
+        route,
+        { error: 'charter Markdown fields must not contain reserved NULLHUB charter markers' },
+        400,
+      );
+      return;
+    }
+    charters[space] = next;
+    await fulfillJson(route, next);
+    return;
+  }
+
+  await fulfillJson(route, { error: 'charter method not allowed' }, 405);
 }
 
 async function scheduleFireRoute(
@@ -1318,6 +1398,9 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   const spaces = fixtureSpaces.map((space) => ({ ...space }));
   const events = options.events || fixtureEvents.map((event) => ({ ...event, payload: { ...event.payload } }));
   const orders = options.orders || fixtureOrders.map((order) => ({ ...order }));
+  const charters: Record<string, Record<string, unknown>> = {
+    ops: { ...(options.charter || fixtureCharter) },
+  };
   const pipelines = (options.nullticketsPipelines || []).map((pipeline) => ({ ...pipeline }));
   const tasks = options.nullticketsTasks || [];
   const artifacts = (options.nullticketsArtifacts || []).map((artifact) => ({ ...artifact }));
@@ -1363,6 +1446,8 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route(/\/nullhub-api\/orders(?:\/[^/?]+(?:\/[^/?]+)?)?(?:\?.*)?$/, (route) =>
     ordersRoute(route, options, orders),
   );
+  await page.route(/\/api\/charter(?:\?.*)?$/, (route) => charterRoute(route, options, charters));
+  await page.route(/\/nullhub-api\/charter(?:\?.*)?$/, (route) => charterRoute(route, options, charters));
   const approvals = (options.approvals || fixtureApprovals).map((approval) => ({ ...approval }));
   await page.route(/\/api\/approvals(?:\?.*)?$/, (route) => approvalsRoute(route, options, approvals));
   await page.route(/\/nullhub-api\/approvals(?:\?.*)?$/, (route) => approvalsRoute(route, options, approvals));
