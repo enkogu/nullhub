@@ -2,6 +2,7 @@ import statusFixture from './status.json';
 import { jsonFixture, type ApiFixtureRoute } from './backend';
 
 export { statusFixture };
+export { createOrdersFixtureRoutes, createOrdersFixtureState, fixtureOrders } from './orders';
 
 export const coreApiFixtureRoutes: ApiFixtureRoute[] = [
   {
