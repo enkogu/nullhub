@@ -19,6 +19,7 @@ const managed_cli = @import("managed_cli.zig");
 const events_api = @import("events.zig");
 const event_producers = @import("event_producers.zig");
 const proxy_api = @import("proxy.zig");
+const schedule_order_bridge = @import("schedule_order_bridge.zig");
 const nullclaw_web_channel = @import("../core/nullclaw_web_channel.zig");
 const nullclaw_gateway_config = @import("../core/nullclaw_gateway_config.zig");
 const query_api = @import("query.zig");
@@ -2322,10 +2323,75 @@ fn handleCronCommandWithJob(
         "{{\"status\":\"{s}\",\"job\":{s}}}",
         .{ success_status, job_json },
     ) catch return helpers.serverError();
-    event_producers.emitCronJobAction(allocator, s, component, name, job_id, success_status, std_compat.time.milliTimestamp()) catch |err| {
+    const now_ms = std_compat.time.milliTimestamp();
+    event_producers.emitCronJobAction(allocator, s, component, name, job_id, success_status, now_ms) catch |err| {
         std.log.warn("failed to append cron action event: {s}", .{@errorName(err)});
     };
+    if (std.mem.eql(u8, success_status, "ran")) {
+        const run_ref = latestCronRunRefAlloc(allocator, s, paths, component, name, job_id) catch null;
+        defer if (run_ref) |value| allocator.free(value);
+        schedule_order_bridge.emitExecutedForCronRun(
+            allocator,
+            paths,
+            s,
+            component,
+            name,
+            job_id,
+            run_ref orelse job_id,
+            now_ms,
+        ) catch |err| {
+            std.log.warn("failed to append order executed event: {s}", .{@errorName(err)});
+        };
+    }
     return jsonOk(response_body);
+}
+
+fn latestCronRunRefAlloc(
+    allocator: std.mem.Allocator,
+    s: *state_mod.State,
+    paths: paths_mod.Paths,
+    component: []const u8,
+    name: []const u8,
+    job_id: []const u8,
+) !?[]u8 {
+    const runs_body = managed_cli.tryRunJsonSuccess(
+        allocator,
+        s,
+        paths,
+        component,
+        name,
+        &.{ "cron", "runs", job_id, "--limit", "5", "--json" },
+    ) orelse return null;
+    defer allocator.free(runs_body);
+    return cronRunRefFromBodyAlloc(allocator, runs_body);
+}
+
+fn cronRunRefFromBodyAlloc(allocator: std.mem.Allocator, body: []const u8) !?[]u8 {
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    if (parsed.value != .object) return null;
+    const runs_value = parsed.value.object.get("runs") orelse return null;
+    if (runs_value != .array or runs_value.array.items.len == 0) return null;
+    const first = runs_value.array.items[0];
+    if (first != .object) return null;
+
+    if (try cronRunRefFieldAlloc(allocator, first.object, "run_ref")) |value| return value;
+    if (try cronRunRefFieldAlloc(allocator, first.object, "run_id")) |value| return value;
+    if (try cronRunRefFieldAlloc(allocator, first.object, "id")) |value| return value;
+    return null;
+}
+
+fn cronRunRefFieldAlloc(allocator: std.mem.Allocator, object: std.json.ObjectMap, field: []const u8) !?[]u8 {
+    const value = object.get(field) orelse return null;
+    return switch (value) {
+        .string => |raw| if (raw.len > 0) try allocator.dupe(u8, raw) else null,
+        .integer => |raw| try std.fmt.allocPrint(allocator, "{d}", .{raw}),
+        else => null,
+    };
 }
 
 fn handleCronUpdate(
