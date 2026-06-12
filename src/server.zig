@@ -26,6 +26,7 @@ const providers_api = @import("api/providers.zig");
 const channels_api = @import("api/channels.zig");
 const events_api = @import("api/events.zig");
 const approvals_api = @import("api/approvals.zig");
+const orders_api = @import("api/orders.zig");
 const event_producers = @import("api/event_producers.zig");
 const spaces_api = @import("api/spaces.zig");
 const usage_api = @import("api/usage.zig");
@@ -1654,6 +1655,45 @@ pub const Server = struct {
             return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
         }
 
+        // Orders API — /api/orders?space={id} and /api/orders/{id}[/action]?space={id}
+        if (orders_api.isOrdersCollectionPath(target)) {
+            if (std.mem.eql(u8, method, "GET")) {
+                const resp = orders_api.handleList(allocator, self.paths, target);
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            if (std.mem.eql(u8, method, "POST")) {
+                const resp = orders_api.handleCreate(allocator, self.paths, self.state, target, body, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+        if (orders_api.orderIdFromTarget(allocator, target) catch null) |order_id| {
+            defer allocator.free(order_id);
+            if (orders_api.isScheduleTarget(target)) {
+                if (std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "PATCH")) {
+                    const resp = orders_api.handleSchedule(allocator, self.paths, self.state, target, order_id, body, std_compat.time.milliTimestamp());
+                    return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+                }
+                return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+            }
+            if (orders_api.transitionFromTarget(target)) |transition| {
+                if (std.mem.eql(u8, method, "POST")) {
+                    const resp = orders_api.handleTransition(allocator, self.paths, self.state, target, order_id, transition, std_compat.time.milliTimestamp());
+                    return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+                }
+                return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+            }
+            if (std.mem.eql(u8, method, "GET")) {
+                const resp = orders_api.handleGet(allocator, self.paths, target, order_id);
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            if (std.mem.eql(u8, method, "PATCH")) {
+                const resp = orders_api.handleUpdate(allocator, self.paths, self.state, target, order_id, body, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+
         // Providers API — /api/providers[/{id}[/validate]]
         if (providers_api.isProvidersPath(target)) {
             if (std.mem.eql(u8, target, "/api/providers") or std.mem.startsWith(u8, target, "/api/providers?")) {
@@ -3254,6 +3294,69 @@ test "route POST and GET /api/events are space scoped and cursor paged" {
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":1") != null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":3") == null);
     }
+}
+
+test "route /api/orders CRUD transitions and emits events" {
+    var ctx = TestContext.init(std.testing.allocator);
+    defer ctx.deinit(std.testing.allocator);
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/orders?space=ops",
+            "{\"title\":\"Morning report\",\"summary\":\"Daily brief\",\"content\":\"# Brief\\n\"}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":\"order-1\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"draft\"") != null);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "GET", "/api/orders?space=ops", "");
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"title\":\"Morning report\"") != null);
+    }
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "PATCH",
+            "/api/orders/order-1?space=ops",
+            "{\"title\":\"Updated report\"}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"title\":\"Updated report\"") != null);
+    }
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/orders/order-1/enact?space=ops",
+            "",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"active\"") != null);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "GET", "/api/events?space=ops&subject_type=order", "");
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.created\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.updated\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.enacted\"") != null);
+    }
+
+    const doc_path = try ctx.paths.spaceOrderDoc(std.testing.allocator, "ops", "order-1");
+    defer std.testing.allocator.free(doc_path);
+    const doc_file = try std_compat.fs.openFileAbsolute(doc_path, .{});
+    defer doc_file.close();
 }
 
 test "route /api/approvals covers decide state transitions and feedback-required" {

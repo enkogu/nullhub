@@ -30,6 +30,8 @@ pub const nullclaw_gateway_config = @import("core/nullclaw_gateway_config.zig");
 pub const nullboiler_api = @import("api/nullboiler.zig");
 pub const nulltickets_api = @import("api/nulltickets.zig");
 pub const nullwatch_api = @import("api/nullwatch.zig");
+pub const orders = @import("core/orders.zig");
+pub const orders_api = @import("api/orders.zig");
 pub const orchestrator = @import("installer/orchestrator.zig");
 pub const manifest = @import("core/manifest.zig");
 pub const paths = @import("core/paths.zig");
@@ -92,6 +94,8 @@ test {
     _ = nullboiler_api;
     _ = nulltickets_api;
     _ = nullwatch_api;
+    _ = orders;
+    _ = orders_api;
     _ = orchestrator;
     _ = manifest;
     _ = paths;
