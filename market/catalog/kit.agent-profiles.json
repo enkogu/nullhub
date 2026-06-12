@@ -1,0 +1,125 @@
+{
+  "id": "builtin.agent-profiles",
+  "name": "Agent Profile Starters",
+  "version": "1.0.0",
+  "scale": "kit",
+  "summary": "Starter runtime profiles for supervised, research, and delivery-focused managed agents.",
+  "requires": [
+    {
+      "kind": "package",
+      "id": "builtin.nullclaw-agent"
+    },
+    {
+      "kind": "package",
+      "id": "builtin.managed-skills"
+    }
+  ],
+  "contributes": [
+    {
+      "kind": "agent_profile",
+      "name": "Supervised Operator"
+    },
+    {
+      "kind": "agent_profile",
+      "name": "Research Analyst"
+    },
+    {
+      "kind": "agent_profile",
+      "name": "Delivery Engineer"
+    }
+  ],
+  "config": {
+    "taxonomy": "agent_profiles",
+    "install_target": "nullclaw.runtime_profiles"
+  },
+  "seeds": [
+    {
+      "kind": "agent_profile",
+      "slug": "supervised-operator",
+      "name": "Supervised Operator",
+      "description": "Default managed agent profile for scoped workspace tasks with human review.",
+      "runtime": {
+        "memory_profile": "minimal_none",
+        "gateway_require_pairing": true,
+        "a2a_enabled": false
+      },
+      "autonomy": {
+        "level": "supervised",
+        "approval_required_for": [
+          "external_send",
+          "destructive_file_change",
+          "package_install"
+        ]
+      },
+      "skills": [
+        "nullhub-admin"
+      ]
+    },
+    {
+      "kind": "agent_profile",
+      "slug": "research-analyst",
+      "name": "Research Analyst",
+      "description": "Evidence-first profile for source collection, synthesis, and order drafting.",
+      "runtime": {
+        "memory_profile": "minimal_none",
+        "gateway_require_pairing": true,
+        "a2a_enabled": false
+      },
+      "autonomy": {
+        "level": "review_required",
+        "approval_required_for": [
+          "external_send",
+          "order_enact"
+        ]
+      },
+      "skills": [
+        "nullhub-admin"
+      ],
+      "recommended_mcp_servers": [
+        "context7-docs",
+        "search"
+      ]
+    },
+    {
+      "kind": "agent_profile",
+      "slug": "delivery-engineer",
+      "name": "Delivery Engineer",
+      "description": "Implementation profile for code, tests, and deployment verification loops.",
+      "runtime": {
+        "memory_profile": "minimal_none",
+        "gateway_require_pairing": true,
+        "a2a_enabled": true
+      },
+      "autonomy": {
+        "level": "supervised",
+        "approval_required_for": [
+          "push_main",
+          "production_deploy",
+          "destructive_file_change"
+        ]
+      },
+      "skills": [
+        "nullhub-admin"
+      ],
+      "recommended_loops": [
+        "test-until-green",
+        "deploy-verification"
+      ]
+    }
+  ],
+  "extends": [
+    "builtin.nullclaw-agent",
+    "builtin.managed-skills"
+  ],
+  "charter": {
+    "mission": "Provide safe default agent profiles for common managed-agent roles.",
+    "autonomy_bounds": [
+      "Profiles default to supervised or review-required autonomy",
+      "Profiles reference secrets through installed components rather than embedding values"
+    ],
+    "metrics": [
+      "agent_profiles_created",
+      "approval_interrupts"
+    ]
+  }
+}

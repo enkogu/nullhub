@@ -1,0 +1,58 @@
+{
+  "id": "builtin.managed-skills",
+  "name": "Managed NullClaw Skills",
+  "version": "1.0.0",
+  "scale": "kit",
+  "summary": "Built-in skill seeds for managed NullClaw agents.",
+  "requires": [
+    {
+      "kind": "package",
+      "id": "builtin.nullclaw-agent"
+    }
+  ],
+  "contributes": [
+    {
+      "kind": "skill",
+      "name": "nullhub-admin"
+    }
+  ],
+  "config": {
+    "taxonomy": "skills",
+    "install_target": "nullclaw.workspace.skills",
+    "allowlist_sync": [
+      "nullhub *"
+    ]
+  },
+  "seeds": [
+    {
+      "kind": "skill",
+      "name": "nullhub-admin",
+      "version": "0.1.2",
+      "install_kind": "bundled",
+      "recommended": true,
+      "always": true,
+      "description": "Teach managed NullClaw agents to discover NullHub routes first and use nullhub api for instance, provider, component, NullTickets task, queue, and NullBoiler workflow operations.",
+      "required_allowed_commands": [
+        "nullhub *"
+      ],
+      "source": {
+        "kind": "bundled_file",
+        "path": "src/bundled_skills/nullhub-admin/SKILL.md"
+      }
+    }
+  ],
+  "extends": [
+    "builtin.nullclaw-agent"
+  ],
+  "charter": {
+    "mission": "Give managed agents local operating knowledge before they act inside a Space.",
+    "autonomy_bounds": [
+      "Skills may add command allowlist entries only through explicit refs",
+      "Bundled skill content contains no provider credentials"
+    ],
+    "metrics": [
+      "skills_installed",
+      "agent_route_discovery_success"
+    ]
+  }
+}
