@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import InstanceCard from "$lib/components/InstanceCard.svelte";
-  import { api, approvalsApi, eventsApi, type Approval } from "$lib/api/client";
+  import { api, approvalsApi, eventsApi, type Approval, type NullHubEvent } from "$lib/api/client";
   import { pollWhileVisible } from "$lib/poll";
   import DataState, { type DataStateKind } from "$lib/components/DataState.svelte";
+  import DigestCard, { type DigestCardState } from "$lib/components/dashboard/DigestCard.svelte";
+  import type { DigestUsagePayload } from "$lib/components/dashboard/digest";
   import NeedsYouList, { type NeedsYouListState } from "$lib/components/dashboard/NeedsYouList.svelte";
   import RunningNow, { type RunningNowState } from "$lib/components/dashboard/RunningNow.svelte";
   import { agentEventsToLiveRuns, type LiveRun } from "$lib/components/work/live";
@@ -38,7 +40,7 @@
     }
   }
 
-  // Home top blocks: NeedsYou (pending approvals) and RunningNow (live work).
+  // Home top blocks load independently — one failure must not blank the others.
   // Each block loads independently — one failure must not blank the other.
   let needsYouApprovals = $state<Approval[]>([]);
   let needsYouState = $state<NeedsYouListState>("idle");
@@ -46,9 +48,30 @@
   let runningNowRuns = $state<LiveRun[]>([]);
   let runningNowState = $state<RunningNowState>("idle");
   let runningNowError = $state<unknown>(null);
+  let digestEvents = $state<NullHubEvent[]>([]);
+  let digestUsage = $state<DigestUsagePayload | null>(null);
+  let digestState = $state<DigestCardState>("idle");
+  let digestError = $state<unknown>(null);
+  let digestLastSeenMs = $state(Date.now() - 24 * 60 * 60_000);
   let nowMs = $state(Date.now());
   let stopNeedsYouPolling: (() => void) | null = null;
   let stopRunningNowPolling: (() => void) | null = null;
+  let stopDigestPolling: (() => void) | null = null;
+
+  function digestStorageKey() {
+    return `nullhub.home_digest.last_seen.${spacesStore.selectedSpaceId || "all"}`;
+  }
+
+  function readDigestLastSeen() {
+    if (typeof window === "undefined") return Date.now() - 24 * 60 * 60_000;
+    const stored = Number(window.localStorage.getItem(digestStorageKey()));
+    return Number.isFinite(stored) && stored > 0 ? stored : Date.now() - 24 * 60 * 60_000;
+  }
+
+  function rememberDigestSeen() {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(digestStorageKey(), String(Date.now()));
+  }
 
   async function refreshNeedsYou() {
     try {
@@ -79,15 +102,36 @@
     }
   }
 
+  async function refreshDigest() {
+    try {
+      const [eventsPage, usage] = await Promise.all([
+        eventsApi.listEvents({ limit: 100, spaceId: spacesStore.selectedSpaceId }),
+        api.getGlobalUsage("7d"),
+      ]);
+      digestEvents = eventsPage.events;
+      digestUsage = usage;
+      digestState = "ready";
+      digestError = null;
+      rememberDigestSeen();
+    } catch (e) {
+      digestState = "error";
+      digestError = e;
+    }
+  }
+
   onMount(() => {
     refreshTimer = setTimeout(() => void refresh(), 350);
     stopPolling = pollWhileVisible(refresh, 5000);
+    digestLastSeenMs = readDigestLastSeen();
     needsYouState = "loading";
     runningNowState = "loading";
+    digestState = "loading";
     void refreshNeedsYou();
     void refreshRunningNow();
+    void refreshDigest();
     stopNeedsYouPolling = pollWhileVisible(refreshNeedsYou, 30_000);
     stopRunningNowPolling = pollWhileVisible(refreshRunningNow, 10_000);
+    stopDigestPolling = pollWhileVisible(refreshDigest, 30_000);
   });
 
   onDestroy(() => {
@@ -95,6 +139,7 @@
     stopPolling?.();
     stopNeedsYouPolling?.();
     stopRunningNowPolling?.();
+    stopDigestPolling?.();
   });
 </script>
 
@@ -106,6 +151,16 @@
   </PageHeader>
 
   <div class="home-blocks">
+    <div class="home-digest">
+      <DigestCard
+        events={digestEvents}
+        usage={digestUsage}
+        state={digestState}
+        error={digestError}
+        lastSeenMs={digestLastSeenMs}
+        onRetry={() => void refreshDigest()}
+      />
+    </div>
     <NeedsYouList
       approvals={needsYouApprovals}
       state={needsYouState}
@@ -171,6 +226,10 @@
   @media (min-width: 64rem) {
     .home-blocks {
       grid-template-columns: 1fr 1fr;
+    }
+
+    .home-digest {
+      grid-column: 1 / -1;
     }
   }
 
