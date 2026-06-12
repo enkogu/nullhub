@@ -1,9 +1,13 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import InstanceCard from "$lib/components/InstanceCard.svelte";
-  import { api } from "$lib/api/client";
+  import { api, approvalsApi, eventsApi, type Approval } from "$lib/api/client";
   import { pollWhileVisible } from "$lib/poll";
   import DataState, { type DataStateKind } from "$lib/components/DataState.svelte";
+  import NeedsYouList, { type NeedsYouListState } from "$lib/components/dashboard/NeedsYouList.svelte";
+  import RunningNow, { type RunningNowState } from "$lib/components/dashboard/RunningNow.svelte";
+  import { agentEventsToLiveRuns, type LiveRun } from "$lib/components/work/live";
+  import { spacesStore } from "$lib/stores/spaces.svelte";
   import { PageHeader } from "$lib/components/ui/page-header";
   import { Button } from "$lib/components/ui/button";
 
@@ -34,14 +38,63 @@
     }
   }
 
+  // Home top blocks: NeedsYou (pending approvals) and RunningNow (live work).
+  // Each block loads independently — one failure must not blank the other.
+  let needsYouApprovals = $state<Approval[]>([]);
+  let needsYouState = $state<NeedsYouListState>("idle");
+  let needsYouError = $state<unknown>(null);
+  let runningNowRuns = $state<LiveRun[]>([]);
+  let runningNowState = $state<RunningNowState>("idle");
+  let runningNowError = $state<unknown>(null);
+  let nowMs = $state(Date.now());
+  let stopNeedsYouPolling: (() => void) | null = null;
+  let stopRunningNowPolling: (() => void) | null = null;
+
+  async function refreshNeedsYou() {
+    try {
+      const page = await approvalsApi.listApprovals({
+        status: "pending",
+        limit: 25,
+        spaceId: spacesStore.selectedSpaceId,
+      });
+      needsYouApprovals = page.approvals;
+      needsYouState = "ready";
+      needsYouError = null;
+    } catch (e) {
+      needsYouState = "error";
+      needsYouError = e;
+    }
+  }
+
+  async function refreshRunningNow() {
+    try {
+      const page = await eventsApi.listEvents({ limit: 50, spaceId: spacesStore.selectedSpaceId });
+      nowMs = Date.now();
+      runningNowRuns = agentEventsToLiveRuns(page.events, nowMs);
+      runningNowState = "ready";
+      runningNowError = null;
+    } catch (e) {
+      runningNowState = "error";
+      runningNowError = e;
+    }
+  }
+
   onMount(() => {
     refreshTimer = setTimeout(() => void refresh(), 350);
     stopPolling = pollWhileVisible(refresh, 5000);
+    needsYouState = "loading";
+    runningNowState = "loading";
+    void refreshNeedsYou();
+    void refreshRunningNow();
+    stopNeedsYouPolling = pollWhileVisible(refreshNeedsYou, 30_000);
+    stopRunningNowPolling = pollWhileVisible(refreshRunningNow, 10_000);
   });
 
   onDestroy(() => {
     if (refreshTimer) clearTimeout(refreshTimer);
     stopPolling?.();
+    stopNeedsYouPolling?.();
+    stopRunningNowPolling?.();
   });
 </script>
 
@@ -51,6 +104,23 @@
       <Button href="/market">Install component</Button>
     {/snippet}
   </PageHeader>
+
+  <div class="home-blocks">
+    <NeedsYouList
+      approvals={needsYouApprovals}
+      state={needsYouState}
+      error={needsYouError}
+      {nowMs}
+      onRetry={() => void refreshNeedsYou()}
+    />
+    <RunningNow
+      runs={runningNowRuns}
+      state={runningNowState}
+      error={runningNowError}
+      {nowMs}
+      onRetry={() => void refreshRunningNow()}
+    />
+  </div>
 
   <DataState
     state={dashboardState}
@@ -90,6 +160,18 @@
     padding: 0;
     max-width: none;
     margin: 0;
+  }
+
+  .home-blocks {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+
+  @media (min-width: 64rem) {
+    .home-blocks {
+      grid-template-columns: 1fr 1fr;
+    }
   }
 
   .instance-grid {
