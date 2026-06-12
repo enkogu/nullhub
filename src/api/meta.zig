@@ -408,8 +408,8 @@ const route_examples_orders = [_]ExampleSpec{
         .description = "Create a file-backed Order with markdown content.",
     },
     .{
-        .command = "nullhub api POST '/api/orders/order-1/enact?space=ops'",
-        .description = "Activate an Order and emit an order.enacted event.",
+        .command = "nullhub api POST '/api/orders/order-1/activate?space=ops'",
+        .description = "Activate an Order and emit an order.activated event.",
     },
 };
 
@@ -863,9 +863,9 @@ const routes = [_]RouteSpec{
     .{
         .id = "orders.transition",
         .method = "POST",
-        .path_template = "/api/orders/{id}/{draft|enact|suspend|resume|archive}",
+        .path_template = "/api/orders/{id}/{draft|activate|pause|resume|archive}",
         .category = "orders",
-        .summary = "Transition Order status and emit an order.* event.",
+        .summary = "Transition Order status with product verbs; activate emits order.activated and pause emits order.paused. Legacy enact/suspend aliases are accepted.",
         .auth_mode = "optional_bearer",
         .path_params = order_id_params[0..],
         .query_params = order_query_params[0..],

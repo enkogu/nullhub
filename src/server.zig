@@ -3336,7 +3336,7 @@ test "route /api/orders CRUD transitions and emits events" {
         const resp = ctx.route(
             std.testing.allocator,
             "POST",
-            "/api/orders/order-1/enact?space=ops",
+            "/api/orders/order-1/activate?space=ops",
             "",
         );
         defer std.testing.allocator.free(resp.body);
@@ -3350,7 +3350,7 @@ test "route /api/orders CRUD transitions and emits events" {
         try std.testing.expectEqualStrings("200 OK", resp.status);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.created\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.updated\"") != null);
-        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.enacted\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.activated\"") != null);
     }
 
     const doc_path = try ctx.paths.spaceOrderDoc(std.testing.allocator, "ops", "order-1");

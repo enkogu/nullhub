@@ -1,5 +1,6 @@
 const std = @import("std");
 const std_compat = @import("compat");
+const durable_file = @import("durable_file.zig");
 const paths_mod = @import("paths.zig");
 const test_helpers = @import("../test_helpers.zig");
 
@@ -29,15 +30,15 @@ pub const Status = enum {
 
 pub const Transition = enum {
     draft,
-    enact,
-    pause_order,
+    activate,
+    pause,
     resume_order,
     archive,
 
     pub fn fromString(value: []const u8) ?Transition {
         if (std.mem.eql(u8, value, "draft")) return .draft;
-        if (std.mem.eql(u8, value, "enact") or std.mem.eql(u8, value, "activate")) return .enact;
-        if (std.mem.eql(u8, value, "suspend") or std.mem.eql(u8, value, "pause")) return .pause_order;
+        if (std.mem.eql(u8, value, "activate") or std.mem.eql(u8, value, "enact")) return .activate;
+        if (std.mem.eql(u8, value, "pause") or std.mem.eql(u8, value, "suspend")) return .pause;
         if (std.mem.eql(u8, value, "resume")) return .resume_order;
         if (std.mem.eql(u8, value, "archive")) return .archive;
         return null;
@@ -46,8 +47,8 @@ pub const Transition = enum {
     pub fn status(self: Transition) Status {
         return switch (self) {
             .draft => .draft,
-            .enact => .active,
-            .pause_order => .suspended,
+            .activate => .active,
+            .pause => .suspended,
             .resume_order => .active,
             .archive => .archived,
         };
@@ -56,8 +57,8 @@ pub const Transition = enum {
     pub fn eventType(self: Transition) []const u8 {
         return switch (self) {
             .draft => "order.drafted",
-            .enact => "order.enacted",
-            .pause_order => "order.suspended",
+            .activate => "order.activated",
+            .pause => "order.paused",
             .resume_order => "order.resumed",
             .archive => "order.archived",
         };
@@ -204,12 +205,19 @@ pub fn create(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []
     });
     errdefer order.deinit(allocator);
 
-    var orders = try allocator.alloc(Order, table.orders.len + 1);
-    errdefer allocator.free(orders);
-    for (table.orders, 0..) |existing, idx| {
-        orders[idx] = try cloneOrder(allocator, existing);
+    const orders = try allocator.alloc(Order, table.orders.len + 1);
+    {
+        var filled: usize = 0;
+        errdefer {
+            for (orders[0..filled]) |owned| owned.deinit(allocator);
+            allocator.free(orders);
+        }
+        for (table.orders) |existing| {
+            orders[filled] = try cloneOrder(allocator, existing);
+            filled += 1;
+        }
+        orders[filled] = try cloneOrder(allocator, order);
     }
-    orders[table.orders.len] = try cloneOrder(allocator, order);
 
     var replacement = LoadedTable{ .allocator = allocator, .orders = orders };
     defer replacement.deinit();
@@ -247,13 +255,20 @@ pub fn update(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []
     });
     errdefer updated.deinit(allocator);
 
-    var orders = try allocator.alloc(Order, table.orders.len);
-    errdefer allocator.free(orders);
-    for (table.orders, 0..) |existing, copy_idx| {
-        orders[copy_idx] = if (copy_idx == idx)
-            try cloneOrder(allocator, updated)
-        else
-            try cloneOrder(allocator, existing);
+    const orders = try allocator.alloc(Order, table.orders.len);
+    {
+        var filled: usize = 0;
+        errdefer {
+            for (orders[0..filled]) |owned| owned.deinit(allocator);
+            allocator.free(orders);
+        }
+        for (table.orders, 0..) |existing, copy_idx| {
+            orders[filled] = if (copy_idx == idx)
+                try cloneOrder(allocator, updated)
+            else
+                try cloneOrder(allocator, existing);
+            filled += 1;
+        }
     }
 
     var replacement = LoadedTable{ .allocator = allocator, .orders = orders };
@@ -314,16 +329,34 @@ pub fn parseMarkdown(allocator: std.mem.Allocator, bytes: []const u8) StoreError
         parsed.set(key, value);
     }
 
-    if (Status.fromString(parsed.status orelse "") == null) return error.InvalidStatus;
+    const raw_id = parsed.id orelse return error.InvalidOrderId;
+    const id = try parseFrontmatterScalarAlloc(allocator, raw_id);
+    defer allocator.free(id);
+    const space_id = try parseFrontmatterScalarOrDefaultAlloc(allocator, parsed.space_id, "");
+    defer allocator.free(space_id);
+    const title = try parseFrontmatterScalarOrDefaultAlloc(allocator, parsed.title, "");
+    defer allocator.free(title);
+    const summary = try parseFrontmatterScalarOrDefaultAlloc(allocator, parsed.summary, "");
+    defer allocator.free(summary);
+    const kind = try parseFrontmatterScalarOrDefaultAlloc(allocator, parsed.kind, "mandate");
+    defer allocator.free(kind);
+    const status = try parseFrontmatterScalarOrDefaultAlloc(allocator, parsed.status, "");
+    defer allocator.free(status);
+    const schedule_value = try parseFrontmatterScalarOrDefaultAlloc(allocator, parsed.schedule, "");
+    defer allocator.free(schedule_value);
+    const doc_path = try parseFrontmatterScalarOrDefaultAlloc(allocator, parsed.doc_path, "");
+    defer allocator.free(doc_path);
+
+    if (Status.fromString(status) == null) return error.InvalidStatus;
     return ownedOrder(allocator, .{
-        .id = parsed.id orelse return error.InvalidOrderId,
-        .space_id = parsed.space_id orelse "",
-        .title = parsed.title orelse "",
-        .summary = parsed.summary orelse "",
-        .kind = parsed.kind orelse "mandate",
-        .status = parsed.status orelse "draft",
-        .schedule = parsed.schedule orelse "",
-        .doc_path = parsed.doc_path orelse "",
+        .id = id,
+        .space_id = space_id,
+        .title = title,
+        .summary = summary,
+        .kind = kind,
+        .status = status,
+        .schedule = schedule_value,
+        .doc_path = doc_path,
         .content = content,
         .created_at_ms = parsed.created_at_ms,
         .updated_at_ms = parsed.updated_at_ms,
@@ -440,8 +473,57 @@ fn nextOrderId(allocator: std.mem.Allocator, orders: []const Order) ![]u8 {
 fn appendFrontmatterLine(buf: *std.array_list.Managed(u8), key: []const u8, value: []const u8) !void {
     try buf.appendSlice(key);
     try buf.appendSlice(": ");
-    try buf.appendSlice(value);
+    try appendYamlQuotedScalar(buf, value);
     try buf.append('\n');
+}
+
+fn appendYamlQuotedScalar(buf: *std.array_list.Managed(u8), value: []const u8) !void {
+    try buf.append('"');
+    for (value) |byte| {
+        switch (byte) {
+            '"' => try buf.appendSlice("\\\""),
+            '\\' => try buf.appendSlice("\\\\"),
+            '\n' => try buf.appendSlice("\\n"),
+            '\r' => try buf.appendSlice("\\r"),
+            '\t' => try buf.appendSlice("\\t"),
+            else => try buf.append(byte),
+        }
+    }
+    try buf.append('"');
+}
+
+fn parseFrontmatterScalarOrDefaultAlloc(allocator: std.mem.Allocator, value: ?[]const u8, default_value: []const u8) ![]u8 {
+    return parseFrontmatterScalarAlloc(allocator, value orelse default_value);
+}
+
+fn parseFrontmatterScalarAlloc(allocator: std.mem.Allocator, raw_value: []const u8) ![]u8 {
+    const value = std.mem.trim(u8, raw_value, " \r\t");
+    if (value.len == 0 or value[0] != '"') return allocator.dupe(u8, value);
+    if (value.len < 2 or value[value.len - 1] != '"') return error.InvalidFrontmatterScalar;
+
+    var buf = std.array_list.Managed(u8).init(allocator);
+    errdefer buf.deinit();
+
+    var idx: usize = 1;
+    while (idx < value.len - 1) : (idx += 1) {
+        const byte = value[idx];
+        if (byte != '\\') {
+            try buf.append(byte);
+            continue;
+        }
+        idx += 1;
+        if (idx >= value.len - 1) return error.InvalidFrontmatterScalar;
+        try buf.append(switch (value[idx]) {
+            '"' => '"',
+            '\\' => '\\',
+            'n' => '\n',
+            'r' => '\r',
+            't' => '\t',
+            else => return error.InvalidFrontmatterScalar,
+        });
+    }
+
+    return buf.toOwnedSlice();
 }
 
 fn appendFmt(buf: *std.array_list.Managed(u8), comptime fmt: []const u8, args: anytype) !void {
@@ -482,6 +564,7 @@ fn writeFileAtomically(allocator: std.mem.Allocator, path: []const u8, bytes: []
         try file.sync();
     }
     try std_compat.fs.renameAbsolute(tmp_path, path);
+    try durable_file.syncDirectory(dir_path);
 }
 
 test "orders CRUD persists table and markdown document" {
@@ -525,7 +608,30 @@ test "orders CRUD persists table and markdown document" {
     defer doc_file.close();
     const bytes = try doc_file.readToEndAlloc(allocator, 64 * 1024);
     defer allocator.free(bytes);
-    try std.testing.expect(std.mem.indexOf(u8, bytes, "status: draft") != null);
+    try std.testing.expect(std.mem.indexOf(u8, bytes, "status: \"draft\"") != null);
+}
+
+test "orders create returns clean error when table save fails" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+
+    const orders_dir = try fixture.paths.spaceOrdersDir(allocator, "ops");
+    defer allocator.free(orders_dir);
+    try std_compat.fs.makePathAbsolute(orders_dir);
+
+    const table_path = try fixture.paths.spaceOrdersTable(allocator, "ops");
+    defer allocator.free(table_path);
+    try std_compat.fs.makeDirAbsolute(table_path);
+
+    if (create(allocator, fixture.paths, "ops", .{
+        .title = "Blocked table write",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    })) |order| {
+        defer order.deinit(allocator);
+        return error.ExpectedSaveFailure;
+    } else |_| {}
 }
 
 test "orders status transitions update durable status" {
@@ -540,11 +646,11 @@ test "orders status transitions update durable status" {
     });
     defer created.deinit(allocator);
 
-    const enacted = try transition(allocator, fixture.paths, "ops", created.id, .enact, 1100);
+    const enacted = try transition(allocator, fixture.paths, "ops", created.id, .activate, 1100);
     defer enacted.deinit(allocator);
     try std.testing.expectEqualStrings("active", enacted.status);
 
-    const suspended = try transition(allocator, fixture.paths, "ops", created.id, .pause_order, 1200);
+    const suspended = try transition(allocator, fixture.paths, "ops", created.id, .pause, 1200);
     defer suspended.deinit(allocator);
     try std.testing.expectEqualStrings("suspended", suspended.status);
 
@@ -580,7 +686,7 @@ test "orders markdown frontmatter round trips" {
 
     const markdown = try renderMarkdown(allocator, original);
     defer allocator.free(markdown);
-    try std.testing.expect(std.mem.indexOf(u8, markdown, "title: Watch queue") != null);
+    try std.testing.expect(std.mem.indexOf(u8, markdown, "title: \"Watch queue\"") != null);
 
     const parsed = try parseMarkdown(allocator, markdown);
     defer parsed.deinit(allocator);
@@ -588,4 +694,34 @@ test "orders markdown frontmatter round trips" {
     try std.testing.expectEqualStrings(original.status, parsed.status);
     try std.testing.expectEqualStrings(original.content, parsed.content);
     try std.testing.expectEqual(@as(i64, 800), parsed.updated_at_ms);
+}
+
+test "orders markdown frontmatter escapes hostile scalar values" {
+    const allocator = std.testing.allocator;
+    const original = try ownedOrder(allocator, .{
+        .id = "order-8",
+        .space_id = "ops",
+        .title = "Quoted \"title\"\nstatus: archived",
+        .summary = "Summary line\n---\nforged: block",
+        .kind = "policy",
+        .status = "active",
+        .schedule = "cron \"daily\"\nstatus: archived\n---",
+        .doc_path = "orders/order-8.md",
+        .content = "# Hostile values stay in fields\n",
+        .created_at_ms = 900,
+        .updated_at_ms = 950,
+    });
+    defer original.deinit(allocator);
+
+    const markdown = try renderMarkdown(allocator, original);
+    defer allocator.free(markdown);
+    try std.testing.expect(std.mem.indexOf(u8, markdown, "\nstatus: archived\n") == null);
+
+    const parsed = try parseMarkdown(allocator, markdown);
+    defer parsed.deinit(allocator);
+    try std.testing.expectEqualStrings(original.title, parsed.title);
+    try std.testing.expectEqualStrings(original.summary, parsed.summary);
+    try std.testing.expectEqualStrings(original.schedule, parsed.schedule);
+    try std.testing.expectEqualStrings("active", parsed.status);
+    try std.testing.expectEqualStrings(original.content, parsed.content);
 }

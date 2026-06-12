@@ -1,4 +1,5 @@
 const std = @import("std");
+const std_compat = @import("compat");
 const orders = @import("../core/orders.zig");
 const paths_mod = @import("../core/paths.zig");
 const state_mod = @import("../core/state.zig");
@@ -233,7 +234,16 @@ fn requiredSpaceQueryAlloc(allocator: std.mem.Allocator, target: []const u8) ![]
     const space_id = (try spaces_api.spaceQueryAlloc(allocator, target)) orelse return error.MissingSpace;
     errdefer allocator.free(space_id);
     if (!spaces_api.isValidSpaceId(space_id)) return error.InvalidSpace;
+    if (!isSafeSpacePathSegment(space_id)) return error.InvalidSpace;
     return space_id;
+}
+
+fn isSafeSpacePathSegment(space_id: []const u8) bool {
+    if (space_id.len == 0 or space_id[0] == '.') return false;
+    for (space_id) |byte| {
+        if (byte == 0 or byte == '/' or byte == '\\') return false;
+    }
+    return true;
 }
 
 fn parseJsonObject(allocator: std.mem.Allocator, body: []const u8) !std.json.Parsed(std.json.Value) {
@@ -340,9 +350,9 @@ test "orders API creates updates schedules transitions and emits events" {
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"schedule\":\"0 9 * * *\"") != null);
     }
 
-    const transitions = [_]orders.Transition{ .enact, .pause_order, .resume_order, .draft, .archive };
+    const transitions = [_]orders.Transition{ .activate, .pause, .resume_order, .draft, .archive };
     for (transitions, 0..) |transition, idx| {
-        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/order-1/enact?space=ops", "order-1", transition, 1300 + @as(i64, @intCast(idx)));
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/order-1/activate?space=ops", "order-1", transition, 1300 + @as(i64, @intCast(idx)));
         defer allocator.free(resp.body);
         try std.testing.expectEqualStrings("200 OK", resp.status);
     }
@@ -353,4 +363,48 @@ test "orders API creates updates schedules transitions and emits events" {
     try std.testing.expectEqualStrings("order.updated", events[1].event_type);
     try std.testing.expectEqualStrings("order.scheduled", events[2].event_type);
     try std.testing.expectEqualStrings("order.archived", events[7].event_type);
+}
+
+test "orders API rejects traversal space ids before writing files" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    const traversal_resp = handleCreate(allocator, fixture.paths, &state, "/api/orders?space=..", "{\"title\":\"Traversal\"}", 1000);
+    try std.testing.expectEqualStrings("400 Bad Request", traversal_resp.status);
+
+    const dot_resp = handleCreate(allocator, fixture.paths, &state, "/api/orders?space=.", "{\"title\":\"Dot\"}", 1000);
+    try std.testing.expectEqualStrings("400 Bad Request", dot_resp.status);
+
+    const escaped_table = try std.fs.path.join(allocator, &.{ fixture.paths.root, "orders", "orders.json" });
+    defer allocator.free(escaped_table);
+    try expectFileNotFound(escaped_table);
+
+    const dot_table = try std.fs.path.join(allocator, &.{ fixture.paths.root, "spaces", "orders", "orders.json" });
+    defer allocator.free(dot_table);
+    try expectFileNotFound(dot_table);
+}
+
+fn expectFileNotFound(path: []const u8) !void {
+    if (std_compat.fs.openFileAbsolute(path, .{})) |file| {
+        file.close();
+        return error.ExpectedFileNotFound;
+    } else |err| {
+        try std.testing.expectEqual(error.FileNotFound, err);
+    }
+}
+
+test "orders transition verbs accept canonical verbs and legacy aliases" {
+    try std.testing.expectEqual(orders.Transition.activate, transitionFromTarget("/api/orders/order-1/activate?space=ops").?);
+    try std.testing.expectEqual(orders.Transition.activate, transitionFromTarget("/api/orders/order-1/enact?space=ops").?);
+    try std.testing.expectEqual(orders.Transition.pause, transitionFromTarget("/api/orders/order-1/pause?space=ops").?);
+    try std.testing.expectEqual(orders.Transition.pause, transitionFromTarget("/api/orders/order-1/suspend?space=ops").?);
+    try std.testing.expectEqualStrings("order.activated", orders.Transition.fromString("activate").?.eventType());
+    try std.testing.expectEqualStrings("order.activated", orders.Transition.fromString("enact").?.eventType());
+    try std.testing.expectEqualStrings("order.paused", orders.Transition.fromString("pause").?.eventType());
+    try std.testing.expectEqualStrings("order.paused", orders.Transition.fromString("suspend").?.eventType());
 }
