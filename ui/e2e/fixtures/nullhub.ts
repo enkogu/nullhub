@@ -579,6 +579,7 @@ async function nullTicketsActionRoute(
   pipelines: Record<string, unknown>[],
   tasks: Record<string, unknown>[],
   artifacts: Record<string, unknown>[],
+  runEvents: Record<string, unknown>[],
 ) {
   recordRequest(route, options);
   if (options.nullticketsStatus && options.nullticketsStatus >= 400) {
@@ -610,7 +611,7 @@ async function nullTicketsActionRoute(
     const space = url.searchParams.get('space');
     const runId = decodeURIComponent(runEventsMatch[1] || '');
     const limit = Number(pathUrl.searchParams.get('limit') || '50');
-    const events = (options.nullticketsRunEvents || []).filter((event) => {
+    const events = runEvents.filter((event) => {
       if (String(event.run_id || '') !== runId) return false;
       return matchesFixtureInstance(event, instanceName) && matchesFixtureSpace(event, space);
     });
@@ -623,12 +624,12 @@ async function nullTicketsActionRoute(
     const runId = pathUrl.searchParams.get('run_id') || '';
     const taskId = pathUrl.searchParams.get('task_id') || '';
     const limit = Number(pathUrl.searchParams.get('limit') || '50');
-    const artifacts = (options.nullticketsArtifacts || []).filter((artifact) => {
+    const filteredArtifacts = artifacts.filter((artifact) => {
       if (runId && String(artifact.run_id || '') !== runId) return false;
       if (taskId && String(artifact.task_id || '') !== taskId) return false;
       return matchesFixtureInstance(artifact, instanceName) && matchesFixtureSpace(artifact, space);
     });
-    await fulfillJson(route, { items: artifacts.slice(0, Number.isFinite(limit) ? limit : 50), next_cursor: null });
+    await fulfillJson(route, { items: filteredArtifacts.slice(0, Number.isFinite(limit) ? limit : 50), next_cursor: null });
     return;
   }
 
@@ -656,6 +657,64 @@ async function nullTicketsActionRoute(
     const limit = Number(query.get('limit') || '50');
     const filteredArtifacts = artifacts.filter((artifact) => matchesFixtureSpace(artifact, space));
     await fulfillJson(route, { items: filteredArtifacts.slice(0, Number.isFinite(limit) ? limit : 50) });
+    return;
+  }
+
+  if (method === 'POST' && pathOnly === '/tasks') {
+    const draft = payload?.payload || {};
+    const space = url.searchParams.get('space') || String(draft.space_id || '') || 'ops';
+    const seq = tasks.length + 1;
+    const taskId = `task-created-${seq}`;
+    const runId = `loop-run-created-${seq}`;
+    const createdAtMs = Date.now();
+    const title = String(draft.title || `Created task ${seq}`);
+    const created = {
+      id: taskId,
+      pipeline_id: String(draft.pipeline_id || ''),
+      stage: 'in_progress',
+      title,
+      description: String(draft.description || ''),
+      priority: Number(draft.priority || 0),
+      created_at_ms: createdAtMs,
+      updated_at_ms: createdAtMs,
+      tickets_instance: instanceName,
+      space_id: space,
+      latest_run: {
+        id: runId,
+        task_id: taskId,
+        status: 'running',
+        agent_id: 'Athena',
+        attempt: 1,
+        started_at_ms: createdAtMs,
+      },
+    };
+    tasks.push(created);
+    runEvents.push({
+      id: 9000 + seq,
+      run_id: runId,
+      ts_ms: createdAtMs,
+      kind: 'claimed',
+      data: { worker_id: 'nullclaw-Athena' },
+      tickets_instance: instanceName,
+      space_id: space,
+    });
+    artifacts.push({
+      id: `artifact-created-${seq}`,
+      task_id: taskId,
+      run_id: runId,
+      created_at_ms: createdAtMs,
+      kind: 'document',
+      uri: `artifact://${runId}/result.md`,
+      size_bytes: 1024,
+      meta: {
+        title: `${title} result`,
+        summary: 'Result delivered by the fixture loop.',
+        lifecycle: 'delivered',
+      },
+      tickets_instance: instanceName,
+      space_id: space,
+    });
+    await fulfillJson(route, created, 201);
     return;
   }
 
@@ -808,6 +867,7 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   const pipelines = (options.nullticketsPipelines || []).map((pipeline) => ({ ...pipeline }));
   const tasks = (options.nullticketsTasks || []).map((task) => ({ ...task }));
   const artifacts = (options.nullticketsArtifacts || []).map((artifact) => ({ ...artifact }));
+  const runEvents = (options.nullticketsRunEvents || []).map((event) => ({ ...event }));
 
   await page.route('**/site.webmanifest', (route) =>
     fulfillJson(route, { name: 'NullHub', short_name: 'NullHub', start_url: '/', display: 'standalone' }),
@@ -866,10 +926,10 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/api/instances/*/*/docs**', (route) => instanceDetailRoute(route, options));
   await page.route('**/nullhub-api/instances/*/*/docs**', (route) => instanceDetailRoute(route, options));
   await page.route('**/api/instances/nulltickets/*/tickets**', (route) =>
-    nullTicketsActionRoute(route, options, pipelines, tasks, artifacts),
+    nullTicketsActionRoute(route, options, pipelines, tasks, artifacts, runEvents),
   );
   await page.route('**/nullhub-api/instances/nulltickets/*/tickets**', (route) =>
-    nullTicketsActionRoute(route, options, pipelines, tasks, artifacts),
+    nullTicketsActionRoute(route, options, pipelines, tasks, artifacts, runEvents),
   );
   await page.route('**/api/providers**', (route) =>
     jsonRoute(route, options, fixtureProviders(new URL(route.request().url()).searchParams.get('space'))),
