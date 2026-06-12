@@ -2347,7 +2347,20 @@ fn handleCronCommandWithJob(
                 value,
                 now_ms,
             ) catch |err| {
-                std.log.warn("failed to append order executed event: {s}", .{@errorName(err)});
+                std.log.warn("failed to record schedule order cron execution: {s}", .{@errorName(err)});
+            };
+        } else {
+            schedule_order_bridge.emitExecutedForCronRun(
+                allocator,
+                paths,
+                s,
+                component,
+                name,
+                job_id,
+                "",
+                now_ms,
+            ) catch |err| {
+                std.log.warn("failed to record schedule order cron execution: {s}", .{@errorName(err)});
             };
         }
     }

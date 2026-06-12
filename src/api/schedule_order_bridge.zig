@@ -121,34 +121,34 @@ pub fn emitExecutedForCronRun(
     run_ref: []const u8,
     now_ms: i64,
 ) !void {
-    if (run_ref.len == 0) return;
-
     const space_id = instanceSpace(state, component, instance);
     var link = (try findLinkByCronJob(allocator, paths, space_id, component, instance, cron_job_id)) orelse return;
     defer link.deinit(allocator);
 
-    if (std.mem.eql(u8, link.last_run_ref, run_ref)) return;
+    const has_new_run_ref = run_ref.len > 0 and !std.mem.eql(u8, link.last_run_ref, run_ref);
 
-    const payload_json = try std.json.Stringify.valueAlloc(allocator, .{
-        .component = component,
-        .instance = instance,
-        .cron_job_id = cron_job_id,
-        .run_ref = run_ref,
-    }, .{});
-    defer allocator.free(payload_json);
+    if (has_new_run_ref) {
+        const payload_json = try std.json.Stringify.valueAlloc(allocator, .{
+            .component = component,
+            .instance = instance,
+            .cron_job_id = cron_job_id,
+            .run_ref = run_ref,
+        }, .{});
+        defer allocator.free(payload_json);
 
-    _ = try state.addEvent(.{
-        .space_id = link.space_id,
-        .event_type = "order.executed",
-        .source = "cron",
-        .subject_type = "order",
-        .subject_id = link.order_id,
-        .title = "Order executed",
-        .summary = "A schedule order cron run completed.",
-        .severity = "success",
-        .payload_json = payload_json,
-        .created_at_ms = now_ms,
-    });
+        _ = try state.addEvent(.{
+            .space_id = link.space_id,
+            .event_type = "order.executed",
+            .source = "cron",
+            .subject_type = "order",
+            .subject_id = link.order_id,
+            .title = "Order executed",
+            .summary = "A schedule order cron run completed.",
+            .severity = "success",
+            .payload_json = payload_json,
+            .created_at_ms = now_ms,
+        });
+    }
 
     try upsertLink(allocator, paths, .{
         .order_id = link.order_id,
@@ -156,11 +156,11 @@ pub fn emitExecutedForCronRun(
         .component = link.component,
         .instance = link.instance,
         .cron_job_id = link.cron_job_id,
-        .last_run_ref = run_ref,
+        .last_run_ref = if (has_new_run_ref) run_ref else link.last_run_ref,
         .created_at_ms = link.created_at_ms,
         .updated_at_ms = now_ms,
     });
-    try state.save();
+    if (has_new_run_ref) try state.save();
 }
 
 fn ensureCronActive(

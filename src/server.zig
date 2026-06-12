@@ -3793,7 +3793,7 @@ test "route T1 schedule order cron run creates approval before execution" {
     }
 }
 
-test "route schedule order cron run without run ref does not emit order executed" {
+test "route T1 schedule order cron run without run ref consumes approval without executed event" {
     const builtin = @import("builtin");
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
 
@@ -3833,7 +3833,7 @@ test "route schedule order cron run without run ref does not emit order executed
             allocator,
             "POST",
             "/api/orders?space=ops",
-            "{\"title\":\"Morning report\",\"kind\":\"schedule\",\"schedule\":\"0 9 * * *\",\"content\":\"Send brief\"}",
+            "{\"title\":\"Morning report\",\"kind\":\"schedule\",\"schedule\":\"0 9 * * *\",\"content\":\"tier: T1\\nSend brief\"}",
         );
         defer allocator.free(resp.body);
         try std.testing.expectEqualStrings("201 Created", resp.status);
@@ -3848,6 +3848,17 @@ test "route schedule order cron run without run ref does not emit order executed
     {
         const resp = ctx.route(allocator, "POST", "/api/instances/nullclaw/my-agent/cron/job-order-1/run", "");
         defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("202 Accepted", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"approval_required\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"approval_id\":1") != null);
+        try std.testing.expectEqual(@as(usize, 1), ctx.state.approvalsList().len);
+    }
+
+    _ = try ctx.state.decideApproval(1, "approved", "", 3000);
+
+    {
+        const resp = ctx.route(allocator, "POST", "/api/instances/nullclaw/my-agent/cron/job-order-1/run", "");
+        defer allocator.free(resp.body);
         try std.testing.expectEqualStrings("200 OK", resp.status);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"ran\"") != null);
     }
@@ -3858,6 +3869,16 @@ test "route schedule order cron run without run ref does not emit order executed
         try std.testing.expectEqualStrings("200 OK", resp.status);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.executed\"") == null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"run_ref\"") == null);
+    }
+
+    {
+        const resp = ctx.route(allocator, "POST", "/api/instances/nullclaw/my-agent/cron/job-order-1/run", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("202 Accepted", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"approval_required\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"approval_id\":2") != null);
+        try std.testing.expectEqual(@as(usize, 2), ctx.state.approvalsList().len);
+        try std.testing.expectEqualStrings("pending", ctx.state.approvalsList()[1].status);
     }
 }
 
