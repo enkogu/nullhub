@@ -3,6 +3,7 @@ import { createApprovalsApi } from '$lib/api/approvals';
 import { createEventsApi } from '$lib/api/events';
 import { createMissionControlApi } from '$lib/api/missionControl';
 import { createNullTicketsApi, createNullTicketsStoreApi } from '$lib/api/nulltickets';
+import { createOrdersApi } from '$lib/api/orders';
 import { SPACE_QUERY_PARAM, createSpacesApi, selectedSpaceFromEnvironment } from '$lib/api/spaces';
 import { componentApiPath, encodePathSegment, instanceApiPath } from '$lib/nullstack/path';
 import { normalizeMojibakeText, normalizeMojibakeValue } from '$lib/textEncoding';
@@ -143,6 +144,20 @@ export type {
   EventSeverity,
   NullHubEvent,
 } from '$lib/api/events';
+export type {
+  Order,
+  OrderCreateInput,
+  OrderDeleteResult,
+  OrderKind,
+  OrderListPage,
+  OrderListParams,
+  OrderScheduleInput,
+  OrderScopedOptions,
+  OrderStatus,
+  OrderStatusAction,
+  OrderUpdateInput,
+  OrdersApi,
+} from '$lib/api/orders';
 export type {
   Space,
   SpaceCreateInput,
@@ -550,6 +565,7 @@ export const nullTicketsStoreApi = createNullTicketsStoreApi(request, withQuery)
 export const spacesApi = createSpacesApi(request, withQuery);
 export const eventsApi = createEventsApi(request, withQuery);
 export const approvalsApi = createApprovalsApi(request, withQuery);
+export const ordersApi = createOrdersApi(request, withQuery);
 
 export const nullWatchApi = {
   getNullWatchHealth: (params?: NullWatchTarget) =>
@@ -860,6 +876,8 @@ export const api = {
   ...eventsApi,
 
   ...approvalsApi,
+
+  ...ordersApi,
 
   applyUpdate: (c: string, n: string) =>
     request<any>(instanceApiPath(c, n, '/update'), { method: 'POST' }),
