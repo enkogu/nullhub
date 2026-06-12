@@ -5468,12 +5468,25 @@ pub fn handleImport(allocator: std.mem.Allocator, s: *state_mod.State, paths: pa
     };
 
     if (std.mem.eql(u8, component, "nullclaw")) {
-        _ = policy_orders.syncManagedOrdersForSpace(allocator, paths, s, policySyncSpaceId(import_space_id)) catch {
+        const sync_result = policy_orders.syncManagedOrdersForSpace(allocator, paths, s, policySyncSpaceId(import_space_id)) catch {
             _ = s.removeInstance(component, instance_name);
             _ = s.save() catch {};
             std_compat.fs.deleteFileAbsolute(inst_dir) catch {};
             return helpers.serverError();
         };
+        if (sync_result.unsupported_bootstrap_count > 0) {
+            policy_orders.appendUnsupportedBootstrapEvent(
+                allocator,
+                s,
+                policySyncSpaceId(import_space_id),
+                "instance",
+                instance_name,
+                "Policy Orders bootstrap storage unsupported",
+                std_compat.time.milliTimestamp(),
+                sync_result.unsupported_bootstrap_count,
+            ) catch {};
+            s.save() catch {};
+        }
     }
 
     const response_body = buildImportResponse(allocator, instance_name, source_dir) catch return helpers.serverError();

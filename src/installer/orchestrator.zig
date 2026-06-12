@@ -556,11 +556,24 @@ fn persistAndStartInstance(
     };
 
     if (std.mem.eql(u8, component, "nullclaw")) {
-        _ = policy_orders.syncManagedOrdersForSpace(allocator, p, s, policySyncSpaceId(space_id)) catch {
+        const sync_result = policy_orders.syncManagedOrdersForSpace(allocator, p, s, policySyncSpaceId(space_id)) catch {
             _ = s.removeInstance(component, name);
             s.save() catch return error.StateError;
             return error.StateError;
         };
+        if (sync_result.unsupported_bootstrap_count > 0) {
+            policy_orders.appendUnsupportedBootstrapEvent(
+                allocator,
+                s,
+                policySyncSpaceId(space_id),
+                "instance",
+                name,
+                "Policy Orders bootstrap storage unsupported",
+                std_compat.time.milliTimestamp(),
+                sync_result.unsupported_bootstrap_count,
+            ) catch {};
+            s.save() catch {};
+        }
     }
 
     startFn(

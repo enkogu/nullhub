@@ -1,5 +1,7 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const std_compat = @import("compat");
+const component_cli = @import("component_cli.zig");
 const durable_file = @import("durable_file.zig");
 const orders_mod = @import("orders.zig");
 const paths_mod = @import("paths.zig");
@@ -8,6 +10,7 @@ const test_helpers = @import("../test_helpers.zig");
 
 pub const managed_orders_filename = "ORDERS.md";
 pub const managed_orders_bootstrap_filename = "CONFIG.md";
+pub const managed_orders_bootstrap_memory_key = "__bootstrap.prompt.CONFIG.md";
 pub const managed_orders_budget_bytes: usize = 24 * 1024;
 
 const overflow_warning =
@@ -28,9 +31,22 @@ pub const RenderedManagedOrders = struct {
 
 pub const SyncResult = struct {
     workspaces_updated: usize = 0,
+    bootstrap_file_updates: usize = 0,
+    bootstrap_provider_updates: usize = 0,
+    unsupported_bootstrap_count: usize = 0,
     active_count: usize = 0,
     overflowed: bool = false,
 };
+
+const BootstrapStorage = enum {
+    workspace_files,
+    provider_backed,
+    unsupported_noop,
+};
+
+const nullclaw_default_memory_backend = "hybrid";
+const nullclaw_provider_sync_timeout_ms = 30_000;
+const nullclaw_provider_sync_output_limit = 256 * 1024;
 
 pub fn renderManagedOrders(
     allocator: std.mem.Allocator,
@@ -102,11 +118,64 @@ pub fn syncManagedOrdersForSpace(
         const orders_path = try std.fs.path.join(allocator, &.{ workspace_dir, managed_orders_filename });
         defer allocator.free(orders_path);
         try writeFileAtomically(allocator, orders_path, rendered.bytes);
-        try syncBootstrapPromptFile(allocator, workspace_dir, rendered.bytes);
+
+        const disk_bootstrap = try syncBootstrapPromptFile(allocator, workspace_dir, rendered.bytes);
+        defer allocator.free(disk_bootstrap);
+
+        const bootstrap = try resolveInstanceBootstrapStorage(allocator, paths, instance_name);
+        defer allocator.free(bootstrap.backend);
+
+        switch (bootstrap.storage) {
+            .workspace_files => result.bootstrap_file_updates += 1,
+            .provider_backed => {
+                try syncProviderBootstrapPromptFile(
+                    allocator,
+                    paths,
+                    instance_name,
+                    instance.version,
+                    disk_bootstrap,
+                    rendered.bytes,
+                );
+                result.bootstrap_provider_updates += 1;
+            },
+            .unsupported_noop => result.unsupported_bootstrap_count += 1,
+        }
+
         result.workspaces_updated += 1;
     }
 
     return result;
+}
+
+pub fn appendUnsupportedBootstrapEvent(
+    allocator: std.mem.Allocator,
+    state: *state_mod.State,
+    space_id: []const u8,
+    subject_type: []const u8,
+    subject_id: []const u8,
+    title: []const u8,
+    now_ms: i64,
+    unsupported_count: usize,
+) !void {
+    const payload = try std.fmt.allocPrint(
+        allocator,
+        "{{\"file\":\"{s}\",\"bootstrap_key\":\"{s}\",\"unsupported_count\":{d}}}",
+        .{ managed_orders_bootstrap_filename, managed_orders_bootstrap_memory_key, unsupported_count },
+    );
+    defer allocator.free(payload);
+
+    _ = try state.addEvent(.{
+        .space_id = space_id,
+        .event_type = "order.policy_orders_bootstrap_unsupported",
+        .source = "nullhub",
+        .subject_type = subject_type,
+        .subject_id = subject_id,
+        .title = title,
+        .summary = "Managed policy Orders were written to ORDERS.md and CONFIG.md, but this NullClaw backend cannot expose updates through a reloadable bootstrap fingerprint.",
+        .severity = "warning",
+        .payload_json = payload,
+        .created_at_ms = now_ms,
+    });
 }
 
 fn isActivePolicyOrder(order: orders_mod.Order) bool {
@@ -223,7 +292,7 @@ fn writeFileAtomically(allocator: std.mem.Allocator, path: []const u8, bytes: []
     try durable_file.syncDirectory(dir_path);
 }
 
-fn syncBootstrapPromptFile(allocator: std.mem.Allocator, workspace_dir: []const u8, orders_bytes: []const u8) !void {
+fn syncBootstrapPromptFile(allocator: std.mem.Allocator, workspace_dir: []const u8, orders_bytes: []const u8) ![]u8 {
     const config_path = try std.fs.path.join(allocator, &.{ workspace_dir, managed_orders_bootstrap_filename });
     defer allocator.free(config_path);
 
@@ -234,8 +303,8 @@ fn syncBootstrapPromptFile(allocator: std.mem.Allocator, workspace_dir: []const 
     defer allocator.free(existing);
 
     const updated = try renderBootstrapPromptFile(allocator, existing, orders_bytes);
-    defer allocator.free(updated);
     try writeFileAtomically(allocator, config_path, updated);
+    return updated;
 }
 
 fn renderBootstrapPromptFile(allocator: std.mem.Allocator, existing: []const u8, orders_bytes: []const u8) ![]u8 {
@@ -270,6 +339,193 @@ fn renderBootstrapPromptFile(allocator: std.mem.Allocator, existing: []const u8,
     return base.toOwnedSlice();
 }
 
+const InstanceBootstrapStorage = struct {
+    backend: []u8,
+    storage: BootstrapStorage,
+};
+
+fn resolveInstanceBootstrapStorage(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    instance_name: []const u8,
+) !InstanceBootstrapStorage {
+    const backend = try readInstanceMemoryBackend(allocator, paths, instance_name);
+    errdefer allocator.free(backend);
+    return .{
+        .backend = backend,
+        .storage = classifyBootstrapStorage(backend),
+    };
+}
+
+fn readInstanceMemoryBackend(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    instance_name: []const u8,
+) ![]u8 {
+    const config_path = try paths.instanceConfig(allocator, "nullclaw", instance_name);
+    defer allocator.free(config_path);
+
+    const bytes = std_compat.fs.readFileAbsolute(allocator, config_path, 4 * 1024 * 1024) catch |err| switch (err) {
+        error.FileNotFound => return allocator.dupe(u8, nullclaw_default_memory_backend),
+        else => return err,
+    };
+    defer allocator.free(bytes);
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, bytes, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    }) catch return allocator.dupe(u8, nullclaw_default_memory_backend);
+    defer parsed.deinit();
+
+    if (parsed.value != .object) return allocator.dupe(u8, nullclaw_default_memory_backend);
+    const root = parsed.value.object;
+
+    if (root.get("memory")) |memory_value| {
+        if (memory_value == .object) {
+            if (stringField(memory_value.object, "backend")) |backend| return allocator.dupe(u8, backend);
+            if (stringField(memory_value.object, "profile")) |profile| return allocator.dupe(u8, backendForMemoryProfile(profile));
+        }
+    }
+    if (stringField(root, "memory_backend")) |backend| return allocator.dupe(u8, backend);
+    if (stringField(root, "memory_profile")) |profile| return allocator.dupe(u8, backendForMemoryProfile(profile));
+
+    return allocator.dupe(u8, nullclaw_default_memory_backend);
+}
+
+fn stringField(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    const value = obj.get(key) orelse return null;
+    if (value != .string) return null;
+    const trimmed = std.mem.trim(u8, value.string, &std.ascii.whitespace);
+    return if (trimmed.len == 0) null else trimmed;
+}
+
+fn stringFieldRaw(obj: std.json.ObjectMap, key: []const u8) ?[]const u8 {
+    const value = obj.get(key) orelse return null;
+    if (value != .string) return null;
+    return value.string;
+}
+
+fn backendForMemoryProfile(profile: []const u8) []const u8 {
+    if (std.ascii.eqlIgnoreCase(profile, "minimal_none")) return "none";
+    if (std.ascii.eqlIgnoreCase(profile, "markdown_only")) return "markdown";
+    if (std.ascii.eqlIgnoreCase(profile, "local_keyword") or
+        std.ascii.eqlIgnoreCase(profile, "local_hybrid"))
+    {
+        return "sqlite";
+    }
+    if (std.ascii.eqlIgnoreCase(profile, "postgres_keyword") or
+        std.ascii.eqlIgnoreCase(profile, "postgres_hybrid"))
+    {
+        return "postgres";
+    }
+    return nullclaw_default_memory_backend;
+}
+
+fn classifyBootstrapStorage(backend: []const u8) BootstrapStorage {
+    if (std.ascii.eqlIgnoreCase(backend, "hybrid") or
+        std.ascii.eqlIgnoreCase(backend, "markdown"))
+    {
+        return .workspace_files;
+    }
+    if (std.ascii.eqlIgnoreCase(backend, "none") or
+        std.ascii.eqlIgnoreCase(backend, "memory"))
+    {
+        return .unsupported_noop;
+    }
+    return .provider_backed;
+}
+
+fn syncProviderBootstrapPromptFile(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    instance_name: []const u8,
+    version: []const u8,
+    disk_bootstrap: []const u8,
+    orders_bytes: []const u8,
+) !void {
+    const provider_existing = try loadProviderBootstrapPromptFile(allocator, paths, instance_name, version);
+    defer if (provider_existing) |bytes| allocator.free(bytes);
+
+    const base = provider_existing orelse disk_bootstrap;
+    const updated = try renderBootstrapPromptFile(allocator, base, orders_bytes);
+    defer allocator.free(updated);
+
+    try storeProviderBootstrapPromptFile(allocator, paths, instance_name, version, updated);
+}
+
+fn loadProviderBootstrapPromptFile(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    instance_name: []const u8,
+    version: []const u8,
+) !?[]u8 {
+    const result = try runNullclawMemoryCommand(
+        allocator,
+        paths,
+        instance_name,
+        version,
+        &.{ "memory", "get", managed_orders_bootstrap_memory_key, "--json" },
+    );
+    defer allocator.free(result.stderr);
+    defer allocator.free(result.stdout);
+    if (!result.success) return error.BootstrapProviderReadFailed;
+
+    const trimmed = std.mem.trim(u8, result.stdout, " \t\r\n");
+    if (std.mem.eql(u8, trimmed, "null")) return null;
+
+    var parsed = std.json.parseFromSlice(std.json.Value, allocator, trimmed, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    }) catch return error.BootstrapProviderReadFailed;
+    defer parsed.deinit();
+    if (parsed.value != .object) return error.BootstrapProviderReadFailed;
+    const content = stringFieldRaw(parsed.value.object, "content") orelse return error.BootstrapProviderReadFailed;
+    return @as(?[]u8, try allocator.dupe(u8, content));
+}
+
+fn storeProviderBootstrapPromptFile(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    instance_name: []const u8,
+    version: []const u8,
+    bytes: []const u8,
+) !void {
+    const result = try runNullclawMemoryCommand(
+        allocator,
+        paths,
+        instance_name,
+        version,
+        &.{ "memory", "store", managed_orders_bootstrap_memory_key, bytes, "--category", "core", "--json" },
+    );
+    defer allocator.free(result.stderr);
+    defer allocator.free(result.stdout);
+    if (!result.success) return error.BootstrapProviderWriteFailed;
+}
+
+fn runNullclawMemoryCommand(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    instance_name: []const u8,
+    version: []const u8,
+    args: []const []const u8,
+) !component_cli.RunResult {
+    const bin_path = try paths.binary(allocator, "nullclaw", version);
+    defer allocator.free(bin_path);
+    const inst_dir = try paths.instanceDir(allocator, "nullclaw", instance_name);
+    defer allocator.free(inst_dir);
+
+    return component_cli.runWithComponentHomeLimitedTimeout(
+        allocator,
+        "nullclaw",
+        bin_path,
+        args,
+        null,
+        inst_dir,
+        nullclaw_provider_sync_output_limit,
+        nullclaw_provider_sync_timeout_ms,
+    );
+}
+
 fn readWorkspaceOrders(allocator: std.mem.Allocator, paths: paths_mod.Paths, instance_name: []const u8) ![]u8 {
     const workspace_dir = try paths.instanceWorkspaceDir(allocator, "nullclaw", instance_name);
     defer allocator.free(workspace_dir);
@@ -300,6 +556,51 @@ fn ownedTestOrder(allocator: std.mem.Allocator, order: orders_mod.Order) !orders
         .created_at_ms = order.created_at_ms,
         .updated_at_ms = order.updated_at_ms,
     };
+}
+
+fn writeTestNullclawConfig(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    instance_name: []const u8,
+    config_json: []const u8,
+) !void {
+    const inst_dir = try paths.instanceDir(allocator, "nullclaw", instance_name);
+    defer allocator.free(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
+
+    const config_path = try paths.instanceConfig(allocator, "nullclaw", instance_name);
+    defer allocator.free(config_path);
+    try writeFileAtomically(allocator, config_path, config_json);
+}
+
+fn stageProviderBootstrapCliFixture(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+) !void {
+    try paths.ensureDirs();
+    const bin_path = try paths.binary(allocator, "nullclaw", "dev-local");
+    defer allocator.free(bin_path);
+
+    const script =
+        "#!/bin/sh\n" ++
+        "set -eu\n" ++
+        "if [ \"${1:-}\" = \"memory\" ] && [ \"${2:-}\" = \"get\" ]; then\n" ++
+        "  printf '%s\\n' 'null'\n" ++
+        "  exit 0\n" ++
+        "fi\n" ++
+        "if [ \"${1:-}\" = \"memory\" ] && [ \"${2:-}\" = \"store\" ]; then\n" ++
+        "  printf '%s' \"$3\" > \"$NULLCLAW_HOME/provider-key.txt\"\n" ++
+        "  printf '%s' \"$4\" > \"$NULLCLAW_HOME/provider-content.txt\"\n" ++
+        "  printf '%s\\n' '{\"action\":\"store\",\"entry\":{\"key\":\"__bootstrap.prompt.CONFIG.md\",\"category\":\"core\",\"timestamp\":\"now\",\"content\":\"\",\"session_id\":null}}'\n" ++
+        "  exit 0\n" ++
+        "fi\n" ++
+        "exit 1\n";
+    try writeFileAtomically(allocator, bin_path, script);
+    if (comptime std_compat.fs.has_executable_bit) {
+        const file = try std_compat.fs.openFileAbsolute(bin_path, .{});
+        defer file.close();
+        try file.chmod(0o755);
+    }
 }
 
 test "managed ORDERS.md compilation includes only active policy orders" {
@@ -429,6 +730,105 @@ test "managed ORDERS.md sync updates matching nullclaw workspaces" {
     const sales_orders_path = try std.fs.path.join(allocator, &.{ sales_workspace, managed_orders_filename });
     defer allocator.free(sales_orders_path);
     try std.testing.expectError(error.FileNotFound, std_compat.fs.readFileAbsolute(allocator, sales_orders_path, 1024));
+}
+
+test "managed ORDERS.md sync updates provider-backed CONFIG bootstrap storage" {
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    try state.addInstance("nullclaw", "ops-agent", .{ .version = "dev-local", .space_id = "ops" });
+    try writeTestNullclawConfig(
+        allocator,
+        fixture.paths,
+        "ops-agent",
+        "{\"memory\":{\"backend\":\"sqlite\"}}\n",
+    );
+    try stageProviderBootstrapCliFixture(allocator, fixture.paths);
+
+    var order = try orders_mod.create(allocator, fixture.paths, "ops", .{
+        .id = "policy-provider",
+        .title = "Provider-backed policy",
+        .kind = "policy",
+        .content = "Provider-backed agents must receive active policies.",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer order.deinit(allocator);
+    var active = try orders_mod.transition(allocator, fixture.paths, "ops", "policy-provider", .activate, 1100);
+    defer active.deinit(allocator);
+
+    const synced = try syncManagedOrdersForSpace(allocator, fixture.paths, &state, "ops");
+    try std.testing.expectEqual(@as(usize, 1), synced.workspaces_updated);
+    try std.testing.expectEqual(@as(usize, 0), synced.bootstrap_file_updates);
+    try std.testing.expectEqual(@as(usize, 1), synced.bootstrap_provider_updates);
+    try std.testing.expectEqual(@as(usize, 0), synced.unsupported_bootstrap_count);
+
+    const inst_dir = try fixture.paths.instanceDir(allocator, "nullclaw", "ops-agent");
+    defer allocator.free(inst_dir);
+    const provider_key_path = try std.fs.path.join(allocator, &.{ inst_dir, "provider-key.txt" });
+    defer allocator.free(provider_key_path);
+    const provider_content_path = try std.fs.path.join(allocator, &.{ inst_dir, "provider-content.txt" });
+    defer allocator.free(provider_content_path);
+
+    const provider_key = try std_compat.fs.readFileAbsolute(allocator, provider_key_path, 1024);
+    defer allocator.free(provider_key);
+    try std.testing.expectEqualStrings(managed_orders_bootstrap_memory_key, provider_key);
+
+    const provider_content = try std_compat.fs.readFileAbsolute(allocator, provider_content_path, managed_orders_budget_bytes + 4096);
+    defer allocator.free(provider_content);
+    try std.testing.expect(std.mem.indexOf(u8, provider_content, "NULLHUB:MANAGED_POLICY_ORDERS:BEGIN") != null);
+    try std.testing.expect(std.mem.indexOf(u8, provider_content, "Provider-backed agents must receive active policies.") != null);
+}
+
+test "managed ORDERS.md sync reports unsupported no-op bootstrap backend" {
+    const allocator = std.testing.allocator;
+    var fixture = try test_helpers.TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    try state.addInstance("nullclaw", "ops-agent", .{ .version = "dev-local", .space_id = "ops" });
+    try writeTestNullclawConfig(
+        allocator,
+        fixture.paths,
+        "ops-agent",
+        "{\"memory\":{\"backend\":\"none\"}}\n",
+    );
+
+    var order = try orders_mod.create(allocator, fixture.paths, "ops", .{
+        .id = "policy-noop",
+        .title = "No-op backend policy",
+        .kind = "policy",
+        .content = "No-op backend policies still write managed files.",
+        .created_at_ms = 1000,
+        .updated_at_ms = 1000,
+    });
+    defer order.deinit(allocator);
+    var active = try orders_mod.transition(allocator, fixture.paths, "ops", "policy-noop", .activate, 1100);
+    defer active.deinit(allocator);
+
+    const synced = try syncManagedOrdersForSpace(allocator, fixture.paths, &state, "ops");
+    try std.testing.expectEqual(@as(usize, 1), synced.workspaces_updated);
+    try std.testing.expectEqual(@as(usize, 0), synced.bootstrap_file_updates);
+    try std.testing.expectEqual(@as(usize, 0), synced.bootstrap_provider_updates);
+    try std.testing.expectEqual(@as(usize, 1), synced.unsupported_bootstrap_count);
+
+    const orders_bytes = try readWorkspaceOrders(allocator, fixture.paths, "ops-agent");
+    defer allocator.free(orders_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, "No-op backend policies still write managed files.") != null);
+
+    const config_bytes = try readWorkspaceBootstrapOrders(allocator, fixture.paths, "ops-agent");
+    defer allocator.free(config_bytes);
+    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "No-op backend policies still write managed files.") != null);
 }
 
 test "managed ORDERS.md bootstrap section is replaced without deleting local CONFIG.md content" {

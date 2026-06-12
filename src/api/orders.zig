@@ -287,6 +287,18 @@ fn applyOrderMutationSideEffects(
     if (sync_result.overflowed) {
         try appendPolicyOrdersOverflowEvent(state, order, now_ms);
     }
+    if (sync_result.unsupported_bootstrap_count > 0) {
+        try policy_orders.appendUnsupportedBootstrapEvent(
+            allocator,
+            state,
+            order.space_id,
+            "order",
+            order.id,
+            "Policy Orders bootstrap storage unsupported",
+            now_ms,
+            sync_result.unsupported_bootstrap_count,
+        );
+    }
     try state.save();
 }
 
@@ -602,6 +614,57 @@ test "orders API enact and suspend update managed ORDERS.md" {
         try std.testing.expect(std.mem.indexOf(u8, config_bytes, "No active policy Orders.") != null);
         try std.testing.expect(std.mem.indexOf(u8, config_bytes, "Escalate stale approvals.") == null);
     }
+}
+
+test "orders API emits warning event for unsupported policy bootstrap backend" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    try state.addInstance("nullclaw", "ops-agent", .{ .version = "dev-local", .space_id = "ops" });
+    const inst_dir = try fixture.paths.instanceDir(allocator, "nullclaw", "ops-agent");
+    defer allocator.free(inst_dir);
+    try std_compat.fs.makePathAbsolute(inst_dir);
+    const config_path = try fixture.paths.instanceConfig(allocator, "nullclaw", "ops-agent");
+    defer allocator.free(config_path);
+    {
+        const file = try std_compat.fs.createFileAbsolute(config_path, .{ .truncate = true });
+        defer file.close();
+        try file.writeAll("{\"memory\":{\"backend\":\"none\"}}\n");
+    }
+
+    {
+        const resp = handleCreate(
+            allocator,
+            fixture.paths,
+            &state,
+            "/api/orders?space=ops",
+            "{\"id\":\"policy-unsupported\",\"title\":\"Unsupported backend\",\"kind\":\"policy\",\"content\":\"Warn when bootstrap cannot refresh.\"}",
+            1000,
+        );
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/policy-unsupported/enact?space=ops", "policy-unsupported", .activate, 1100);
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    }
+
+    var warning_count: usize = 0;
+    for (state.eventsList()) |event| {
+        if (std.mem.eql(u8, event.event_type, "order.policy_orders_bootstrap_unsupported")) {
+            warning_count += 1;
+            try std.testing.expectEqualStrings("warning", event.severity);
+            try std.testing.expect(std.mem.indexOf(u8, event.payload_json, "\"unsupported_count\":1") != null);
+        }
+    }
+    try std.testing.expect(warning_count >= 1);
 }
 
 test "orders item id parser only accepts exact item route" {
