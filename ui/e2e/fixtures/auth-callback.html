@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Signing in — Volksdroid</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <style>
+      /* Volksdroid public screens — see docs/specs/subsystems/public-screens.md */
+      :root {
+        color-scheme: light;
+        --surface: #ffffff;
+        --ink: #111111;
+        --text-secondary: #62625e;
+        --border: #e6e6e2;
+        --danger: #b42318;
+      }
+      * { box-sizing: border-box; }
+      body {
+        min-height: 100dvh;
+        display: grid;
+        place-items: center;
+        margin: 0;
+        background: var(--surface);
+        color: var(--ink);
+        font-family: "Suisse Intl", Arial, Helvetica, ui-sans-serif, system-ui, sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      [hidden] { display: none !important; }
+      .callback-card {
+        display: grid;
+        width: min(400px, calc(100vw - 48px));
+        justify-items: start;
+        gap: 16px;
+        padding: 24px 0;
+      }
+      .brand-mark { width: 30px; height: 30px; }
+      .spinner {
+        width: 22px;
+        height: 22px;
+        margin-top: 8px;
+        border: 2px solid var(--border);
+        border-top-color: var(--ink);
+        animation: spin 900ms linear infinite;
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      h1 {
+        margin: 0;
+        font-size: clamp(32px, 5vw, 42px);
+        font-weight: 400;
+        line-height: 1.05;
+        letter-spacing: -0.03em;
+      }
+      .status {
+        margin: 0;
+        color: var(--text-secondary);
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 13px;
+        line-height: 1.4;
+      }
+      .status[data-state="error"] { color: var(--danger); }
+      .back-link {
+        display: inline-flex;
+        min-height: 46px;
+        align-items: center;
+        justify-content: center;
+        margin-top: 6px;
+        border: 1px solid var(--border);
+        padding: 0 18px;
+        background: var(--surface);
+        color: var(--ink);
+        font-size: 15px;
+        font-weight: 600;
+        text-decoration: none;
+        transition: background-color 160ms cubic-bezier(0.16, 1, 0.3, 1);
+      }
+      .back-link:hover { background: #efefec; }
+      @media (prefers-reduced-motion: reduce) {
+        .spinner { animation: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="callback-card" aria-labelledby="title">
+      <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" fill="#111111"></rect>
+        <path d="M10 16h12M16 10v12M11.8 11.8l8.4 8.4M20.2 11.8l-8.4 8.4" stroke="#ffffff" stroke-width="2" stroke-linecap="round"></path>
+      </svg>
+      <div class="spinner" id="spinner" aria-hidden="true"></div>
+      <h1 id="title">Signing you in</h1>
+      <p id="status" class="status" role="status">Opening your workspace...</p>
+      <a id="retry-link" class="back-link" href="/signin/" hidden>
+        Try sign-in again
+      </a>
+    </main>
+    <script type="module">
+      // Vendored from apps/landing/package-lock.json to keep this callback same-origin.
+      import PocketBase from "/vendor/pocketbase.es.mjs";
+
+      const pb = new PocketBase(window.location.origin);
+      const status = document.querySelector("#status");
+      const title = document.querySelector("#title");
+      const spinner = document.querySelector("#spinner");
+      const retryLink = document.querySelector("#retry-link");
+      const params = new URLSearchParams(window.location.search);
+
+      class OAuthProviderStateError extends Error {
+        constructor(message) {
+          super(message);
+          this.name = "OAuthProviderStateError";
+        }
+      }
+
+      class OAuthCodeMissingError extends Error {
+        constructor(message) {
+          super(message);
+          this.name = "OAuthCodeMissingError";
+        }
+      }
+
+      const errorStates = {
+        missingProvider: {
+          code: "OAUTH_STATE_MISSING",
+          title: "Start sign-in again",
+          message: "Your secure sign-in session expired before Google returned. Try sign-in again to create a fresh session.",
+        },
+        missingCode: {
+          code: "OAUTH_CODE_MISSING",
+          title: "Start sign-in again",
+          message: "Google did not return a sign-in code. Try sign-in again to create a fresh session.",
+        },
+        consumedCode: {
+          code: "OAUTH_CODE_EXPIRED",
+          title: "This sign-in link expired",
+          message: "This Google callback was already used or expired. Try sign-in again for a fresh code.",
+        },
+        generic: {
+          code: "OAUTH_CALLBACK_FAILED",
+          title: "Sign-in did not complete",
+          message: "Volksdroid could not verify this sign-in. Try again with a fresh sign-in.",
+        },
+      };
+
+      function cookieValue(name) {
+        const prefix = `${name}=`;
+        return document.cookie
+          .split(";")
+          .map((item) => item.trim())
+          .find((item) => item.startsWith(prefix))
+          ?.slice(prefix.length) || "";
+      }
+
+      function readProviderState() {
+        try {
+          const cookieProvider = cookieValue("oauth_provider");
+          const provider = cookieProvider
+            ? JSON.parse(decodeURIComponent(cookieProvider))
+            : JSON.parse(localStorage.getItem("oauth_provider") || "null");
+
+          if (!provider?.name || !provider?.codeVerifier) {
+            throw new OAuthProviderStateError("OAuth provider state is missing.");
+          }
+
+          return provider;
+        } catch (error) {
+          if (error instanceof OAuthProviderStateError) throw error;
+          throw new OAuthProviderStateError("OAuth provider state could not be read.");
+        }
+      }
+
+      function shortCorrelationId() {
+        const bytes = new Uint8Array(2);
+        if (window.crypto?.getRandomValues) {
+          window.crypto.getRandomValues(bytes);
+        } else {
+          const fallback = Math.floor(Math.random() * 65536);
+          bytes[0] = fallback & 255;
+          bytes[1] = fallback >> 8;
+        }
+        return `VD-${Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase()}`;
+      }
+
+      function classifyError(error) {
+        if (error instanceof OAuthProviderStateError) return errorStates.missingProvider;
+        if (error instanceof OAuthCodeMissingError) return errorStates.missingCode;
+        if (error?.status === 400 || error?.response?.code === 400) return errorStates.consumedCode;
+        return errorStates.generic;
+      }
+
+      function showError(error) {
+        const errorState = classifyError(error);
+        const correlationId = shortCorrelationId();
+
+        spinner.hidden = true;
+        title.textContent = errorState.title;
+        status.textContent = `${errorState.message} Reference ${correlationId}.`;
+        status.dataset.state = "error";
+        status.dataset.error = errorState.code;
+        status.dataset.correlationId = correlationId;
+        retryLink.hidden = false;
+        console.error("OAuth callback failed", {
+          code: errorState.code,
+          correlationId,
+          error,
+        });
+      }
+
+      async function issueSessionCookie() {
+        const response = await fetch("/api/me/session", {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            Authorization: `Bearer ${pb.authStore.token}`,
+          },
+        });
+        if (!response.ok) throw new Error("Could not establish the web session.");
+      }
+
+      try {
+        const provider = readProviderState();
+        const code = params.get("code") || "";
+        if (!code) throw new OAuthCodeMissingError("OAuth authorization code is missing.");
+
+        await pb.collection("users").authWithOAuth2Code(
+          provider.name,
+          code,
+          provider.codeVerifier,
+          window.location.origin + "/auth/callback.html"
+        );
+        localStorage.removeItem("oauth_provider");
+        document.cookie = "oauth_provider=; Path=/; SameSite=Lax; Max-Age=0";
+        await issueSessionCookie();
+        status.textContent = "Opening your workspace...";
+        window.location.href = "/dashboard";
+      } catch (error) {
+        showError(error);
+      }
+    </script>
+  </body>
+</html>

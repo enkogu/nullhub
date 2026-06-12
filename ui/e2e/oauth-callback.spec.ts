@@ -1,7 +1,19 @@
 import { expect, test, type Page } from '@playwright/test';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
-const callbackHtml = readFileSync(new URL('../../../../public/auth/callback.html', import.meta.url), 'utf8');
+// Prefer the superproject's live copy (apps/public/auth/callback.html in the
+// Volksdroid monorepo) when this repo is checked out as a submodule; fall back
+// to the vendored fixture (e2e/fixtures/auth-callback.html, a copy of that
+// file) so the spec also passes in standalone nullhub checkouts.
+const superprojectCallback = fileURLToPath(
+  new URL('../../../../public/auth/callback.html', import.meta.url),
+);
+const vendoredCallback = fileURLToPath(new URL('./fixtures/auth-callback.html', import.meta.url));
+const callbackHtml = readFileSync(
+  existsSync(superprojectCallback) ? superprojectCallback : vendoredCallback,
+  'utf8',
+);
 
 const pocketBaseMock = `
 export default class PocketBase {
