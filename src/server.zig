@@ -1725,7 +1725,17 @@ pub const Server = struct {
                 return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
             }
             if (std.mem.eql(u8, method, "DELETE")) {
-                const resp = orders_api.handleDelete(allocator, self.paths, self.state, target, order_id, std_compat.time.milliTimestamp());
+                var cron_context = ScheduleOrderCronContext{
+                    .state = self.state,
+                    .manager = self.manager,
+                    .mutex = self.mutex,
+                    .paths = self.paths,
+                };
+                const cron_api = schedule_order_bridge.CronApi{
+                    .context = &cron_context,
+                    .call = dispatchScheduleOrderCron,
+                };
+                const resp = orders_api.handleDelete(allocator, self.paths, self.state, target, order_id, std_compat.time.milliTimestamp(), cron_api);
                 return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
             }
             return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
@@ -2847,6 +2857,16 @@ fn readServerTestCronStore(allocator: std.mem.Allocator, paths: paths_mod.Paths,
     return file.readToEndAlloc(allocator, 1024 * 1024);
 }
 
+fn readServerTestScheduleBridge(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []const u8) ![]u8 {
+    const orders_dir = try paths.spaceOrdersDir(allocator, space_id);
+    defer allocator.free(orders_dir);
+    const bridge_path = try std.fs.path.join(allocator, &.{ orders_dir, "schedule-cron-bridge.json" });
+    defer allocator.free(bridge_path);
+    const file = try std_compat.fs.openFileAbsolute(bridge_path, .{});
+    defer file.close();
+    return file.readToEndAlloc(allocator, 1024 * 1024);
+}
+
 // --- Tests ---
 
 test "route GET /health returns 200 OK" {
@@ -3705,6 +3725,144 @@ test "route schedule order cron run without run ref does not emit order executed
         try std.testing.expectEqualStrings("200 OK", resp.status);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.executed\"") == null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"run_ref\"") == null);
+    }
+}
+
+test "route DELETE schedule order removes cron and bridge link" {
+    const builtin = @import("builtin");
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var ctx = TestContext.init(allocator);
+    defer ctx.deinit(allocator);
+    try ctx.paths.ensureDirs();
+
+    try ctx.state.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0", .space_id = "ops" });
+    try writeServerTestCronStore(allocator, ctx.paths, "nullclaw", "my-agent", "[]");
+
+    const script =
+        \\#!/bin/sh
+        \\set -eu
+        \\home="${NULLCLAW_HOME:?}"
+        \\if [ "$1" = "cron" ] && [ "$2" = "add-agent" ] && [ "$3" = "0 9 * * *" ] && [ "$5" = "--session-target" ] && [ "$6" = "order-1" ]; then
+        \\  cat > "${home}/cron.json" <<EOF
+        \\[{"id":"job-order-1","expression":"0 9 * * *","prompt":"Send brief","paused":false,"one_shot":false}]
+        \\EOF
+        \\  exit 0
+        \\fi
+        \\if [ "$1" = "cron" ] && [ "$2" = "remove" ] && [ "$3" = "job-order-1" ]; then
+        \\  printf '[]\n' > "${home}/cron.json"
+        \\  exit 0
+        \\fi
+        \\echo "unexpected args: $*" >&2
+        \\exit 1
+        \\
+    ;
+    try writeServerTestBinary(allocator, ctx.paths, "nullclaw", "1.0.0", script);
+
+    {
+        const resp = ctx.route(
+            allocator,
+            "POST",
+            "/api/orders?space=ops",
+            "{\"title\":\"Morning report\",\"kind\":\"schedule\",\"schedule\":\"0 9 * * *\",\"content\":\"Send brief\"}",
+        );
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const resp = ctx.route(allocator, "POST", "/api/orders/order-1/enact?space=ops", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    }
+
+    {
+        const resp = ctx.route(allocator, "DELETE", "/api/orders/order-1?space=ops", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"deleted\"") != null);
+    }
+
+    {
+        const cron = try readServerTestCronStore(allocator, ctx.paths, "nullclaw", "my-agent");
+        defer allocator.free(cron);
+        try std.testing.expectEqualStrings("[]\n", cron);
+    }
+
+    {
+        const bridge = try readServerTestScheduleBridge(allocator, ctx.paths, "ops");
+        defer allocator.free(bridge);
+        try std.testing.expect(std.mem.indexOf(u8, bridge, "order-1") == null);
+        try std.testing.expect(std.mem.indexOf(u8, bridge, "job-order-1") == null);
+    }
+}
+
+test "route DELETE schedule order clears stale missing cron link" {
+    const builtin = @import("builtin");
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var ctx = TestContext.init(allocator);
+    defer ctx.deinit(allocator);
+    try ctx.paths.ensureDirs();
+
+    try ctx.state.addInstance("nullclaw", "my-agent", .{ .version = "1.0.0", .space_id = "ops" });
+    try writeServerTestCronStore(allocator, ctx.paths, "nullclaw", "my-agent", "[]");
+
+    const script =
+        \\#!/bin/sh
+        \\set -eu
+        \\home="${NULLCLAW_HOME:?}"
+        \\if [ "$1" = "cron" ] && [ "$2" = "add-agent" ] && [ "$3" = "0 9 * * *" ] && [ "$5" = "--session-target" ] && [ "$6" = "order-1" ]; then
+        \\  cat > "${home}/cron.json" <<EOF
+        \\[{"id":"job-order-1","expression":"0 9 * * *","prompt":"Send brief","paused":false,"one_shot":false}]
+        \\EOF
+        \\  exit 0
+        \\fi
+        \\echo "unexpected args: $*" >&2
+        \\exit 1
+        \\
+    ;
+    try writeServerTestBinary(allocator, ctx.paths, "nullclaw", "1.0.0", script);
+
+    {
+        const resp = ctx.route(
+            allocator,
+            "POST",
+            "/api/orders?space=ops",
+            "{\"title\":\"Morning report\",\"kind\":\"schedule\",\"schedule\":\"0 9 * * *\",\"content\":\"Send brief\"}",
+        );
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const resp = ctx.route(allocator, "POST", "/api/orders/order-1/enact?space=ops", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    }
+
+    try writeServerTestCronStore(allocator, ctx.paths, "nullclaw", "my-agent", "[]");
+
+    {
+        const resp = ctx.route(allocator, "DELETE", "/api/orders/order-1?space=ops", "");
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"deleted\"") != null);
+    }
+
+    {
+        const cron = try readServerTestCronStore(allocator, ctx.paths, "nullclaw", "my-agent");
+        defer allocator.free(cron);
+        try std.testing.expectEqualStrings("[]", cron);
+    }
+
+    {
+        const bridge = try readServerTestScheduleBridge(allocator, ctx.paths, "ops");
+        defer allocator.free(bridge);
+        try std.testing.expect(std.mem.indexOf(u8, bridge, "order-1") == null);
+        try std.testing.expect(std.mem.indexOf(u8, bridge, "job-order-1") == null);
     }
 }
 

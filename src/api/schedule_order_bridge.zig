@@ -74,6 +74,17 @@ pub fn beforeTransition(
     };
 }
 
+pub fn beforeDelete(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    cron_api: ?CronApi,
+    order: orders.Order,
+) ?helpers.ApiResponse {
+    if (!isScheduleOrder(order)) return null;
+    const api = cron_api orelse return null;
+    return removeCron(allocator, paths, api, order);
+}
+
 pub fn emitExecutedForCronRun(
     allocator: std.mem.Allocator,
     paths: paths_mod.Paths,

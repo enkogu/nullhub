@@ -260,13 +260,32 @@ pub fn handleSchedule(allocator: std.mem.Allocator, paths: paths_mod.Paths, stat
     return helpers.jsonOk(response);
 }
 
-pub fn handleDelete(allocator: std.mem.Allocator, paths: paths_mod.Paths, state: *state_mod.State, target: []const u8, order_id: []const u8, now_ms: i64) helpers.ApiResponse {
+pub fn handleDelete(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    state: *state_mod.State,
+    target: []const u8,
+    order_id: []const u8,
+    now_ms: i64,
+    cron_api: ?schedule_order_bridge.CronApi,
+) helpers.ApiResponse {
     const space_id = requiredSpaceQueryAlloc(allocator, target) catch |err| switch (err) {
         error.MissingSpace => return helpers.badRequest("{\"error\":\"space query is required\"}"),
         error.InvalidSpace => return helpers.badRequest("{\"error\":\"invalid space id\"}"),
         else => return helpers.serverError(),
     };
     defer allocator.free(space_id);
+
+    const current_order = orders.get(allocator, paths, space_id, order_id) catch |err| switch (err) {
+        error.InvalidOrderId => return helpers.badRequest("{\"error\":\"invalid order id\"}"),
+        error.OrderNotFound => return helpers.notFound(),
+        else => return helpers.serverError(),
+    };
+    defer current_order.deinit(allocator);
+
+    if (schedule_order_bridge.beforeDelete(allocator, paths, cron_api, current_order)) |bridge_resp| {
+        return bridge_resp;
+    }
 
     const order = orders.remove(allocator, paths, space_id, order_id) catch |err| switch (err) {
         error.InvalidOrderId => return helpers.badRequest("{\"error\":\"invalid order id\"}"),
@@ -469,7 +488,7 @@ test "orders API deletes records without treating archive as delete" {
     }
 
     {
-        const delete_resp = handleDelete(allocator, fixture.paths, &state, "/api/orders/order-1?space=ops", "order-1", 1200);
+        const delete_resp = handleDelete(allocator, fixture.paths, &state, "/api/orders/order-1?space=ops", "order-1", 1200, null);
         defer allocator.free(delete_resp.body);
         try std.testing.expectEqualStrings("200 OK", delete_resp.status);
         try std.testing.expect(std.mem.indexOf(u8, delete_resp.body, "\"status\":\"deleted\"") != null);
