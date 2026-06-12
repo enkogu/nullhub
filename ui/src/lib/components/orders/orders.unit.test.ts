@@ -2,11 +2,12 @@ import { describe, expect, test } from 'vitest';
 import {
   cronHumanPreview,
   isValidCronExpression,
+  normalizeOrderEditorDraft,
   orderBodySkeleton,
   orderDocumentToDraft,
+  orderDraftToOrderInput,
   orderDraftToDocument,
   validateOrderEditorDraft,
-  type OrderEditorDraft,
 } from './orders';
 
 describe('order editor helpers', () => {
@@ -52,14 +53,21 @@ describe('order editor helpers', () => {
     expect(
       validateOrderEditorDraft({
         type: 'trigger',
-        title: 'Later trigger',
-        body: orderBodySkeleton(),
+        title: 'Ticket trigger',
       }),
-    ).toMatchObject({ type: 'Trigger editors arrive in P5.' });
+    ).toMatchObject({ triggerEventType: 'Event type is required for a trigger order.' });
+
+    expect(
+      validateOrderEditorDraft({
+        type: 'mandate',
+        title: 'Subscriber mandate',
+        mandateConditionEventType: 'subscribers.goal_met',
+      }),
+    ).toMatchObject({ mandateGoal: 'Goal is required for a mandate order.' });
   });
 
   test('round-trips an order markdown document without losing draft fields', () => {
-    const draft: OrderEditorDraft = {
+    const draft = normalizeOrderEditorDraft({
       type: 'policy',
       source: 'ai_decision',
       title: 'Customer outreach guardrails',
@@ -77,7 +85,7 @@ describe('order editor helpers', () => {
 ## BOUNDS
 - Ask before discounts or legal language.
 `,
-    };
+    });
 
     const document = orderDraftToDocument(draft);
     const parsed = orderDocumentToDraft(document);
@@ -92,5 +100,88 @@ describe('order editor helpers', () => {
       body: draft.body,
     });
     expect(orderDraftToDocument(parsed)).toBe(document);
+  });
+
+  test('serializes trigger drafts to dispatcher JSON content', () => {
+    const draft = normalizeOrderEditorDraft({
+      type: 'trigger',
+      title: 'Ticket created dispatcher',
+      summary: 'Create work when a ticket appears.',
+      triggerEventType: 'work.ticket.created',
+      triggerSource: 'nulltickets',
+      triggerSubjectType: 'ticket',
+      actionType: 'create_ticket',
+      actionTarget: 'triage',
+      actionInstructions: 'Open a triage ticket.',
+      autonomyTier: 'T2',
+    });
+
+    const document = orderDraftToDocument(draft);
+    const parsed = orderDocumentToDraft(document);
+    const input = orderDraftToOrderInput(draft);
+
+    expect(JSON.parse(document)).toMatchObject({
+      trigger: { event_type: 'work.ticket.created', source: 'nulltickets', subject_type: 'ticket' },
+      tier: 'T2',
+      action: { type: 'create_ticket', target: 'triage', instructions: 'Open a triage ticket.' },
+    });
+    expect(parsed).toMatchObject({
+      type: 'trigger',
+      triggerEventType: 'work.ticket.created',
+      triggerSource: 'nulltickets',
+      actionType: 'create_ticket',
+    });
+    expect(input).toMatchObject({
+      kind: 'trigger',
+      goal: '',
+      schedule: 'event:work.ticket.created',
+      content: document,
+    });
+  });
+
+  test('serializes mandate drafts with goal, condition, cadence, and action fields', () => {
+    const draft = normalizeOrderEditorDraft({
+      type: 'mandate',
+      title: 'Subscriber goal mandate',
+      summary: 'Keep subscriber follow-up current.',
+      mandateGoal: 'subscribers-50',
+      mandateConditionEventType: 'subscribers.goal_met',
+      mandateUnmetEventType: 'subscribers.goal_unmet',
+      mandateCheckCadenceMs: 120000,
+      actionType: 'run_agent',
+      actionTarget: 'growth-agent',
+      actionInstructions: 'Continue outreach until the goal is met.',
+      autonomyTier: 'T1',
+    });
+
+    const document = orderDraftToDocument(draft);
+    const parsed = orderDocumentToDraft(document);
+    const input = orderDraftToOrderInput(draft);
+
+    expect(JSON.parse(document)).toMatchObject({
+      goal: 'subscribers-50',
+      condition: {
+        event_type: 'subscribers.goal_met',
+        unmet_event_type: 'subscribers.goal_unmet',
+      },
+      check_cadence_ms: 120000,
+      action: {
+        type: 'run_agent',
+        target: 'growth-agent',
+        instructions: 'Continue outreach until the goal is met.',
+      },
+    });
+    expect(parsed).toMatchObject({
+      type: 'mandate',
+      mandateGoal: 'subscribers-50',
+      mandateConditionEventType: 'subscribers.goal_met',
+      mandateCheckCadenceMs: 120000,
+    });
+    expect(input).toMatchObject({
+      kind: 'mandate',
+      goal: 'subscribers-50',
+      schedule: '',
+      content: document,
+    });
   });
 });

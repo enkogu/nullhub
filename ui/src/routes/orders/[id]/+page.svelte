@@ -21,6 +21,7 @@
   let title = $derived(order?.title || orderId || 'Order detail');
   let subtitle = $derived(order?.summary || 'Managed order document, facts, and execution history.');
   let backHref = $derived(hrefWithSearch('/orders'));
+  let editHref = $derived(orderId ? hrefWithSearch(`/orders/${encodeURIComponent(orderId)}/edit`) : undefined);
 
   function hrefWithSearch(href: string): string {
     const search = $page.url.search;
@@ -124,6 +125,7 @@
     {actionError}
     {nowMs}
     spaceId={selectedSpaceId}
+    {editHref}
     onRetry={() => void loadOrder()}
     onSuspend={() => transitionOrder('suspend')}
     onResume={() => transitionOrder('resume')}

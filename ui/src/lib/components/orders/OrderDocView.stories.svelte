@@ -16,6 +16,7 @@
     title: 'Policy order detail',
     summary: 'Keep managed policy instructions current.',
     kind: 'policy',
+    goal: '',
     status: 'active',
     schedule: 'Manual',
     signal: 'Policy update',
@@ -87,6 +88,6 @@
 />
 <Story
   name="Deferred"
-  args={{ order: { ...order, kind: 'mandate', title: 'Legacy mandate' }, events, state: 'ready', nowMs }}
+  args={{ order: { ...order, kind: 'legacy', title: 'Legacy order' }, events, state: 'ready', nowMs }}
   template={detailTemplate}
 />

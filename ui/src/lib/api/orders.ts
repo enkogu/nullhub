@@ -7,7 +7,7 @@ type QueryParams = Record<string, QueryValue>;
 type WithQueryFn = (path: string, params: QueryParams) => string;
 
 export type OrderStatus = 'draft' | 'active' | 'suspended' | 'archived' | string;
-export type OrderKind = 'mandate' | 'schedule' | 'loop' | 'workflow' | string;
+export type OrderKind = 'mandate' | 'schedule' | 'trigger' | 'policy' | 'loop' | 'workflow' | string;
 export type OrderStatusAction = 'draft' | 'enact' | 'suspend' | 'resume' | 'archive';
 
 export type Order = {
@@ -16,6 +16,7 @@ export type Order = {
   title: string;
   summary: string;
   kind: OrderKind;
+  goal: string;
   status: OrderStatus;
   schedule: string;
   signal?: string;
@@ -41,6 +42,7 @@ export type OrderCreateInput = {
   title: string;
   summary?: string;
   kind?: OrderKind;
+  goal?: string;
   schedule?: string;
   content?: string;
   createdAtMs?: number;
@@ -52,6 +54,7 @@ export type OrderUpdateInput = {
   title?: string;
   summary?: string;
   kind?: OrderKind;
+  goal?: string;
   status?: OrderStatus;
   schedule?: string;
   content?: string;
@@ -109,6 +112,7 @@ function normalizeOrder(raw: any): Order {
     title: stringValue(raw?.title),
     summary: stringValue(raw?.summary),
     kind: stringValue(raw?.kind || 'mandate'),
+    goal: stringValue(raw?.goal ?? raw?.goal_id ?? raw?.goal_ref),
     status: stringValue(raw?.status || 'draft'),
     schedule: stringValue(raw?.schedule),
     ...(signal ? { signal } : {}),
@@ -139,6 +143,7 @@ function createOrderBody(input: OrderCreateInput) {
     title: input.title,
     summary: input.summary,
     kind: input.kind,
+    goal: input.goal,
     schedule: input.schedule,
     content: input.content,
     created_at_ms: input.createdAtMs,
@@ -151,6 +156,7 @@ function updateOrderBody(input: OrderUpdateInput) {
     title: input.title,
     summary: input.summary,
     kind: input.kind,
+    goal: input.goal,
     status: input.status,
     schedule: input.schedule,
     content: input.content,

@@ -8,6 +8,7 @@ export const fixtureOrders: Order[] = [
     title: 'Weekly pipeline review',
     summary: 'Review open loops and blocked work.',
     kind: 'workflow',
+    goal: '',
     status: 'active',
     schedule: '0 10 * * 1',
     docPath: 'orders/order-2.md',
@@ -21,6 +22,7 @@ export const fixtureOrders: Order[] = [
     title: 'Morning report',
     summary: 'Prepare the daily operations brief.',
     kind: 'schedule',
+    goal: '',
     status: 'draft',
     schedule: '0 9 * * *',
     docPath: 'orders/order-1.md',
@@ -59,6 +61,7 @@ function wireOrder(order: Order) {
     title: order.title,
     summary: order.summary,
     kind: order.kind,
+    goal: order.goal,
     status: order.status,
     schedule: order.schedule,
     ...(order.signal ? { signal: order.signal } : {}),
@@ -143,6 +146,7 @@ export function createOrdersFixtureRoutes(
           title,
           summary: String(body.summary ?? ''),
           kind: String(body.kind ?? 'mandate'),
+          goal: String(body.goal ?? body.goal_id ?? body.goal_ref ?? ''),
           status: 'draft',
           schedule: String(body.schedule ?? ''),
           docPath: `orders/${id}.md`,
@@ -183,6 +187,10 @@ export function createOrdersFixtureRoutes(
           title: body.title === undefined ? state.orders[index].title : String(body.title),
           summary: body.summary === undefined ? state.orders[index].summary : String(body.summary),
           kind: body.kind === undefined ? state.orders[index].kind : String(body.kind),
+          goal:
+            body.goal === undefined && body.goal_id === undefined && body.goal_ref === undefined
+              ? state.orders[index].goal
+              : String(body.goal ?? body.goal_id ?? body.goal_ref ?? ''),
           status: body.status === undefined ? state.orders[index].status : String(body.status),
           schedule: body.schedule === undefined ? state.orders[index].schedule : String(body.schedule),
           content:

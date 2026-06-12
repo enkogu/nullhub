@@ -393,6 +393,7 @@ const fixtureOrders = [
     title: 'Weekly pipeline review',
     summary: 'Review open loops and blocked workflow mandates.',
     kind: 'workflow',
+    goal: '',
     status: 'active',
     schedule: '0 10 * * 1',
     signal: 'Monday review signal',
@@ -410,6 +411,7 @@ const fixtureOrders = [
     title: 'Morning report',
     summary: 'Prepare the daily operations brief.',
     kind: 'schedule',
+    goal: '',
     status: 'draft',
     schedule: '0 9 * * *',
     signal: 'Daily briefing signal',
@@ -716,6 +718,7 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions, request
       title,
       summary: String(payload?.summary || ''),
       kind: String(payload?.kind || 'mandate'),
+      goal: String(payload?.goal ?? payload?.goal_id ?? payload?.goal_ref ?? ''),
       status: 'draft',
       schedule: String(payload?.schedule || ''),
       signal: String(payload?.signal || ''),
@@ -744,6 +747,23 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions, request
       return;
     }
     if (route.request().method() === 'GET' && !action) {
+      await fulfillJson(route, order);
+      return;
+    }
+    if (route.request().method() === 'PATCH' && !action) {
+      const payload = route.request().postDataJSON() as Record<string, unknown> | null;
+      if (payload?.title !== undefined) order.title = String(payload.title);
+      if (payload?.summary !== undefined) order.summary = String(payload.summary);
+      if (payload?.kind !== undefined) order.kind = String(payload.kind);
+      if (payload?.goal !== undefined || payload?.goal_id !== undefined || payload?.goal_ref !== undefined) {
+        order.goal = String(payload.goal ?? payload.goal_id ?? payload.goal_ref ?? '');
+      }
+      if (payload?.status !== undefined) order.status = String(payload.status);
+      if (payload?.schedule !== undefined) order.schedule = String(payload.schedule);
+      if (payload?.content !== undefined || payload?.body !== undefined) {
+        order.content = String(payload.content ?? payload.body ?? '');
+      }
+      order.updated_at_ms = 1_780_000_020_000;
       await fulfillJson(route, order);
       return;
     }

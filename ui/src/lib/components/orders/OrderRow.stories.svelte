@@ -16,6 +16,7 @@
     title: 'Weekly pipeline review',
     summary: 'Review open loops and blocked workflow mandates.',
     kind: 'workflow',
+    goal: '',
     status: 'active',
     schedule: '0 10 * * 1',
     signal: 'Monday review signal',

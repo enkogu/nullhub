@@ -24,10 +24,13 @@
     isOrderEditorDraftValid,
     normalizeOrderEditorDraft,
     orderBodySkeleton,
+    orderActionOptions,
+    orderActionTargetLabel,
     orderDraftToDocument,
     orderEditorTypeCards,
     validateOrderEditorDraft,
     type CronPresetId,
+    type OrderActionType,
     type OrderAutonomyTier,
     type OrderEditorDraft,
     type OrderEditorType,
@@ -54,7 +57,13 @@
   let documentPreview = $derived(orderDraftToDocument(form));
   let cronPreview = $derived(cronHumanPreview(form.schedule));
   let selectedTier = $derived(autonomyTiers.find((tier) => tier.tier === form.autonomyTier) ?? autonomyTiers[1]);
+  let actionTargetLabel = $derived(orderActionTargetLabel(form.actionType));
   let showAiDecisionBar = $derived(form.source === 'ai_decision');
+  let showMarkdownBody = $derived(form.type === 'schedule' || form.type === 'policy');
+  let previewTitle = $derived(showMarkdownBody ? 'Document preview' : 'Dispatcher spec preview');
+  let previewDescription = $derived(
+    showMarkdownBody ? 'The draft remains a portable markdown order.' : 'The draft will be stored as dispatcher JSON content.',
+  );
 
   const iconByType: Record<OrderEditorType, typeof CalendarClockIcon> = {
     schedule: CalendarClockIcon,
@@ -95,6 +104,15 @@
 
   function selectTier(tier: OrderAutonomyTier) {
     form.autonomyTier = tier;
+  }
+
+  function selectAction(event: Event) {
+    form.actionType = (event.currentTarget as HTMLSelectElement).value as OrderActionType;
+  }
+
+  function updateMandateCadence(event: Event) {
+    const value = (event.currentTarget as HTMLInputElement).value;
+    form.mandateCheckCadenceMs = value.trim() ? Number(value) : 0;
   }
 
   function useSkeleton() {
@@ -280,6 +298,159 @@
             {/if}
           </div>
         </Card>
+      {:else if form.type === 'trigger'}
+        <Card class="gap-4 rounded-lg px-5">
+          <div class="space-y-1">
+            <h2 class="text-sm font-semibold">Trigger</h2>
+            <p class="text-sm leading-6 text-muted-foreground">Match an event-log signal and choose the dispatcher action.</p>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="space-y-2">
+              <Label for="order-editor-trigger-event-type">Event type</Label>
+              <Input
+                id="order-editor-trigger-event-type"
+                bind:value={form.triggerEventType}
+                placeholder="work.ticket.created"
+                aria-invalid={Boolean(errorFor('triggerEventType'))}
+              />
+              {#if errorFor('triggerEventType')}
+                <p class="text-sm text-destructive">{errorFor('triggerEventType')}</p>
+              {/if}
+            </div>
+            <div class="space-y-2">
+              <Label for="order-editor-trigger-source">Source filter</Label>
+              <Input id="order-editor-trigger-source" bind:value={form.triggerSource} placeholder="nulltickets" />
+            </div>
+            <div class="space-y-2">
+              <Label for="order-editor-trigger-subject-type">Subject type</Label>
+              <Input id="order-editor-trigger-subject-type" bind:value={form.triggerSubjectType} placeholder="ticket" />
+            </div>
+            <div class="space-y-2">
+              <Label for="order-editor-trigger-subject-id">Subject id</Label>
+              <Input id="order-editor-trigger-subject-id" bind:value={form.triggerSubjectId} placeholder="optional-id" />
+            </div>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+            <div class="space-y-2">
+              <Label for="order-editor-trigger-action">Action</Label>
+              <Select id="order-editor-trigger-action" value={form.actionType} onchange={selectAction}>
+                {#each orderActionOptions as action (action.value)}
+                  <option value={action.value}>{action.label}</option>
+                {/each}
+              </Select>
+            </div>
+            <div class="space-y-2">
+              <Label for="order-editor-trigger-target">{actionTargetLabel}</Label>
+              <Input id="order-editor-trigger-target" bind:value={form.actionTarget} placeholder="default" />
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <Label for="order-editor-trigger-instructions">Instructions</Label>
+            <Textarea
+              id="order-editor-trigger-instructions"
+              bind:value={form.actionInstructions}
+              class="min-h-28"
+              placeholder="What the dispatcher should ask the selected action to do."
+            />
+          </div>
+        </Card>
+      {:else if form.type === 'mandate'}
+        <Card class="gap-4 rounded-lg px-5">
+          <div class="space-y-1">
+            <h2 class="text-sm font-semibold">Mandate</h2>
+            <p class="text-sm leading-6 text-muted-foreground">Define the goal, completion condition, and check cadence.</p>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-2">
+            <div class="space-y-2 md:col-span-2">
+              <Label for="order-editor-mandate-goal">Goal</Label>
+              <Input
+                id="order-editor-mandate-goal"
+                bind:value={form.mandateGoal}
+                placeholder="subscribers-50"
+                aria-invalid={Boolean(errorFor('mandateGoal'))}
+              />
+              {#if errorFor('mandateGoal')}
+                <p class="text-sm text-destructive">{errorFor('mandateGoal')}</p>
+              {/if}
+            </div>
+            <div class="space-y-2">
+              <Label for="order-editor-mandate-condition-event">Condition event type</Label>
+              <Input
+                id="order-editor-mandate-condition-event"
+                bind:value={form.mandateConditionEventType}
+                placeholder="subscribers.goal_met"
+                aria-invalid={Boolean(errorFor('mandateConditionEventType'))}
+              />
+              {#if errorFor('mandateConditionEventType')}
+                <p class="text-sm text-destructive">{errorFor('mandateConditionEventType')}</p>
+              {/if}
+            </div>
+            <div class="space-y-2">
+              <Label for="order-editor-mandate-unmet-event">Unmet event type</Label>
+              <Input
+                id="order-editor-mandate-unmet-event"
+                bind:value={form.mandateUnmetEventType}
+                placeholder="subscribers.goal_unmet"
+              />
+            </div>
+            <div class="space-y-2">
+              <Label for="order-editor-mandate-cadence">Check cadence ms</Label>
+              <Input
+                id="order-editor-mandate-cadence"
+                type="number"
+                min="1"
+                step="1000"
+                value={form.mandateCheckCadenceMs}
+                aria-invalid={Boolean(errorFor('mandateCheckCadenceMs'))}
+                oninput={updateMandateCadence}
+              />
+              {#if errorFor('mandateCheckCadenceMs')}
+                <p class="text-sm text-destructive">{errorFor('mandateCheckCadenceMs')}</p>
+              {/if}
+            </div>
+            <div class="space-y-2">
+              <Label for="order-editor-mandate-source">Condition source filter</Label>
+              <Input id="order-editor-mandate-source" bind:value={form.mandateConditionSource} placeholder="nullhub" />
+            </div>
+            <div class="space-y-2">
+              <Label for="order-editor-mandate-subject-type">Condition subject type</Label>
+              <Input id="order-editor-mandate-subject-type" bind:value={form.mandateConditionSubjectType} placeholder="goal" />
+            </div>
+            <div class="space-y-2">
+              <Label for="order-editor-mandate-subject-id">Condition subject id</Label>
+              <Input id="order-editor-mandate-subject-id" bind:value={form.mandateConditionSubjectId} placeholder="optional-id" />
+            </div>
+          </div>
+
+          <div class="grid gap-4 md:grid-cols-[minmax(0,14rem)_minmax(0,1fr)]">
+            <div class="space-y-2">
+              <Label for="order-editor-mandate-action">Action</Label>
+              <Select id="order-editor-mandate-action" value={form.actionType} onchange={selectAction}>
+                {#each orderActionOptions as action (action.value)}
+                  <option value={action.value}>{action.label}</option>
+                {/each}
+              </Select>
+            </div>
+            <div class="space-y-2">
+              <Label for="order-editor-mandate-target">{actionTargetLabel}</Label>
+              <Input id="order-editor-mandate-target" bind:value={form.actionTarget} placeholder="default" />
+            </div>
+          </div>
+
+          <div class="space-y-2">
+            <Label for="order-editor-mandate-instructions">Instructions</Label>
+            <Textarea
+              id="order-editor-mandate-instructions"
+              bind:value={form.actionInstructions}
+              class="min-h-28"
+              placeholder="How the dispatcher should continue work while the condition is unmet."
+            />
+          </div>
+        </Card>
       {/if}
 
       <Card class="gap-4 rounded-lg px-5">
@@ -314,35 +485,37 @@
         </div>
       </Card>
 
-      <Card class="gap-4 rounded-lg px-5">
-        <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-          <div class="space-y-1">
-            <h2 class="text-sm font-semibold">Body</h2>
-            <p class="text-sm leading-6 text-muted-foreground">Keep the order readable as a markdown document.</p>
+      {#if showMarkdownBody}
+        <Card class="gap-4 rounded-lg px-5">
+          <div class="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div class="space-y-1">
+              <h2 class="text-sm font-semibold">Body</h2>
+              <p class="text-sm leading-6 text-muted-foreground">Keep the order readable as a markdown document.</p>
+            </div>
+            <Button variant="outline" size="sm" onclick={useSkeleton}>Use WHEN/WHAT/BOUNDS skeleton</Button>
           </div>
-          <Button variant="outline" size="sm" onclick={useSkeleton}>Use WHEN/WHAT/BOUNDS skeleton</Button>
-        </div>
 
-        <div class="space-y-2">
-          <Label for="order-editor-body">Markdown body</Label>
-          <Textarea
-            id="order-editor-body"
-            bind:value={form.body}
-            class="min-h-64 font-mono"
-            aria-invalid={Boolean(errorFor('body'))}
-          />
-          {#if errorFor('body')}
-            <p class="text-sm text-destructive">{errorFor('body')}</p>
-          {/if}
-        </div>
-      </Card>
+          <div class="space-y-2">
+            <Label for="order-editor-body">Markdown body</Label>
+            <Textarea
+              id="order-editor-body"
+              bind:value={form.body}
+              class="min-h-64 font-mono"
+              aria-invalid={Boolean(errorFor('body'))}
+            />
+            {#if errorFor('body')}
+              <p class="text-sm text-destructive">{errorFor('body')}</p>
+            {/if}
+          </div>
+        </Card>
+      {/if}
     </div>
 
     <aside class="flex min-w-0 flex-col gap-4">
       <Card class="gap-4 rounded-lg px-5">
         <div class="space-y-1">
-          <h2 class="text-sm font-semibold">Document preview</h2>
-          <p class="text-sm leading-6 text-muted-foreground">The draft remains a portable markdown order.</p>
+          <h2 class="text-sm font-semibold">{previewTitle}</h2>
+          <p class="text-sm leading-6 text-muted-foreground">{previewDescription}</p>
         </div>
 
         <pre class="max-h-[32rem] overflow-auto rounded-md border bg-muted/40 p-3 text-xs leading-5 whitespace-pre-wrap">{documentPreview}</pre>
@@ -380,9 +553,11 @@
         <div class="flex items-start gap-2">
           <FileTextIcon class="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           <div class="min-w-0 space-y-1">
-            <h2 class="text-sm font-semibold">Portable document</h2>
+            <h2 class="text-sm font-semibold">{showMarkdownBody ? 'Portable document' : 'Dispatcher content'}</h2>
             <p class="text-sm leading-6 text-muted-foreground">
-              The order can be reviewed as frontmatter plus a markdown body.
+              {showMarkdownBody
+                ? 'The order can be reviewed as frontmatter plus a markdown body.'
+                : 'The order content follows the backend trigger and mandate spec.'}
             </p>
           </div>
         </div>

@@ -36,8 +36,7 @@ test('renders /orders/:id document facts, history run link, and suspend action',
     'href',
     '/work/runs/run-order-2?space=ops',
   );
-  await expect(page.getByRole('button', { name: 'Edit' })).toBeDisabled();
-  await expect(page.getByRole('link', { name: 'Edit' })).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Edit' })).toHaveAttribute('href', '/orders/order-2/edit?space=ops');
   await expect(page.getByText('review_cycle: weekly')).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Suspend' }).click();
