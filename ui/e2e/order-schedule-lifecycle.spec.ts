@@ -184,11 +184,11 @@ test('E2E-38 scheduled order fires work evidence and pause blocks future runs', 
         instance: 'Athena',
         cron_job_id: `cron-${orderId}`,
         run_ref: 'scheduled-order-run-1',
-        runRef: 'scheduled-order-run-1',
       },
     },
   });
   expect(firstFire.event.payload.run_id).toBeUndefined();
+  expect(firstFire.event.payload.runRef).toBeUndefined();
 
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Execution history' })).toBeVisible();

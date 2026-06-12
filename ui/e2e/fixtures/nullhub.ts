@@ -856,7 +856,6 @@ async function scheduleFireRoute(
       instance,
       cron_job_id: cronJobId,
       run_ref: runRef,
-      runRef,
     },
   };
   events.unshift(event);
