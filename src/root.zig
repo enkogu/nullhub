@@ -32,6 +32,7 @@ pub const nulltickets_api = @import("api/nulltickets.zig");
 pub const nullwatch_api = @import("api/nullwatch.zig");
 pub const orders = @import("core/orders.zig");
 pub const orders_api = @import("api/orders.zig");
+pub const policy_orders = @import("core/policy_orders.zig");
 pub const orchestrator = @import("installer/orchestrator.zig");
 pub const manifest = @import("core/manifest.zig");
 pub const paths = @import("core/paths.zig");
@@ -96,6 +97,7 @@ test {
     _ = nullwatch_api;
     _ = orders;
     _ = orders_api;
+    _ = policy_orders;
     _ = orchestrator;
     _ = manifest;
     _ = paths;

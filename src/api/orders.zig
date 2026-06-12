@@ -1,6 +1,7 @@
 const std = @import("std");
 const std_compat = @import("compat");
 const orders = @import("../core/orders.zig");
+const policy_orders = @import("../core/policy_orders.zig");
 const paths_mod = @import("../core/paths.zig");
 const state_mod = @import("../core/state.zig");
 const helpers = @import("helpers.zig");
@@ -145,8 +146,7 @@ pub fn handleCreate(allocator: std.mem.Allocator, paths: paths_mod.Paths, state:
     };
     defer order.deinit(allocator);
 
-    appendOrderEvent(state, order, "order.created", "Order created", now_ms) catch return helpers.serverError();
-    state.save() catch return helpers.serverError();
+    applyOrderMutationSideEffects(allocator, paths, state, order, "order.created", "Order created", now_ms) catch return helpers.serverError();
 
     const response = renderOrder(allocator, order) catch return helpers.serverError();
     return .{ .status = "201 Created", .content_type = "application/json", .body = response };
@@ -183,8 +183,7 @@ pub fn handleUpdate(allocator: std.mem.Allocator, paths: paths_mod.Paths, state:
     };
     defer order.deinit(allocator);
 
-    appendOrderEvent(state, order, "order.updated", "Order updated", now_ms) catch return helpers.serverError();
-    state.save() catch return helpers.serverError();
+    applyOrderMutationSideEffects(allocator, paths, state, order, "order.updated", "Order updated", now_ms) catch return helpers.serverError();
 
     const response = renderOrder(allocator, order) catch return helpers.serverError();
     return helpers.jsonOk(response);
@@ -205,8 +204,7 @@ pub fn handleTransition(allocator: std.mem.Allocator, paths: paths_mod.Paths, st
     };
     defer order.deinit(allocator);
 
-    appendOrderEvent(state, order, transition.eventType(), "Order status changed", now_ms) catch return helpers.serverError();
-    state.save() catch return helpers.serverError();
+    applyOrderMutationSideEffects(allocator, paths, state, order, transition.eventType(), "Order status changed", now_ms) catch return helpers.serverError();
 
     const response = renderOrder(allocator, order) catch return helpers.serverError();
     return helpers.jsonOk(response);
@@ -232,8 +230,7 @@ pub fn handleSchedule(allocator: std.mem.Allocator, paths: paths_mod.Paths, stat
     };
     defer order.deinit(allocator);
 
-    appendOrderEvent(state, order, "order.scheduled", "Order schedule updated", now_ms) catch return helpers.serverError();
-    state.save() catch return helpers.serverError();
+    applyOrderMutationSideEffects(allocator, paths, state, order, "order.scheduled", "Order schedule updated", now_ms) catch return helpers.serverError();
 
     const response = renderOrder(allocator, order) catch return helpers.serverError();
     return helpers.jsonOk(response);
@@ -254,8 +251,7 @@ pub fn handleDelete(allocator: std.mem.Allocator, paths: paths_mod.Paths, state:
     };
     defer order.deinit(allocator);
 
-    appendOrderEvent(state, order, "order.deleted", "Order deleted", now_ms) catch return helpers.serverError();
-    state.save() catch return helpers.serverError();
+    applyOrderMutationSideEffects(allocator, paths, state, order, "order.deleted", "Order deleted", now_ms) catch return helpers.serverError();
 
     const response = renderDelete(allocator, order) catch return helpers.serverError();
     return helpers.jsonOk(response);
@@ -273,6 +269,38 @@ fn appendOrderEvent(state: *state_mod.State, order: orders.Order, event_type: []
         .summary = summary,
         .severity = "info",
         .payload_json = payload_json,
+        .created_at_ms = now_ms,
+    });
+}
+
+fn applyOrderMutationSideEffects(
+    allocator: std.mem.Allocator,
+    paths: paths_mod.Paths,
+    state: *state_mod.State,
+    order: orders.Order,
+    event_type: []const u8,
+    summary: []const u8,
+    now_ms: i64,
+) !void {
+    const sync_result = try policy_orders.syncManagedOrdersForSpace(allocator, paths, state, order.space_id);
+    try appendOrderEvent(state, order, event_type, summary, now_ms);
+    if (sync_result.overflowed) {
+        try appendPolicyOrdersOverflowEvent(state, order, now_ms);
+    }
+    try state.save();
+}
+
+fn appendPolicyOrdersOverflowEvent(state: *state_mod.State, order: orders.Order, now_ms: i64) !void {
+    _ = try state.addEvent(.{
+        .space_id = order.space_id,
+        .event_type = "order.policy_orders_overflow",
+        .source = "nullhub",
+        .subject_type = "order",
+        .subject_id = order.id,
+        .title = "Policy Orders exceeded ORDERS.md budget",
+        .summary = "Managed ORDERS.md was truncated to the 24 KB prompt bootstrap budget.",
+        .severity = "warning",
+        .payload_json = "{\"file\":\"ORDERS.md\",\"budget_bytes\":24576}",
         .created_at_ms = now_ms,
     });
 }
@@ -506,6 +534,62 @@ test "orders transition verbs accept canonical verbs and legacy aliases" {
     try std.testing.expectEqualStrings("order.activated", orders.Transition.fromString("enact").?.eventType());
     try std.testing.expectEqualStrings("order.paused", orders.Transition.fromString("pause").?.eventType());
     try std.testing.expectEqualStrings("order.paused", orders.Transition.fromString("suspend").?.eventType());
+}
+
+test "orders API enact and suspend update managed ORDERS.md" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    try state.addInstance("nullclaw", "ops-agent", .{ .version = "dev-local", .space_id = "ops" });
+
+    {
+        const resp = handleCreate(
+            allocator,
+            fixture.paths,
+            &state,
+            "/api/orders?space=ops",
+            "{\"id\":\"policy-1\",\"title\":\"Keep approvals moving\",\"kind\":\"policy\",\"content\":\"Escalate stale approvals.\"}",
+            1000,
+        );
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/policy-1/enact?space=ops", "policy-1", .activate, 1100);
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    }
+
+    const workspace_dir = try fixture.paths.instanceWorkspaceDir(allocator, "nullclaw", "ops-agent");
+    defer allocator.free(workspace_dir);
+    const orders_path = try std.fs.path.join(allocator, &.{ workspace_dir, policy_orders.managed_orders_filename });
+    defer allocator.free(orders_path);
+
+    {
+        const bytes = try std_compat.fs.readFileAbsolute(allocator, orders_path, policy_orders.managed_orders_budget_bytes + 1);
+        defer allocator.free(bytes);
+        try std.testing.expect(std.mem.indexOf(u8, bytes, "Keep approvals moving") != null);
+        try std.testing.expect(std.mem.indexOf(u8, bytes, "Escalate stale approvals.") != null);
+    }
+
+    {
+        const resp = handleTransition(allocator, fixture.paths, &state, "/api/orders/policy-1/suspend?space=ops", "policy-1", .pause, 1200);
+        defer allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+    }
+
+    {
+        const bytes = try std_compat.fs.readFileAbsolute(allocator, orders_path, policy_orders.managed_orders_budget_bytes + 1);
+        defer allocator.free(bytes);
+        try std.testing.expect(std.mem.indexOf(u8, bytes, "No active policy Orders.") != null);
+        try std.testing.expect(std.mem.indexOf(u8, bytes, "Escalate stale approvals.") == null);
+    }
 }
 
 test "orders item id parser only accepts exact item route" {
