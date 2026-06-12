@@ -11,6 +11,15 @@ export type Space = {
   stage: string;
 };
 
+export type SpaceOverviewUsageWindow = '24h' | '7d' | '30d' | 'all';
+
+export type SpaceOverviewAggregate = {
+  spaceId: string;
+  pendingCount: number;
+  liveCount: number;
+  spendUsd: number | null;
+};
+
 export type SpaceCreateInput = {
   id?: string;
   name: string;
@@ -42,6 +51,31 @@ type SpaceSelectionContext = {
 
 type SpacesListResponse = {
   spaces?: unknown;
+};
+
+type ListLikeResponse = {
+  approvals?: unknown;
+  events?: unknown;
+};
+
+type RawEventLike = {
+  type?: unknown;
+  severity?: unknown;
+  payload?: unknown;
+};
+
+type UsageTotals = {
+  total_cost_usd?: unknown;
+  cost_usd?: unknown;
+  spend_usd?: unknown;
+  total_spend_usd?: unknown;
+  amount_usd?: unknown;
+};
+
+type UsagePayload = {
+  totals?: UsageTotals;
+  by_instance?: UsageTotals[];
+  by_model?: UsageTotals[];
 };
 
 export function selectedSpaceQuery(spaceId: SpaceSelection | undefined): QueryParams {
@@ -99,8 +133,83 @@ function normalizeSpaceList(raw: SpacesListResponse | Space[] | null | undefined
   return list.map(normalizeSpace);
 }
 
+function countList(raw: ListLikeResponse | unknown[] | null | undefined, key: 'approvals' | 'events'): number {
+  if (Array.isArray(raw)) return raw.length;
+  const list = raw?.[key];
+  return Array.isArray(list) ? list.length : 0;
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : value == null ? '' : String(value).trim();
+}
+
+function eventStatus(raw: RawEventLike): string {
+  const payload = raw.payload && typeof raw.payload === 'object' ? (raw.payload as Record<string, unknown>) : {};
+  return stringValue(payload.status || payload.state || raw.severity).toLowerCase();
+}
+
+function eventLooksLive(raw: unknown): boolean {
+  if (!raw || typeof raw !== 'object') return false;
+  const event = raw as RawEventLike;
+  const status = eventStatus(event);
+  if (['running', 'pending', 'queued', 'leased', 'in_progress', 'started', 'starting'].includes(status)) return true;
+  if (['warning', 'error', 'failed', 'blocked', 'stalled'].includes(status)) return true;
+  const type = stringValue(event.type).toLowerCase();
+  return type.endsWith('.started') || type.endsWith('.queued') || type.endsWith('.progress');
+}
+
+function countLiveEvents(raw: ListLikeResponse | unknown[] | null | undefined): number {
+  const list = Array.isArray(raw) ? raw : Array.isArray(raw?.events) ? raw.events : [];
+  return list.filter(eventLooksLive).length;
+}
+
+function numberValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function firstNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const numeric = numberValue(value);
+    if (numeric !== null) return numeric;
+  }
+  return null;
+}
+
+function costValue(value: UsageTotals | undefined): number | null {
+  if (!value) return null;
+  return firstNumber(
+    value.total_cost_usd,
+    value.cost_usd,
+    value.spend_usd,
+    value.total_spend_usd,
+    value.amount_usd,
+  );
+}
+
+function aggregateCost(rows: UsageTotals[] | undefined): number | null {
+  if (!Array.isArray(rows) || rows.length === 0) return null;
+  let total = 0;
+  let found = false;
+  for (const row of rows) {
+    const value = costValue(row);
+    if (value === null) continue;
+    total += value;
+    found = true;
+  }
+  return found ? total : null;
+}
+
+function usageSpend(raw: UsagePayload | null | undefined): number | null {
+  return costValue(raw?.totals) ?? aggregateCost(raw?.by_instance) ?? aggregateCost(raw?.by_model);
+}
+
 export function createSpacesApi(request: RequestFn, withQuery: WithQueryFn) {
-  return {
+  const api = {
     listSpaces: async (): Promise<Space[]> => normalizeSpaceList(await request<SpacesListResponse>(withQuery('/spaces', {}))),
     createSpace: async (input: SpaceCreateInput): Promise<Space> =>
       normalizeSpace(
@@ -116,9 +225,33 @@ export function createSpacesApi(request: RequestFn, withQuery: WithQueryFn) {
           body: JSON.stringify(input),
         }),
       ),
+    getSpaceOverview: async (
+      spaceId: string,
+      options: { usageWindow?: SpaceOverviewUsageWindow } = {},
+    ): Promise<SpaceOverviewAggregate> => {
+      const [approvals, events, usage] = await Promise.all([
+        request<ListLikeResponse>(withQuery('/approvals', { space: spaceId, status: 'pending', limit: 100 })),
+        request<ListLikeResponse>(withQuery('/events', { space: spaceId, limit: 100 })),
+        request<UsagePayload>(withQuery('/usage', { space: spaceId, window: options.usageWindow ?? '7d' })),
+      ]);
+      return {
+        spaceId,
+        pendingCount: countList(approvals, 'approvals'),
+        liveCount: countLiveEvents(events),
+        spendUsd: usageSpend(usage),
+      };
+    },
+    listSpaceOverviews: async (
+      options: { usageWindow?: SpaceOverviewUsageWindow } = {},
+    ): Promise<{ space: Space; aggregate: SpaceOverviewAggregate }[]> => {
+      const spaces = normalizeSpaceList(await request<SpacesListResponse>(withQuery('/spaces', {})));
+      const aggregates = await Promise.all(spaces.map((space) => api.getSpaceOverview(space.id, options)));
+      return spaces.map((space, index) => ({ space, aggregate: aggregates[index] }));
+    },
     scopedPath: (path: string, options?: SpaceScopedOptions & { params?: QueryParams }): string =>
       withSelectedSpaceQuery(withQuery, path, options?.spaceId, options?.params),
   };
+  return api;
 }
 
 export type SpacesApi = ReturnType<typeof createSpacesApi>;

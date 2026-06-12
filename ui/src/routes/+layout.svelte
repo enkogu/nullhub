@@ -4,7 +4,6 @@
   import { page } from '$app/stores';
   import { onMount, untrack } from 'svelte';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
-  import type { SpaceOption } from '$lib/components/AppSidebar.svelte';
   import CommandPalette from '$lib/components/CommandPalette.svelte';
   import GlobalAgentChatDrawer from '$lib/components/GlobalAgentChatDrawer.svelte';
   import * as Breadcrumb from '$lib/components/ui/breadcrumb/index.js';
@@ -120,28 +119,7 @@
   let isLogoutRoute = $derived($page.url.pathname === '/logout');
   let spacesResolved = $state(false);
   let spacesLoadError = $state<string | null>(null);
-  const allSpacesOption: SpaceOption = {
-    id: ALL_SPACES_STORAGE_VALUE,
-    name: 'All spaces',
-    detail: 'Aggregate view',
-    initial: 'A',
-  };
-  let sidebarSpaces = $derived(spacesStore.spaces.length > 0 ? [allSpacesOption, ...spacesStore.spaces.map(spaceOption)] : undefined);
   let activeSpaceId = $derived(spacesStore.selectedSpaceId ?? (spacesResolved ? ALL_SPACES_STORAGE_VALUE : undefined));
-
-  function humanLabel(value: string, fallback = 'Space'): string {
-    const text = value.trim().replace(/[-_]+/g, ' ');
-    return text ? text.charAt(0).toUpperCase() + text.slice(1) : fallback;
-  }
-
-  function spaceOption(space: Space): SpaceOption {
-    return {
-      id: space.id,
-      name: space.name || space.id,
-      detail: [humanLabel(space.kind), humanLabel(space.stage, '')].filter(Boolean).join(' - '),
-      initial: (space.name || space.id || 'S').trim().slice(0, 1).toUpperCase(),
-    };
-  }
 
   function hasExplicitAllSpacesSelection(): boolean {
     try {
@@ -249,7 +227,6 @@
   {:else}
     <Sidebar.Provider class="app-shell">
       <AppSidebar
-        spaces={sidebarSpaces}
         {activeSpaceId}
         onSpaceChange={handleSpaceChange}
         onCreateSpace={handleCreateSpace}
