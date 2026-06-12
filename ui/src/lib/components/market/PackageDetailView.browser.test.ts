@@ -11,8 +11,11 @@ test("renders populated package detail with requirements and install review", as
   await expect.element(screen.getByText("Capability")).toBeVisible();
   await expect.element(screen.getByText("providers.search.api_key")).toBeVisible();
   await expect.element(screen.getByRole("heading", { name: "context7-docs" })).toBeVisible();
-  await expect.element(screen.getByRole("button", { name: "Install into Space" })).toBeDisabled();
-  await expect.element(screen.getByText("Configure required secret refs before install execution.")).toBeVisible();
+  await expect.element(screen.getByRole("link", { name: "Install into Space" })).toHaveAttribute(
+    "href",
+    "/market/install/builtin.mcp-server-starters",
+  );
+  await expect.element(screen.getByText("The install wizard will require these secret refs before staging.")).toBeVisible();
 });
 
 test("renders loading, empty, and error states", async () => {

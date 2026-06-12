@@ -31,8 +31,8 @@
     !pkg
       ? "Package manifest is not loaded."
       : secretRequirements.length > 0
-        ? "Configure required secret refs before install execution."
-        : "Install execution is not wired in this UI-only release.",
+        ? "The install wizard will require these secret refs before staging."
+        : "The install wizard previews every change before staging.",
   );
 </script>
 
@@ -191,7 +191,11 @@
                 <p class="text-muted-foreground text-sm leading-5">{installDisabledReason}</p>
               </div>
             </div>
-            <Button disabled>Install into Space</Button>
+            {#if pkg}
+              <Button href={`/market/install/${encodeURIComponent(pkg.id)}`}>Install into Space</Button>
+            {:else}
+              <Button disabled>Install into Space</Button>
+            {/if}
           </Card>
 
           {#if pkg.charter.autonomyBounds.length || pkg.charter.metrics.length}
