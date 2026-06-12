@@ -1,4 +1,5 @@
 import { createNullBoilerApi } from '$lib/api/nullboiler';
+import { createApprovalsApi } from '$lib/api/approvals';
 import { createEventsApi } from '$lib/api/events';
 import { createMissionControlApi } from '$lib/api/missionControl';
 import { createNullTicketsApi, createNullTicketsStoreApi } from '$lib/api/nulltickets';
@@ -123,6 +124,17 @@ function withQuery(path: string, params: Record<string, string | number | boolea
 }
 
 export { encodePathSegment };
+export type {
+  Approval,
+  ApprovalCreateInput,
+  ApprovalDecideInput,
+  ApprovalDecision,
+  ApprovalKind,
+  ApprovalListPage,
+  ApprovalListParams,
+  ApprovalStatus,
+  ApprovalsApi,
+} from '$lib/api/approvals';
 export type {
   EventCreateInput,
   EventListPage,
@@ -467,6 +479,7 @@ export const nullTicketsApi = createNullTicketsApi((c, n, payload) =>
 export const nullTicketsStoreApi = createNullTicketsStoreApi(request, withQuery);
 export const spacesApi = createSpacesApi(request, withQuery);
 export const eventsApi = createEventsApi(request, withQuery);
+export const approvalsApi = createApprovalsApi(request, withQuery);
 
 export const nullWatchApi = {
   getNullWatchHealth: (params?: NullWatchTarget) =>
@@ -775,6 +788,8 @@ export const api = {
   ...missionControlApi,
 
   ...eventsApi,
+
+  ...approvalsApi,
 
   applyUpdate: (c: string, n: string) =>
     request<any>(instanceApiPath(c, n, '/update'), { method: 'POST' }),
