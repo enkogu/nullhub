@@ -34,6 +34,7 @@ const spaces_api = @import("api/spaces.zig");
 const market_api = @import("api/market.zig");
 const usage_api = @import("api/usage.zig");
 const report_api = @import("api/report.zig");
+const dispatcher_mod = @import("dispatcher/root.zig");
 const nullboiler_api = @import("api/nullboiler.zig");
 const nulltickets_api = @import("api/nulltickets.zig");
 const nullwatch_api = @import("api/nullwatch.zig");
@@ -142,6 +143,7 @@ pub const Server = struct {
     mutex: *std_compat.sync.Mutex,
     mission_control: mission_control_api.RuntimeStore = .{},
     mission_workflow_evidence_cache: MissionWorkflowEvidenceCache = .{},
+    dispatcher: dispatcher_mod.Poller = .{},
     start_time: i64,
     active_connections: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
@@ -197,6 +199,7 @@ pub const Server = struct {
     }
 
     pub fn deinit(self: *Server) void {
+        self.dispatcher.stop();
         self.mission_workflow_evidence_cache.deinit();
         self.state.deinit();
         self.allocator.destroy(self.state);
@@ -217,6 +220,10 @@ pub const Server = struct {
     /// trailing slash, e.g. `https://hub.tailnet.ts.net`.
     pub fn setExtraAllowedOrigins(self: *Server, origins: []const []const u8) void {
         self.extra_allowed_origins = origins;
+    }
+
+    pub fn startDispatcher(self: *Server) !void {
+        try self.dispatcher.start(self.allocator, self.paths, self.state, self.mutex, dispatcher_mod.default_interval_ms, .{});
     }
 
     fn currentAccessOptions(self: *const Server) access.Options {
@@ -2751,6 +2758,7 @@ const TestContext = struct {
     }
 
     fn deinit(self: *TestContext, allocator: std.mem.Allocator) void {
+        self.server.dispatcher.stop();
         self.server.mission_workflow_evidence_cache.deinit();
         self.manager.deinit();
         allocator.destroy(self.manager);

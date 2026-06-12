@@ -9,6 +9,7 @@ pub const component_cli = @import("core/component_cli.zig");
 pub const components_api = @import("api/components.zig");
 pub const config_api = @import("api/config.zig");
 pub const discovery = @import("discovery.zig");
+pub const dispatcher = @import("dispatcher/root.zig");
 pub const downloader = @import("installer/downloader.zig");
 pub const durable_file = @import("core/durable_file.zig");
 pub const events_api = @import("api/events.zig");
@@ -76,6 +77,7 @@ test {
     _ = components_api;
     _ = config_api;
     _ = discovery;
+    _ = dispatcher;
     _ = downloader;
     _ = durable_file;
     _ = events_api;

@@ -58,6 +58,16 @@ pub const Paths = struct {
         return std.fs.path.join(allocator, &.{ self.root, "state.json" });
     }
 
+    /// `{root}/dispatcher`
+    pub fn dispatcherDir(self: Paths, allocator: std.mem.Allocator) ![]const u8 {
+        return std.fs.path.join(allocator, &.{ self.root, "dispatcher" });
+    }
+
+    /// `{root}/dispatcher/cursor.json`
+    pub fn dispatcherCursor(self: Paths, allocator: std.mem.Allocator) ![]const u8 {
+        return std.fs.path.join(allocator, &.{ self.root, "dispatcher", "cursor.json" });
+    }
+
     /// `{root}/mission-control/replays`
     pub fn missionReplayDir(self: Paths, allocator: std.mem.Allocator) ![]const u8 {
         return std.fs.path.join(allocator, &.{ self.root, "mission-control", "replays" });
@@ -180,6 +190,7 @@ pub const Paths = struct {
             "bin",
             "instances",
             "spaces",
+            "dispatcher",
             "ui",
             "mission-control/replays",
             "cache/downloads",
@@ -289,6 +300,14 @@ test "paths resolve under custom root" {
     defer allocator.free(st);
     try std.testing.expectEqualStrings("/tmp/test-nullhub/state.json", st);
 
+    const dispatcher_dir = try p.dispatcherDir(allocator);
+    defer allocator.free(dispatcher_dir);
+    try std.testing.expectEqualStrings("/tmp/test-nullhub/dispatcher", dispatcher_dir);
+
+    const dispatcher_cursor = try p.dispatcherCursor(allocator);
+    defer allocator.free(dispatcher_cursor);
+    try std.testing.expectEqualStrings("/tmp/test-nullhub/dispatcher/cursor.json", dispatcher_cursor);
+
     const mf = try p.manifest(allocator, "nullclaw", "2026.3.1");
     defer allocator.free(mf);
     try std.testing.expectEqualStrings("/tmp/test-nullhub/manifests/nullclaw@2026.3.1.json", mf);
@@ -377,6 +396,7 @@ test "ensureDirs creates all subdirectories" {
         "/tmp/test-nullhub-ensure-dirs/manifests",
         "/tmp/test-nullhub-ensure-dirs/bin",
         "/tmp/test-nullhub-ensure-dirs/instances",
+        "/tmp/test-nullhub-ensure-dirs/dispatcher",
         "/tmp/test-nullhub-ensure-dirs/ui",
         "/tmp/test-nullhub-ensure-dirs/cache/downloads",
         "/tmp/test-nullhub-ensure-dirs/cache/usage",
