@@ -429,7 +429,11 @@ const ParsedFrontmatter = struct {
 
 fn loadTable(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []const u8) StoreError!LoadedTable {
     var docs = try loadMarkdownDocs(allocator, paths, space_id);
-    if (docs.orders.len > 0) return docs;
+    if (docs.orders.len > 0) {
+        errdefer docs.deinit();
+        try saveJsonTable(allocator, paths, space_id, docs.orders);
+        return docs;
+    }
     docs.deinit();
 
     return loadJsonTable(allocator, paths, space_id);
@@ -517,6 +521,10 @@ fn saveAll(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []con
     }
     try deleteStaleMarkdownDocs(allocator, orders_dir, orders);
 
+    try saveJsonTable(allocator, paths, space_id, orders);
+}
+
+fn saveJsonTable(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []const u8, orders: []const Order) StoreError!void {
     const table_path = try paths.spaceOrdersTable(allocator, space_id);
     defer allocator.free(table_path);
     const table_bytes = try std.json.Stringify.valueAlloc(allocator, Table{ .orders = orders }, .{
@@ -785,6 +793,13 @@ test "orders reads markdown documents before derived orders table" {
     try std.testing.expectEqual(@as(usize, 1), listed.len);
     try std.testing.expectEqualStrings("Markdown title", listed[0].title);
     try std.testing.expectEqualStrings("active", listed[0].status);
+
+    var derived_after_list = try loadJsonTable(allocator, fixture.paths, "ops");
+    defer derived_after_list.deinit();
+    try std.testing.expectEqual(@as(usize, 1), derived_after_list.orders.len);
+    try std.testing.expectEqualStrings("Markdown title", derived_after_list.orders[0].title);
+    try std.testing.expectEqualStrings("active", derived_after_list.orders[0].status);
+    try std.testing.expectEqualStrings("# Markdown body\nThis edit bypassed orders.json.\n", derived_after_list.orders[0].content);
 
     const loaded = try get(allocator, fixture.paths, "ops", created.id);
     defer loaded.deinit(allocator);

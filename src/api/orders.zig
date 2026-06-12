@@ -20,28 +20,53 @@ pub fn orderIdFromTarget(allocator: std.mem.Allocator, target: []const u8) !?[]u
     if (!std.mem.startsWith(u8, clean, prefix)) return null;
     const rest = clean[prefix.len..];
     if (rest.len == 0) return null;
-    const slash = std.mem.indexOfScalar(u8, rest, '/');
-    const segment = if (slash) |idx| rest[0..idx] else rest;
-    if (segment.len == 0) return null;
-    return try query.decodePathSegmentAlloc(allocator, segment);
+    if (std.mem.indexOfScalar(u8, rest, '/') != null) return null;
+    return try query.decodePathSegmentAlloc(allocator, rest);
+}
+
+pub fn scheduleOrderIdFromTarget(allocator: std.mem.Allocator, target: []const u8) !?[]u8 {
+    return orderIdFromActionTarget(allocator, target, "schedule");
+}
+
+pub fn transitionOrderIdFromTarget(allocator: std.mem.Allocator, target: []const u8) !?[]u8 {
+    const action = actionFromTarget(target) orelse return null;
+    if (orders.Transition.fromString(action) == null) return null;
+    return orderIdFromActionTarget(allocator, target, action);
 }
 
 pub fn transitionFromTarget(target: []const u8) ?orders.Transition {
+    const action = actionFromTarget(target) orelse return null;
+    return orders.Transition.fromString(action);
+}
+
+pub fn isScheduleTarget(target: []const u8) bool {
+    const action = actionFromTarget(target) orelse return false;
+    return std.mem.eql(u8, action, "schedule");
+}
+
+fn actionFromTarget(target: []const u8) ?[]const u8 {
     const clean = query.stripTarget(target);
     const prefix = "/api/orders/";
     if (!std.mem.startsWith(u8, clean, prefix)) return null;
     const rest = clean[prefix.len..];
     const slash = std.mem.indexOfScalar(u8, rest, '/') orelse return null;
     const action = rest[slash + 1 ..];
-    if (std.mem.indexOfScalar(u8, action, '/') != null) return null;
-    return orders.Transition.fromString(action);
+    if (action.len == 0 or std.mem.indexOfScalar(u8, action, '/') != null) return null;
+    return action;
 }
 
-pub fn isScheduleTarget(target: []const u8) bool {
+fn orderIdFromActionTarget(allocator: std.mem.Allocator, target: []const u8, expected_action: []const u8) !?[]u8 {
     const clean = query.stripTarget(target);
     const prefix = "/api/orders/";
-    if (!std.mem.startsWith(u8, clean, prefix)) return false;
-    return std.mem.endsWith(u8, clean, "/schedule");
+    if (!std.mem.startsWith(u8, clean, prefix)) return null;
+    const rest = clean[prefix.len..];
+    const slash = std.mem.indexOfScalar(u8, rest, '/') orelse return null;
+    const segment = rest[0..slash];
+    const action = rest[slash + 1 ..];
+    if (segment.len == 0 or action.len == 0) return null;
+    if (std.mem.indexOfScalar(u8, action, '/') != null) return null;
+    if (!std.mem.eql(u8, action, expected_action)) return null;
+    return try query.decodePathSegmentAlloc(allocator, segment);
 }
 
 pub fn handleList(allocator: std.mem.Allocator, paths: paths_mod.Paths, target: []const u8) helpers.ApiResponse {
@@ -481,4 +506,24 @@ test "orders transition verbs accept canonical verbs and legacy aliases" {
     try std.testing.expectEqualStrings("order.activated", orders.Transition.fromString("enact").?.eventType());
     try std.testing.expectEqualStrings("order.paused", orders.Transition.fromString("pause").?.eventType());
     try std.testing.expectEqualStrings("order.paused", orders.Transition.fromString("suspend").?.eventType());
+}
+
+test "orders item id parser only accepts exact item route" {
+    const allocator = std.testing.allocator;
+
+    const exact = (try orderIdFromTarget(allocator, "/api/orders/order-1?space=ops")).?;
+    defer allocator.free(exact);
+    try std.testing.expectEqualStrings("order-1", exact);
+
+    try std.testing.expect((try orderIdFromTarget(allocator, "/api/orders/order-1/not-a-route?space=ops")) == null);
+    try std.testing.expect((try orderIdFromTarget(allocator, "/api/orders/order-1/schedule?space=ops")) == null);
+
+    const schedule_id = (try scheduleOrderIdFromTarget(allocator, "/api/orders/order-1/schedule?space=ops")).?;
+    defer allocator.free(schedule_id);
+    try std.testing.expectEqualStrings("order-1", schedule_id);
+
+    const transition_id = (try transitionOrderIdFromTarget(allocator, "/api/orders/order-1/archive?space=ops")).?;
+    defer allocator.free(transition_id);
+    try std.testing.expectEqualStrings("order-1", transition_id);
+    try std.testing.expect((try transitionOrderIdFromTarget(allocator, "/api/orders/order-1/not-a-route?space=ops")) == null);
 }
