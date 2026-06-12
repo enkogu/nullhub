@@ -150,6 +150,11 @@ pub const Paths = struct {
         return std.fs.path.join(allocator, &.{ self.root, "instances", component, name, "instance.json" });
     }
 
+    /// `{root}/instances/{component}/{name}/workspace`
+    pub fn instanceWorkspaceDir(self: Paths, allocator: std.mem.Allocator, component: []const u8, name: []const u8) ![]const u8 {
+        return std.fs.path.join(allocator, &.{ self.root, "instances", component, name, "workspace" });
+    }
+
     // ── UI module paths ──────────────────────────────────────────────
 
     /// `{root}/ui/{module_name}@{version}`
@@ -315,6 +320,10 @@ test "paths resolve under custom root" {
     const meta = try p.instanceMeta(allocator, "nullclaw", "my-agent");
     defer allocator.free(meta);
     try std.testing.expectEqualStrings("/tmp/test-nullhub/instances/nullclaw/my-agent/instance.json", meta);
+
+    const workspace = try p.instanceWorkspaceDir(allocator, "nullclaw", "my-agent");
+    defer allocator.free(workspace);
+    try std.testing.expectEqualStrings("/tmp/test-nullhub/instances/nullclaw/my-agent/workspace", workspace);
 
     const space_dir = try p.spaceDir(allocator, "ops");
     defer allocator.free(space_dir);
