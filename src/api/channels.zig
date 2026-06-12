@@ -68,7 +68,7 @@ const secret_keys = [_][]const u8{
     "relay_token",
 };
 
-fn isSecretKey(key: []const u8) bool {
+pub fn isSecretKey(key: []const u8) bool {
     for (secret_keys) |sk| {
         if (std.mem.eql(u8, key, sk)) return true;
     }

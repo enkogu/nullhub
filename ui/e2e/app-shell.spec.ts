@@ -101,7 +101,7 @@ test('primary shell controls reach all product sections in fixture mode', async 
 
   await primaryNav.getByRole('link', { name: 'Market' }).click();
   await expect(page).toHaveURL(/\/market$/);
-  await expect(page.getByRole('heading', { name: 'Component Catalog' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Market' })).toBeVisible();
   await expectNonBlankShell(page, 'Market');
 
   await primaryNav.getByRole('button', { name: 'System' }).click();

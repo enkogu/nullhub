@@ -1750,6 +1750,24 @@ pub const Server = struct {
         }
 
         // Market Packages API — local built-in catalog and per-space installed package library.
+        if (market_api.isExportPath(target)) {
+            if (std.mem.eql(u8, method, "POST")) {
+                const resp = market_api.handleExport(allocator, self.paths, self.state, target, body, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+        if (market_api.isLibraryDownloadPath(target)) {
+            if (std.mem.eql(u8, method, "GET")) {
+                const package_id = (market_api.libraryPackageIdFromTargetAlloc(allocator, target) catch null) orelse {
+                    return .{ .status = "404 Not Found", .content_type = "application/json", .body = "{\"error\":\"not found\"}" };
+                };
+                defer allocator.free(package_id);
+                const resp = market_api.handleLibraryDownload(allocator, self.paths, target, package_id);
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
         if (market_api.isCatalogPath(target)) {
             if (std.mem.eql(u8, method, "GET")) {
                 const resp = market_api.handleCatalog(allocator);
@@ -4114,6 +4132,42 @@ test "route GET market catalog and installed package APIs" {
         const resp = ctx.route(allocator, "GET", "/api/market/installed", "");
         try std.testing.expectEqualStrings("400 Bad Request", resp.status);
         try std.testing.expectEqualStrings("{\"error\":\"space query is required\"}", resp.body);
+    }
+
+    {
+        const created = ctx.route(
+            allocator,
+            "POST",
+            "/api/orders?space=ops",
+            "{\"id\":\"market-export-order\",\"title\":\"Market Export Order\",\"kind\":\"policy\",\"content\":\"Exportable policy seed.\"}",
+        );
+        defer allocator.free(created.body);
+        try std.testing.expectEqualStrings("201 Created", created.status);
+
+        const exported = ctx.route(
+            allocator,
+            "POST",
+            "/api/market/export?space=ops",
+            "{\"id\":\"export.ops.route\",\"scope\":\"single\",\"single\":{\"kind\":\"order\",\"id\":\"market-export-order\"}}",
+        );
+        defer allocator.free(exported.body);
+        try std.testing.expectEqualStrings("201 Created", exported.status);
+        try std.testing.expect(std.mem.indexOf(u8, exported.body, "\"package_id\":\"export.ops.route\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, exported.body, "\"download_url\":\"/api/market/library/export.ops.route.json?space=ops\"") != null);
+
+        const downloaded = ctx.route(allocator, "GET", "/api/market/library/export.ops.route.json?space=ops", "");
+        defer allocator.free(downloaded.body);
+        try std.testing.expectEqualStrings("200 OK", downloaded.status);
+        try std.testing.expect(std.mem.indexOf(u8, downloaded.body, "\"id\":\"export.ops.route\"") != null);
+
+        const installed = ctx.route(allocator, "GET", "/api/market/installed?space=ops", "");
+        defer allocator.free(installed.body);
+        try std.testing.expect(std.mem.indexOf(u8, installed.body, "\"id\":\"export.ops.route\"") != null);
+
+        const events = ctx.route(allocator, "GET", "/api/events?space=ops&type=package.exported", "");
+        defer allocator.free(events.body);
+        try std.testing.expectEqualStrings("200 OK", events.status);
+        try std.testing.expect(std.mem.indexOf(u8, events.body, "\"type\":\"package.exported\"") != null);
     }
 }
 
