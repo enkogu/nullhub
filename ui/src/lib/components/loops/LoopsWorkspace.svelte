@@ -11,6 +11,7 @@
   import { PageHeader } from "$lib/components/ui/page-header";
   import { Tabs, TabsList, TabsTrigger } from "$lib/components/ui/tabs";
   import { getSelectedTicketsInstance } from "$lib/nullstack/backendSelection";
+  import { loopRoutes } from "$lib/loops/routes";
   import { spacesStore } from "$lib/stores/spaces.svelte";
   import LoopGalleryPanel from "$lib/components/loops/LoopGalleryPanel.svelte";
   import { detailHref } from "$lib/components/loops/loopRunDetail";
@@ -383,9 +384,9 @@
         <span>{issue.detail}</span>
       </div>
       {#if issue.action === "instances"}
-        <Button size="sm" href="/inventory/instances">Open Instances</Button>
+        <Button size="sm" href={loopRoutes.teamInstances}>Open Instances</Button>
       {:else if issue.action === "agents"}
-        <Button size="sm" href="/agents">Open Agents</Button>
+        <Button size="sm" href={loopRoutes.teamAgents}>Open Agents</Button>
       {:else}
         <Button size="sm" onclick={startWorker} disabled={actionLoading === "worker"}>
           {actionLoading === "worker" ? "Starting" : "Start worker"}
@@ -414,26 +415,26 @@
     <Card class="empty-panel">
       <strong>Ticket store is offline</strong>
       <span>Loops are ticket-backed. Start the NullTickets instance to see installed loops and runs.</span>
-      <Button href="/inventory/instances" size="sm">Open Instances</Button>
+      <Button href={loopRoutes.teamInstances} size="sm">Open Instances</Button>
     </Card>
   {:else if activeTab === "overview"}
     <div class="stat-row">
-      <a class="stat-tile" class:alarm={attentionRows().length > 0} href="/loops/runs?filter=attention">
+      <a class="stat-tile" class:alarm={attentionRows().length > 0} href={loopRoutes.runs({ filter: "attention" })}>
         <span>Needs attention</span>
         <strong>{attentionRows().length}</strong>
         <small>{attentionRows().length ? "failed, blocked, or stale runs" : "all clear"}</small>
       </a>
-      <a class="stat-tile" href="/loops/runs?filter=active">
+      <a class="stat-tile" href={loopRoutes.runs({ filter: "active" })}>
         <span>Running</span>
         <strong>{activeRows().length}</strong>
         <small>{activeRows().length ? "agents working now" : "nothing in progress"}</small>
       </a>
-      <a class="stat-tile" href="/loops/runs?filter=waiting">
+      <a class="stat-tile" href={loopRoutes.runs({ filter: "waiting" })}>
         <span>Waiting</span>
         <strong>{loopsState.queue.length}</strong>
         <small>{loopsState.queue.length ? "tickets ready to claim" : "queue is empty"}</small>
       </a>
-      <a class="stat-tile" href="/loops/runs?filter=completed">
+      <a class="stat-tile" href={loopRoutes.runs({ filter: "completed" })}>
         <span>Completed</span>
         <strong>{completedRows().length}</strong>
         <small>recent runs that passed</small>
@@ -447,7 +448,7 @@
             <h2>Needs attention</h2>
             <p>Runs that stopped before the exit condition passed.</p>
           </div>
-          <Button variant="outline" size="sm" href="/loops/runs?filter=attention">Open all</Button>
+          <Button variant="outline" size="sm" href={loopRoutes.runs({ filter: "attention" })}>Open all</Button>
         </div>
         <div class="compact-list">
           {#each attentionRows().slice(0, 5) as row (row.run.id)}
@@ -496,7 +497,7 @@
               </div>
               <div class="loop-actions">
                 <Button size="sm" onclick={() => openStartDialog(loop)}>Start</Button>
-                <Button variant="outline" size="sm" href={`/loops/runs?loop=${loop.pipeline.id}`}>Runs</Button>
+                <Button variant="outline" size="sm" href={loopRoutes.runs({ loop: loop.pipeline.id })}>Runs</Button>
               </div>
             </Card>
           {/each}
@@ -552,7 +553,7 @@
             <h2>Recent results</h2>
             <p>Latest runs that reached an exit state.</p>
           </div>
-          <Button variant="outline" size="sm" href="/loops/runs?filter=completed">Open all</Button>
+          <Button variant="outline" size="sm" href={loopRoutes.runs({ filter: "completed" })}>Open all</Button>
         </div>
         {#if recentResults().length > 0}
           <div class="compact-list">
@@ -587,7 +588,7 @@
           {actionLoading === "worker" ? "starting..." : "start worker"}
         </button>
       {/if}
-      <a class="runtime-action" href="/inventory/instances">instances</a>
+      <a class="runtime-action" href={loopRoutes.teamInstances}>instances</a>
     </div>
   {:else}
     <section class="loops-section">
@@ -628,7 +629,7 @@
               </div>
               <div class="loop-actions">
                 <Button size="sm" onclick={() => openStartDialog(loop)}>Start</Button>
-                <Button variant="outline" size="sm" href={`/loops/runs?loop=${loop.pipeline.id}`}>Runs</Button>
+                <Button variant="outline" size="sm" href={loopRoutes.runs({ loop: loop.pipeline.id })}>Runs</Button>
               </div>
             </Card>
           {/each}

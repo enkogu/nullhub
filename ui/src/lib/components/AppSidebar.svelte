@@ -105,19 +105,19 @@
 	};
 
 	const systemLinks = [
-		{ title: "Providers", url: "/providers" },
-		{ title: "Channels", url: "/channels" },
+		{ title: "Providers", url: "/system/providers" },
+		{ title: "Channels", url: "/system/channels" },
 		{ title: "Usage", url: "/system/usage" },
-		{ title: "Settings", url: "/settings" },
-		{ title: "Observability", url: "/nullwatch" },
+		{ title: "Settings", url: "/system/settings" },
+		{ title: "Observability", url: "/system/observability" },
 	];
 
-	// VD-82: Interim Legacy group until new shells land. Remove each link as its owner shell ships.
+	// VD-80: Compatibility shortcuts point at canonical IA destinations; typed legacy URLs still redirect.
 	const legacyLinks = [
-		{ title: "Loops", url: "/loops" },
-		{ title: "Artifacts", url: "/artifacts" },
-		{ title: "Tickets", url: "/nulltickets" },
-		{ title: "Automations", url: "/automations" },
+		{ title: "Loops", url: "/orders/loops" },
+		{ title: "Artifacts", url: "/work/artifacts" },
+		{ title: "Tickets", url: "/orders/loops" },
+		{ title: "Automations", url: "/orders/workflows" },
 	];
 
 	const fallbackSpaces: SpaceOption[] = [
@@ -382,7 +382,7 @@
 							</Collapsible.Trigger>
 							<Collapsible.Content>
 								<Sidebar.MenuSub>
-									{#each legacyLinks as subItem (subItem.url)}
+									{#each legacyLinks as subItem (subItem.title)}
 										<Sidebar.MenuSubItem>
 											<Sidebar.MenuSubButton isActive={startsWithSegment(currentPath, subItem.url)}>
 												{#snippet child({ props })}
@@ -456,7 +456,7 @@
 			<Sidebar.MenuItem>
 				<Sidebar.MenuButton size="lg" tooltipContent={user.email}>
 					{#snippet child({ props })}
-						<a href="/settings" {...props}>
+						<a href="/system/settings" {...props}>
 							<div
 								class="bg-sidebar-accent text-sidebar-accent-foreground flex size-8 items-center justify-center rounded-lg border"
 								aria-hidden="true"

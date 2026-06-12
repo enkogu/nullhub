@@ -3,6 +3,7 @@
   import { Button } from "$lib/components/ui/button";
   import { Card } from "$lib/components/ui/card";
   import { builtinLoopTemplates, type LoopTemplate } from "$lib/loops/builtins";
+  import { loopRoutes } from "$lib/loops/routes";
 
   let {
     installedSlugs = new Set<string>(),
@@ -30,7 +31,7 @@
     <p>
       Built-in loop templates. Installing one creates a loop in the connected ticket store, ready to start.
     </p>
-    <Button variant="outline" size="sm" href="/loops/marketplace">Browse Marketplace</Button>
+    <Button variant="outline" size="sm" href={loopRoutes.marketplace}>Browse Marketplace</Button>
   </div>
 
   {#each categories as category (category)}
