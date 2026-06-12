@@ -1669,7 +1669,7 @@ pub const Server = struct {
         }
         if (orders_api.scheduleOrderIdFromTarget(allocator, target) catch null) |order_id| {
             defer allocator.free(order_id);
-            if (std.mem.eql(u8, method, "POST") or std.mem.eql(u8, method, "PATCH")) {
+            if (std.mem.eql(u8, method, "POST")) {
                 const resp = orders_api.handleSchedule(allocator, self.paths, self.state, target, order_id, body, std_compat.time.milliTimestamp());
                 return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
             }
@@ -3432,7 +3432,7 @@ test "route /api/orders unknown item subroutes do not mutate order" {
             std.testing.allocator,
             "POST",
             "/api/orders?space=ops",
-            "{\"title\":\"Protected order\",\"content\":\"# Keep\\n\"}",
+            "{\"title\":\"Protected order\",\"schedule\":\"0 9 * * *\",\"content\":\"# Keep\\n\"}",
         );
         defer std.testing.allocator.free(resp.body);
         try std.testing.expectEqualStrings("201 Created", resp.status);
@@ -3454,17 +3454,25 @@ test "route /api/orders unknown item subroutes do not mutate order" {
     }
 
     {
+        const resp = ctx.route(std.testing.allocator, "PATCH", "/api/orders/order-1/schedule?space=ops", "{\"schedule\":\"mutated\"}");
+        try std.testing.expectEqualStrings("405 Method Not Allowed", resp.status);
+    }
+
+    {
         const resp = ctx.route(std.testing.allocator, "GET", "/api/orders/order-1?space=ops", "");
         defer std.testing.allocator.free(resp.body);
         try std.testing.expectEqualStrings("200 OK", resp.status);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"title\":\"Protected order\"") != null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"title\":\"Mutated\"") == null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"schedule\":\"0 9 * * *\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"schedule\":\"mutated\"") == null);
     }
 
     const events_resp = ctx.route(std.testing.allocator, "GET", "/api/events?space=ops&subject_type=order", "");
     defer std.testing.allocator.free(events_resp.body);
     try std.testing.expectEqualStrings("200 OK", events_resp.status);
     try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.created\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.scheduled\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.deleted\"") == null);
     try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.updated\"") == null);
 }
