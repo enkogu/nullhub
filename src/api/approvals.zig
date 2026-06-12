@@ -3,6 +3,7 @@ const state_mod = @import("../core/state.zig");
 const helpers = @import("helpers.zig");
 const query = @import("query.zig");
 const spaces_api = @import("spaces.zig");
+const approval_notify = @import("approval_notify.zig");
 
 const appendEscaped = helpers.appendEscaped;
 
@@ -58,7 +59,13 @@ pub fn handleList(allocator: std.mem.Allocator, state: *state_mod.State, target:
     return helpers.jsonOk(body);
 }
 
-pub fn handleCreate(allocator: std.mem.Allocator, state: *state_mod.State, target: []const u8, body: []const u8, now_ms: i64) helpers.ApiResponse {
+pub const CreateOptions = struct {
+    /// Base URL used for the Telegram deep link to /inbox (e.g. "http://127.0.0.1:19800").
+    base_url: []const u8 = "",
+    notify_sender: approval_notify.Sender = .{},
+};
+
+pub fn handleCreate(allocator: std.mem.Allocator, state: *state_mod.State, target: []const u8, body: []const u8, now_ms: i64, options: CreateOptions) helpers.ApiResponse {
     const space_id = requiredSpaceQueryAlloc(allocator, target) catch |err| switch (err) {
         error.MissingSpace => return helpers.badRequest("{\"error\":\"space query is required\"}"),
         error.InvalidSpace => return helpers.badRequest("{\"error\":\"invalid space id\"}"),
@@ -113,6 +120,9 @@ pub fn handleCreate(allocator: std.mem.Allocator, state: *state_mod.State, targe
         return helpers.serverError();
 
     state.save() catch return helpers.serverError();
+
+    // Best-effort Telegram ping (ncm-ie7m): never fails the create request.
+    _ = approval_notify.notifyApprovalCreated(allocator, state, approval, options.base_url, options.notify_sender);
 
     const response = renderApprovalObject(allocator, approval) catch return helpers.serverError();
     return .{ .status = "201 Created", .content_type = "application/json", .body = response };
@@ -375,13 +385,13 @@ test "handleCreate validates kind and title and emits approval.created" {
     var ctx = try TestState.init(allocator);
     defer ctx.deinit();
 
-    const missing_kind = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"title\":\"Sign this\"}", 1000);
+    const missing_kind = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"title\":\"Sign this\"}", 1000, .{});
     try std.testing.expectEqualStrings("400 Bad Request", missing_kind.status);
 
-    const bad_kind = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"other\",\"title\":\"Sign this\"}", 1000);
+    const bad_kind = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"other\",\"title\":\"Sign this\"}", 1000, .{});
     try std.testing.expectEqualStrings("400 Bad Request", bad_kind.status);
 
-    const missing_title = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"signature\"}", 1000);
+    const missing_title = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"signature\"}", 1000, .{});
     try std.testing.expectEqualStrings("400 Bad Request", missing_title.status);
 
     const created = handleCreate(
@@ -390,6 +400,7 @@ test "handleCreate validates kind and title and emits approval.created" {
         "/api/approvals?space=ops",
         "{\"kind\":\"signature\",\"queue\":\"deploys\",\"target_ref\":\"order:42\",\"title\":\"Sign deploy\",\"summary\":\"Deploy v2\",\"created_at_ms\":1000}",
         1111,
+        .{},
     );
     defer allocator.free(created.body);
     try std.testing.expectEqualStrings("201 Created", created.status);
@@ -405,16 +416,45 @@ test "handleCreate validates kind and title and emits approval.created" {
     try std.testing.expectEqualStrings("ops", events[0].space_id);
 }
 
+test "handleCreate pings an opted-in telegram channel with the /inbox deep link" {
+    const allocator = std.testing.allocator;
+    var ctx = try TestState.init(allocator);
+    defer ctx.deinit();
+
+    try ctx.state.addSavedChannel(.{
+        .channel_type = "telegram",
+        .account = "opsbot",
+        .config = "{\"bot_token\":\"123:abc\",\"chat_id\":\"42\",\"notify_approvals\":true}",
+        .space_id = "ops",
+    });
+
+    var mock = approval_notify.TestMockSend.init(allocator);
+    defer mock.deinit();
+
+    const created = handleCreate(
+        allocator,
+        &ctx.state,
+        "/api/approvals?space=ops",
+        "{\"kind\":\"signature\",\"title\":\"Sign deploy\"}",
+        1000,
+        .{ .base_url = "http://127.0.0.1:19800", .notify_sender = mock.sender() },
+    );
+    defer allocator.free(created.body);
+    try std.testing.expectEqualStrings("201 Created", created.status);
+    try std.testing.expectEqual(@as(usize, 1), mock.calls.items.len);
+    try std.testing.expect(std.mem.indexOf(u8, mock.calls.items[0], "http://127.0.0.1:19800/inbox?space=ops") != null);
+}
+
 test "handleList is space scoped and filters by status kind and queue" {
     const allocator = std.testing.allocator;
     var ctx = try TestState.init(allocator);
     defer ctx.deinit();
 
-    const first = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"signature\",\"queue\":\"deploys\",\"title\":\"Sign deploy\"}", 1000);
+    const first = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"signature\",\"queue\":\"deploys\",\"title\":\"Sign deploy\"}", 1000, .{});
     defer allocator.free(first.body);
-    const second = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"question\",\"queue\":\"intake\",\"title\":\"Pick a color\"}", 1001);
+    const second = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"question\",\"queue\":\"intake\",\"title\":\"Pick a color\"}", 1001, .{});
     defer allocator.free(second.body);
-    const other = handleCreate(allocator, &ctx.state, "/api/approvals?space=lab", "{\"kind\":\"failure\",\"title\":\"Run failed\"}", 1002);
+    const other = handleCreate(allocator, &ctx.state, "/api/approvals?space=lab", "{\"kind\":\"failure\",\"title\":\"Run failed\"}", 1002, .{});
     defer allocator.free(other.body);
 
     const missing = handleList(allocator, &ctx.state, "/api/approvals");
@@ -448,7 +488,7 @@ test "handleDecide enforces transitions feedback and space scoping" {
     var ctx = try TestState.init(allocator);
     defer ctx.deinit();
 
-    const created = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"signature\",\"title\":\"Sign deploy\"}", 1000);
+    const created = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"signature\",\"title\":\"Sign deploy\"}", 1000, .{});
     defer allocator.free(created.body);
     try std.testing.expectEqualStrings("201 Created", created.status);
 
@@ -493,9 +533,9 @@ test "approve and reject transitions emit matching events" {
     var ctx = try TestState.init(allocator);
     defer ctx.deinit();
 
-    const a = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"question\",\"title\":\"Pick a color\"}", 1000);
+    const a = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"question\",\"title\":\"Pick a color\"}", 1000, .{});
     defer allocator.free(a.body);
-    const b = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"failure\",\"title\":\"Run failed\"}", 1001);
+    const b = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"failure\",\"title\":\"Run failed\"}", 1001, .{});
     defer allocator.free(b.body);
 
     const approved = handleDecide(allocator, &ctx.state, "/api/approvals/1/decide?space=ops", 1, "{\"decision\":\"approved\"}", 2000);
@@ -519,7 +559,7 @@ test "approvals persist across save and load" {
     var ctx = try TestState.init(allocator);
     defer ctx.deinit();
 
-    const created = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"signature\",\"title\":\"Sign deploy\"}", 1000);
+    const created = handleCreate(allocator, &ctx.state, "/api/approvals?space=ops", "{\"kind\":\"signature\",\"title\":\"Sign deploy\"}", 1000, .{});
     defer allocator.free(created.body);
     const decided = handleDecide(allocator, &ctx.state, "/api/approvals/1/decide?space=ops", 1, "{\"decision\":\"approved\"}", 2000);
     defer allocator.free(decided.body);

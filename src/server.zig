@@ -1637,7 +1637,11 @@ pub const Server = struct {
                 return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
             }
             if (std.mem.eql(u8, method, "POST")) {
-                const resp = approvals_api.handleCreate(allocator, self.state, target, body, std_compat.time.milliTimestamp());
+                const base_url: []const u8 = std.fmt.allocPrint(allocator, "http://{s}:{d}", .{ self.host, self.port }) catch "";
+                defer if (base_url.len > 0) allocator.free(base_url);
+                const resp = approvals_api.handleCreate(allocator, self.state, target, body, std_compat.time.milliTimestamp(), .{
+                    .base_url = base_url,
+                });
                 return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
             }
             return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
