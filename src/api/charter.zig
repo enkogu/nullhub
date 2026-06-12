@@ -66,7 +66,10 @@ pub fn handlePut(
         .autonomy_bounds = stringField(root, "autonomy_bounds") orelse "",
         .autonomy_defaults = stringField(root, "autonomy_defaults") orelse stringField(root, "defaults") orelse charter_store.default_autonomy_defaults,
         .metrics = stringField(root, "metrics") orelse "",
-    }) catch return helpers.serverError();
+    }) catch |err| switch (err) {
+        error.ReservedCharterMarker => return helpers.badRequest("{\"error\":\"charter Markdown fields must not contain reserved NULLHUB charter markers\"}"),
+        else => return helpers.serverError(),
+    };
     defer saved.deinit(allocator);
 
     applyCharterMutationSideEffects(allocator, paths, state, saved, now_ms) catch return helpers.serverError();
@@ -189,6 +192,16 @@ fn renderCharter(allocator: std.mem.Allocator, charter: charter_store.Charter) !
     return buf.toOwnedSlice();
 }
 
+fn expectJsonStringFieldEquals(allocator: std.mem.Allocator, body: []const u8, key: []const u8, expected: []const u8) !void {
+    var parsed = try std.json.parseFromSlice(std.json.Value, allocator, body, .{
+        .allocate = .alloc_always,
+    });
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value == .object);
+    const actual = stringField(parsed.value.object, key) orelse return error.MissingJsonField;
+    try std.testing.expectEqualStrings(expected, actual);
+}
+
 test "charter API stores per-space charter and rejects unsafe space ids" {
     const allocator = std.testing.allocator;
     var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
@@ -277,7 +290,7 @@ test "charter PUT injects managed charter through policy bootstrap path" {
     try std.testing.expectEqualStrings("charter.updated", events[0].event_type);
 }
 
-test "charter PUT preserves field H2 markdown through persisted read and policy sync" {
+test "charter PUT preserves Markdown body bytes through persisted read and policy sync" {
     const allocator = std.testing.allocator;
     var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
     defer fixture.deinit();
@@ -288,21 +301,57 @@ test "charter PUT preserves field H2 markdown through persisted read and policy 
 
     try state.addInstance("nullclaw", "ops-agent", .{ .version = "dev-local", .space_id = "ops" });
 
-    const mission = "Line one\n## Details\nLine two";
+    const mission =
+        "\n" ++
+        "    - Keep leading-indented Markdown.\n" ++
+        "Line with hard break  \n" ++
+        "## Details\n" ++
+        "Keep the heading as field body.\n" ++
+        "\n";
+    const autonomy_bounds =
+        "    1. Stay inside approved tools.\n" ++
+        "Ask before destructive work.  \n" ++
+        "\n";
+    const metrics =
+        "\n" ++
+        "    - cycle time\n" ++
+        "    - blocked approvals  \n" ++
+        "\n";
+    const body = try std.json.Stringify.valueAlloc(allocator, .{
+        .stage = "alpha",
+        .mission = mission,
+        .autonomy_bounds = autonomy_bounds,
+        .autonomy_defaults = "T1",
+        .metrics = metrics,
+    }, .{});
+    defer allocator.free(body);
+
     const resp = handlePut(
         allocator,
         fixture.paths,
         &state,
         "/api/charter?space=ops",
-        "{\"stage\":\"alpha\",\"mission\":\"Line one\\n## Details\\nLine two\",\"autonomy_bounds\":\"Ask first.\",\"autonomy_defaults\":\"T1\",\"metrics\":\"cycle time\"}",
+        body,
         1300,
     );
     defer allocator.free(resp.body);
     try std.testing.expectEqualStrings("200 OK", resp.status);
+    try expectJsonStringFieldEquals(allocator, resp.body, "mission", mission);
+    try expectJsonStringFieldEquals(allocator, resp.body, "autonomy_bounds", autonomy_bounds);
+    try expectJsonStringFieldEquals(allocator, resp.body, "metrics", metrics);
 
     var loaded = try charter_store.loadOrDefault(allocator, fixture.paths, "ops");
     defer loaded.deinit(allocator);
     try std.testing.expectEqualStrings(mission, loaded.mission);
+    try std.testing.expectEqualStrings(autonomy_bounds, loaded.autonomy_bounds);
+    try std.testing.expectEqualStrings(metrics, loaded.metrics);
+
+    const get_resp = handleGet(allocator, fixture.paths, "/api/charter?space=ops");
+    defer allocator.free(get_resp.body);
+    try std.testing.expectEqualStrings("200 OK", get_resp.status);
+    try expectJsonStringFieldEquals(allocator, get_resp.body, "mission", mission);
+    try expectJsonStringFieldEquals(allocator, get_resp.body, "autonomy_bounds", autonomy_bounds);
+    try expectJsonStringFieldEquals(allocator, get_resp.body, "metrics", metrics);
 
     const workspace_dir = try fixture.paths.instanceWorkspaceDir(allocator, "nullclaw", "ops-agent");
     defer allocator.free(workspace_dir);
@@ -313,13 +362,51 @@ test "charter PUT preserves field H2 markdown through persisted read and policy 
 
     const orders_bytes = try std_compat.fs.readFileAbsolute(allocator, orders_path, policy_orders.managed_orders_budget_bytes + 1);
     defer allocator.free(orders_bytes);
-    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, "Line one") != null);
-    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, "## Details") != null);
-    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, "Line two") != null);
+    const expected_policy_body =
+        "Mission:\n" ++ mission ++ "\n\n" ++
+        "Autonomy bounds:\n" ++ autonomy_bounds ++ "\n\n" ++
+        "Metrics:\n" ++ metrics ++ "\n\n";
+    try std.testing.expect(std.mem.indexOf(u8, orders_bytes, expected_policy_body) != null);
 
     const config_bytes = try std_compat.fs.readFileAbsolute(allocator, config_path, policy_orders.managed_orders_budget_bytes + 4096);
     defer allocator.free(config_bytes);
-    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "Line one") != null);
-    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "## Details") != null);
-    try std.testing.expect(std.mem.indexOf(u8, config_bytes, "Line two") != null);
+    try std.testing.expect(std.mem.indexOf(u8, config_bytes, expected_policy_body) != null);
+}
+
+test "charter PUT rejects reserved marker collisions before persistence" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    const colliding_mission =
+        "Before marker\n" ++
+        "<!-- NULLHUB:CHARTER_FIELD:mission:END -->\n" ++
+        "After marker";
+    const body = try std.json.Stringify.valueAlloc(allocator, .{
+        .stage = "alpha",
+        .mission = colliding_mission,
+        .autonomy_bounds = "Ask first.",
+        .autonomy_defaults = "T1",
+        .metrics = "cycle time",
+    }, .{});
+    defer allocator.free(body);
+
+    const resp = handlePut(
+        allocator,
+        fixture.paths,
+        &state,
+        "/api/charter?space=ops",
+        body,
+        1400,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, resp.body, "reserved NULLHUB charter markers") != null);
+
+    var loaded = try charter_store.loadOrDefault(allocator, fixture.paths, "ops");
+    defer loaded.deinit(allocator);
+    try std.testing.expectEqualStrings("", loaded.mission);
 }

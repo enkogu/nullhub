@@ -84,13 +84,18 @@ pub fn loadOrDefault(allocator: std.mem.Allocator, paths: paths_mod.Paths, space
 }
 
 pub fn put(allocator: std.mem.Allocator, paths: paths_mod.Paths, space_id: []const u8, input: CharterInput) !Charter {
+    try validateMarkdownBodyField(input.mission);
+    try validateMarkdownBodyField(input.autonomy_bounds);
+    try validateMarkdownBodyField(input.autonomy_defaults);
+    try validateMarkdownBodyField(input.metrics);
+
     var owned = try ownedCharter(allocator, .{
         .space_id = space_id,
         .stage = normalizedOrDefault(input.stage, default_stage),
-        .mission = std.mem.trim(u8, input.mission, " \t\r\n"),
-        .autonomy_bounds = std.mem.trim(u8, input.autonomy_bounds, " \t\r\n"),
-        .autonomy_defaults = normalizedOrDefault(input.autonomy_defaults, default_autonomy_defaults),
-        .metrics = std.mem.trim(u8, input.metrics, " \t\r\n"),
+        .mission = input.mission,
+        .autonomy_bounds = input.autonomy_bounds,
+        .autonomy_defaults = defaultIfBlank(input.autonomy_defaults, default_autonomy_defaults),
+        .metrics = input.metrics,
         .doc_path = charter_doc_path,
     });
     errdefer owned.deinit(allocator);
@@ -154,10 +159,10 @@ pub fn parseMarkdown(allocator: std.mem.Allocator, expected_space_id: []const u8
     return ownedCharter(allocator, .{
         .space_id = expected_space_id,
         .stage = normalizedOrDefault(parsed_stage, default_stage),
-        .mission = std.mem.trim(u8, sectionBody(body, mission_section), " \t\r\n"),
-        .autonomy_bounds = std.mem.trim(u8, sectionBody(body, autonomy_bounds_section), " \t\r\n"),
-        .autonomy_defaults = normalizedOrDefault(sectionBody(body, autonomy_defaults_section), default_autonomy_defaults),
-        .metrics = std.mem.trim(u8, sectionBody(body, metrics_section), " \t\r\n"),
+        .mission = sectionBody(body, mission_section),
+        .autonomy_bounds = sectionBody(body, autonomy_bounds_section),
+        .autonomy_defaults = defaultIfBlank(sectionBody(body, autonomy_defaults_section), default_autonomy_defaults),
+        .metrics = sectionBody(body, metrics_section),
         .doc_path = if (parsed_doc_path.len > 0) parsed_doc_path else charter_doc_path,
     });
 }
@@ -191,16 +196,24 @@ fn normalizedOrDefault(value: []const u8, default_value: []const u8) []const u8 
     return if (trimmed.len > 0) trimmed else default_value;
 }
 
+fn defaultIfBlank(value: []const u8, default_value: []const u8) []const u8 {
+    return if (std.mem.trim(u8, value, " \t\r\n").len > 0) value else default_value;
+}
+
+fn validateMarkdownBodyField(value: []const u8) !void {
+    for (field_sections) |section| {
+        if (std.mem.indexOf(u8, value, section.begin_marker) != null) return error.ReservedCharterMarker;
+        if (std.mem.indexOf(u8, value, section.end_marker) != null) return error.ReservedCharterMarker;
+    }
+}
+
 fn appendSection(buf: *std.array_list.Managed(u8), section: FieldSection, value: []const u8) !void {
     try buf.appendSlice("## ");
     try buf.appendSlice(section.title);
     try buf.appendSlice("\n");
     try buf.appendSlice(section.begin_marker);
     try buf.append('\n');
-    if (value.len > 0) {
-        try buf.appendSlice(value);
-        if (!std.mem.endsWith(u8, value, "\n")) try buf.append('\n');
-    }
+    try buf.appendSlice(value);
     try buf.appendSlice(section.end_marker);
     try buf.appendSlice("\n\n");
 }
@@ -377,13 +390,34 @@ test "charter stores per-space markdown with stage and autonomy defaults" {
 
 test "charter markdown round-trips escaped frontmatter and sections" {
     const allocator = std.testing.allocator;
+    const mission =
+        "\n" ++
+        "    - Keep leading-indented Markdown.\n" ++
+        "Line with hard break  \n" ++
+        "## Details\n" ++
+        "Keep the heading as field body.\n" ++
+        "\n";
+    const autonomy_bounds =
+        "    1. Stay inside approved tools.\n" ++
+        "Ask before destructive work.  \n" ++
+        "\n";
+    const autonomy_defaults =
+        "T1\n" ++
+        "Escalate risky work.  \n" ++
+        "\n";
+    const metrics =
+        "\n" ++
+        "    - cycle time\n" ++
+        "    - blocked approvals  \n" ++
+        "\n";
+
     const source = try ownedCharter(allocator, .{
         .space_id = "ops",
         .stage = "alpha \"quoted\"",
-        .mission = "Line one\n## Details\nLine two",
-        .autonomy_bounds = "Stay inside tools.",
-        .autonomy_defaults = "T1\nEscalate risky work.",
-        .metrics = "cycle_time",
+        .mission = mission,
+        .autonomy_bounds = autonomy_bounds,
+        .autonomy_defaults = autonomy_defaults,
+        .metrics = metrics,
         .doc_path = charter_doc_path,
     });
     defer source.deinit(allocator);
