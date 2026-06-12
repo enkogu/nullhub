@@ -684,6 +684,37 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions) {
   }
   const requestOrders = options.orders || fixtureOrders;
   const itemMatch = url.pathname.match(/\/(?:api|nullhub-api)\/orders\/([^/]+)(?:\/([^/]+))?$/);
+
+  if (route.request().method() === 'POST' && !itemMatch) {
+    const payload = route.request().postDataJSON() as Record<string, unknown> | null;
+    const title = String(payload?.title || '').trim();
+    if (!title) {
+      await fulfillJson(route, { error: 'title is required' }, 422);
+      return;
+    }
+    const id = String(payload?.id || `order-${requestOrders.length + 1}`);
+    const createdAtMs = typeof payload?.created_at_ms === 'number' ? payload.created_at_ms : Date.now();
+    const created = {
+      id,
+      space_id: space,
+      title,
+      summary: String(payload?.summary || ''),
+      kind: String(payload?.kind || 'mandate'),
+      status: 'draft',
+      schedule: String(payload?.schedule || ''),
+      signal: String(payload?.signal || ''),
+      tier: String(payload?.tier || ''),
+      exec_count: typeof payload?.exec_count === 'number' ? payload.exec_count : 0,
+      doc_path: String(payload?.doc_path || `orders/${id}.md`),
+      content: String(payload?.content || payload?.body || ''),
+      created_at_ms: createdAtMs,
+      updated_at_ms: typeof payload?.updated_at_ms === 'number' ? payload.updated_at_ms : createdAtMs,
+    };
+    requestOrders.push(created);
+    await fulfillJson(route, created, 201);
+    return;
+  }
+
   if (itemMatch) {
     const id = decodeURIComponent(itemMatch[1] || '');
     const action = decodeURIComponent(itemMatch[2] || '');
@@ -701,14 +732,23 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions) {
       return;
     }
     if (route.request().method() === 'POST' && action) {
+      if (action === 'schedule') {
+        const payload = route.request().postDataJSON() as Record<string, unknown> | null;
+        order.schedule = String(payload?.schedule || '');
+        order.updated_at_ms = 1_780_000_020_000;
+        await fulfillJson(route, order);
+        return;
+      }
       const nextStatus =
-        action === 'suspend'
-          ? 'suspended'
-          : action === 'resume'
+        action === 'draft'
+          ? 'draft'
+          : action === 'enact' || action === 'activate' || action === 'resume'
             ? 'active'
-            : action === 'archive'
-              ? 'archived'
-              : null;
+            : action === 'suspend' || action === 'pause'
+              ? 'suspended'
+              : action === 'archive'
+                ? 'archived'
+                : null;
       if (!nextStatus) {
         await fulfillJson(route, { error: 'order action not found' }, 404);
         return;
@@ -1161,7 +1201,7 @@ async function instanceDetailRoute(route: Route, options: NullHubFixtureOptions)
 export async function installNullHubFixtureRoutes(page: Page, options: NullHubFixtureOptions = {}) {
   const spaces = fixtureSpaces.map((space) => ({ ...space }));
   const pipelines = (options.nullticketsPipelines || []).map((pipeline) => ({ ...pipeline }));
-  const tasks = (options.nullticketsTasks || []).map((task) => ({ ...task }));
+  const tasks = options.nullticketsTasks || [];
   const artifacts = (options.nullticketsArtifacts || []).map((artifact) => ({ ...artifact }));
   const runEvents = (options.nullticketsRunEvents || []).map((event) => ({ ...event }));
 
