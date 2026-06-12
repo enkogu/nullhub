@@ -198,6 +198,34 @@ const fixtureLoopCatalog = [
 
 const fixtureEvents = [
   {
+    id: 5,
+    space_id: 'ops',
+    type: 'order.executed',
+    source: 'orders',
+    subject_type: 'order',
+    subject_id: 'order-2',
+    title: 'Order executed',
+    summary: 'The workflow order opened a review run.',
+    severity: 'success',
+    evidence_ref: 'artifact://run-order-2',
+    created_at_ms: 1_780_000_010_000,
+    payload: { run_id: 'run-order-2' },
+  },
+  {
+    id: 4,
+    space_id: 'ops',
+    type: 'order.updated',
+    source: 'orders',
+    subject_type: 'order',
+    subject_id: 'order-2',
+    title: 'Order updated',
+    summary: 'The workflow order document changed.',
+    severity: 'info',
+    evidence_ref: '',
+    created_at_ms: 1_780_000_005_000,
+    payload: {},
+  },
+  {
     id: 3,
     space_id: 'ops',
     type: 'loop.review_requested',
@@ -254,7 +282,8 @@ const fixtureOrders = [
     tier: 'Managed',
     exec_count: 12,
     doc_path: 'orders/order-2.md',
-    content: '# Weekly pipeline review\n',
+    content:
+      '---\nowner: Ops\nreview_cycle: weekly\n---\n# Weekly pipeline review\n\n- Review blocked Loops.\n- Attach follow-up run evidence.',
     created_at_ms: 1_779_000_000_000,
     updated_at_ms: 1_780_000_000_000,
   },
@@ -536,7 +565,47 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions) {
     await fulfillJson(route, { error: 'space query is required' }, 400);
     return;
   }
-  const orders = (options.orders || fixtureOrders).filter((order) => {
+  const requestOrders = options.orders || fixtureOrders;
+  const itemMatch = url.pathname.match(/\/(?:api|nullhub-api)\/orders\/([^/]+)(?:\/([^/]+))?$/);
+  if (itemMatch) {
+    const id = decodeURIComponent(itemMatch[1] || '');
+    const action = decodeURIComponent(itemMatch[2] || '');
+    const order = requestOrders.find((entry) => {
+      const entryId = String(entry.id ?? '');
+      const orderSpace = String(entry.space_id ?? entry.spaceId ?? '');
+      return entryId === id && orderSpace === space;
+    });
+    if (!order) {
+      await fulfillJson(route, { error: 'order not found' }, 404);
+      return;
+    }
+    if (route.request().method() === 'GET' && !action) {
+      await fulfillJson(route, order);
+      return;
+    }
+    if (route.request().method() === 'POST' && action) {
+      const nextStatus =
+        action === 'suspend'
+          ? 'suspended'
+          : action === 'resume'
+            ? 'active'
+            : action === 'archive'
+              ? 'archived'
+              : null;
+      if (!nextStatus) {
+        await fulfillJson(route, { error: 'order action not found' }, 404);
+        return;
+      }
+      order.status = nextStatus;
+      order.updated_at_ms = 1_780_000_020_000;
+      await fulfillJson(route, order);
+      return;
+    }
+    await fulfillJson(route, { error: 'order method not allowed' }, 405);
+    return;
+  }
+
+  const orders = requestOrders.filter((order) => {
     const orderSpace = String(order.space_id ?? order.spaceId ?? '');
     return orderSpace === space;
   });
@@ -977,8 +1046,10 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/nulltickets/store/loops.templates**', (route) => loopCatalogRoute(route, options));
   await page.route('**/api/events**', (route) => eventsRoute(route, options));
   await page.route('**/nullhub-api/events**', (route) => eventsRoute(route, options));
-  await page.route(/\/api\/orders(?:\?.*)?$/, (route) => ordersRoute(route, options));
-  await page.route(/\/nullhub-api\/orders(?:\?.*)?$/, (route) => ordersRoute(route, options));
+  await page.route(/\/api\/orders(?:\/[^/?]+(?:\/[^/?]+)?)?(?:\?.*)?$/, (route) => ordersRoute(route, options));
+  await page.route(/\/nullhub-api\/orders(?:\/[^/?]+(?:\/[^/?]+)?)?(?:\?.*)?$/, (route) =>
+    ordersRoute(route, options),
+  );
   const approvals = (options.approvals || fixtureApprovals).map((approval) => ({ ...approval }));
   await page.route(/\/api\/approvals(?:\?.*)?$/, (route) => approvalsRoute(route, options, approvals));
   await page.route(/\/nullhub-api\/approvals(?:\?.*)?$/, (route) => approvalsRoute(route, options, approvals));
