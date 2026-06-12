@@ -62,6 +62,28 @@ pub const Paths = struct {
         return std.fs.path.join(allocator, &.{ self.root, "mission-control", "replays" });
     }
 
+    /// `{root}/spaces/{space_id}`
+    pub fn spaceDir(self: Paths, allocator: std.mem.Allocator, space_id: []const u8) ![]const u8 {
+        return std.fs.path.join(allocator, &.{ self.root, "spaces", space_id });
+    }
+
+    /// `{root}/spaces/{space_id}/orders`
+    pub fn spaceOrdersDir(self: Paths, allocator: std.mem.Allocator, space_id: []const u8) ![]const u8 {
+        return std.fs.path.join(allocator, &.{ self.root, "spaces", space_id, "orders" });
+    }
+
+    /// `{root}/spaces/{space_id}/orders/orders.json`
+    pub fn spaceOrdersTable(self: Paths, allocator: std.mem.Allocator, space_id: []const u8) ![]const u8 {
+        return std.fs.path.join(allocator, &.{ self.root, "spaces", space_id, "orders", "orders.json" });
+    }
+
+    /// `{root}/spaces/{space_id}/orders/{order_id}.md`
+    pub fn spaceOrderDoc(self: Paths, allocator: std.mem.Allocator, space_id: []const u8, order_id: []const u8) ![]const u8 {
+        const filename = try std.fmt.allocPrint(allocator, "{s}.md", .{order_id});
+        defer allocator.free(filename);
+        return std.fs.path.join(allocator, &.{ self.root, "spaces", space_id, "orders", filename });
+    }
+
     // ── Component paths ──────────────────────────────────────────────
 
     /// `{root}/manifests/{component}@{version}.json`
@@ -139,6 +161,7 @@ pub const Paths = struct {
             "manifests",
             "bin",
             "instances",
+            "spaces",
             "ui",
             "mission-control/replays",
             "cache/downloads",
@@ -279,6 +302,22 @@ test "paths resolve under custom root" {
     const meta = try p.instanceMeta(allocator, "nullclaw", "my-agent");
     defer allocator.free(meta);
     try std.testing.expectEqualStrings("/tmp/test-nullhub/instances/nullclaw/my-agent/instance.json", meta);
+
+    const space_dir = try p.spaceDir(allocator, "ops");
+    defer allocator.free(space_dir);
+    try std.testing.expectEqualStrings("/tmp/test-nullhub/spaces/ops", space_dir);
+
+    const orders_dir = try p.spaceOrdersDir(allocator, "ops");
+    defer allocator.free(orders_dir);
+    try std.testing.expectEqualStrings("/tmp/test-nullhub/spaces/ops/orders", orders_dir);
+
+    const orders_table = try p.spaceOrdersTable(allocator, "ops");
+    defer allocator.free(orders_table);
+    try std.testing.expectEqualStrings("/tmp/test-nullhub/spaces/ops/orders/orders.json", orders_table);
+
+    const order_doc = try p.spaceOrderDoc(allocator, "ops", "order-1");
+    defer allocator.free(order_doc);
+    try std.testing.expectEqualStrings("/tmp/test-nullhub/spaces/ops/orders/order-1.md", order_doc);
 
     const ui = try p.uiModule(allocator, "nullclaw-chat-ui", "1.2.0");
     defer allocator.free(ui);

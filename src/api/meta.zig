@@ -90,6 +90,13 @@ const space_id_param = ParamSpec{
     .description = "Space identifier.",
 };
 
+const order_id_param = ParamSpec{
+    .name = "id",
+    .location = "path",
+    .required = true,
+    .description = "Order identifier.",
+};
+
 const mission_replay_id_param = ParamSpec{
     .name = "id",
     .location = "path",
@@ -123,6 +130,13 @@ const required_event_space_query = ParamSpec{
     .location = "query",
     .required = true,
     .description = "Selected Space id. Event reads and writes are always space-scoped.",
+};
+
+const required_order_space_query = ParamSpec{
+    .name = "space",
+    .location = "query",
+    .required = true,
+    .description = "Selected Space id. Order reads and writes are always space-scoped.",
 };
 
 const event_type_query = ParamSpec{
@@ -333,6 +347,7 @@ const component_only_params = [_]ParamSpec{component_param};
 const provider_id_params = [_]ParamSpec{provider_id_param};
 const channel_id_params = [_]ParamSpec{channel_id_param};
 const space_id_params = [_]ParamSpec{space_id_param};
+const order_id_params = [_]ParamSpec{order_id_param};
 const mission_replay_id_params = [_]ParamSpec{mission_replay_id_param};
 const module_name_params = [_]ParamSpec{module_name_param};
 const component_name_params = [_]ParamSpec{component_name_param};
@@ -342,6 +357,7 @@ const usage_space_query_params = [_]ParamSpec{ window_query, space_query };
 const reveal_query_params = [_]ParamSpec{reveal_query};
 const space_query_params = [_]ParamSpec{space_query};
 const event_query_params = [_]ParamSpec{ required_event_space_query, event_type_query, event_source_query, event_subject_type_query, event_subject_id_query, event_severity_query, event_limit_query, event_cursor_query };
+const order_query_params = [_]ParamSpec{required_order_space_query};
 const reveal_space_query_params = [_]ParamSpec{ reveal_query, space_query };
 const logs_query_params = [_]ParamSpec{ lines_query, log_source_query };
 const history_query_params = [_]ParamSpec{ history_session_query, history_limit_query, history_offset_query };
@@ -380,6 +396,25 @@ const route_examples_events = [_]ExampleSpec{
     .{
         .command = "nullhub api POST '/api/events?space=ops' --body '{\"type\":\"work.started\",\"source\":\"dispatcher\",\"subject_type\":\"run\",\"subject_id\":\"run-1\",\"title\":\"Run started\"}'",
         .description = "Append an event to a Space event log.",
+    },
+};
+
+const route_examples_orders = [_]ExampleSpec{
+    .{
+        .command = "nullhub api GET '/api/orders?space=ops' --pretty",
+        .description = "List durable Orders for a Space.",
+    },
+    .{
+        .command = "nullhub api POST '/api/orders?space=ops' --body '{\"title\":\"Morning report\",\"kind\":\"schedule\",\"schedule\":\"0 9 * * *\",\"content\":\"# Morning report\\n\"}'",
+        .description = "Create a file-backed Order with markdown content.",
+    },
+    .{
+        .command = "nullhub api POST '/api/orders/order-1/activate?space=ops'",
+        .description = "Activate an Order and emit an order.activated event.",
+    },
+    .{
+        .command = "nullhub api DELETE '/api/orders/order-1?space=ops'",
+        .description = "Delete an Order document and derived table row.",
     },
 };
 
@@ -771,6 +806,89 @@ const routes = [_]RouteSpec{
         .body = "Event payload with type, optional source, subject fields, title, summary, severity, evidence_ref, created_at_ms, and payload.",
         .response = "Created event record.",
         .examples = route_examples_events[1..],
+    },
+    .{
+        .id = "orders.list",
+        .method = "GET",
+        .path_template = "/api/orders",
+        .category = "orders",
+        .summary = "List durable Orders for one Space.",
+        .auth_mode = "optional_bearer",
+        .query_params = order_query_params[0..],
+        .response = "Order list backed by the Space orders table and markdown docs.",
+        .examples = route_examples_orders[0..1],
+    },
+    .{
+        .id = "orders.create",
+        .method = "POST",
+        .path_template = "/api/orders",
+        .category = "orders",
+        .summary = "Create a durable Order in one Space.",
+        .auth_mode = "optional_bearer",
+        .query_params = order_query_params[0..],
+        .body = "Order payload with title, optional id, summary, kind, schedule, and markdown content.",
+        .response = "Created Order record.",
+        .examples = route_examples_orders[1..2],
+    },
+    .{
+        .id = "orders.get",
+        .method = "GET",
+        .path_template = "/api/orders/{id}",
+        .category = "orders",
+        .summary = "Read one durable Order.",
+        .auth_mode = "optional_bearer",
+        .path_params = order_id_params[0..],
+        .query_params = order_query_params[0..],
+        .response = "Order record including markdown content.",
+    },
+    .{
+        .id = "orders.update",
+        .method = "PATCH",
+        .path_template = "/api/orders/{id}",
+        .category = "orders",
+        .summary = "Update Order metadata or markdown content.",
+        .auth_mode = "optional_bearer",
+        .path_params = order_id_params[0..],
+        .query_params = order_query_params[0..],
+        .body = "Partial Order update payload.",
+        .response = "Updated Order record.",
+    },
+    .{
+        .id = "orders.schedule",
+        .method = "POST",
+        .path_template = "/api/orders/{id}/schedule",
+        .category = "orders",
+        .summary = "Update an Order schedule.",
+        .auth_mode = "optional_bearer",
+        .path_params = order_id_params[0..],
+        .query_params = order_query_params[0..],
+        .body = "Payload with schedule.",
+        .response = "Updated Order record.",
+    },
+    .{
+        .id = "orders.delete",
+        .method = "DELETE",
+        .path_template = "/api/orders/{id}",
+        .category = "orders",
+        .summary = "Delete one durable Order. This removes the file-backed document; archive is a separate status transition.",
+        .destructive = true,
+        .auth_mode = "optional_bearer",
+        .path_params = order_id_params[0..],
+        .query_params = order_query_params[0..],
+        .response = "Deletion acknowledgement with deleted Order id.",
+        .examples = route_examples_orders[3..],
+    },
+    .{
+        .id = "orders.transition",
+        .method = "POST",
+        .path_template = "/api/orders/{id}/{draft|activate|pause|resume|archive}",
+        .category = "orders",
+        .summary = "Transition Order status with product verbs; activate emits order.activated and pause emits order.paused. Legacy enact/suspend aliases are accepted.",
+        .auth_mode = "optional_bearer",
+        .path_params = order_id_params[0..],
+        .query_params = order_query_params[0..],
+        .response = "Updated Order record.",
+        .examples = route_examples_orders[2..],
     },
     .{
         .id = "providers.list",
@@ -1711,6 +1829,8 @@ test "jsonAlloc includes stable route metadata" {
     defer std.testing.allocator.free(json);
 
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"meta.routes.get\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"orders.delete\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"method\": \"DELETE\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "/api/instances/{component}/{name}") != null);
 }
 

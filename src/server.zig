@@ -26,6 +26,7 @@ const providers_api = @import("api/providers.zig");
 const channels_api = @import("api/channels.zig");
 const events_api = @import("api/events.zig");
 const approvals_api = @import("api/approvals.zig");
+const orders_api = @import("api/orders.zig");
 const event_producers = @import("api/event_producers.zig");
 const spaces_api = @import("api/spaces.zig");
 const usage_api = @import("api/usage.zig");
@@ -1654,6 +1655,52 @@ pub const Server = struct {
             return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
         }
 
+        // Orders API — /api/orders?space={id} and /api/orders/{id}[/action]?space={id}
+        if (orders_api.isOrdersCollectionPath(target)) {
+            if (std.mem.eql(u8, method, "GET")) {
+                const resp = orders_api.handleList(allocator, self.paths, target);
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            if (std.mem.eql(u8, method, "POST")) {
+                const resp = orders_api.handleCreate(allocator, self.paths, self.state, target, body, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+        if (orders_api.scheduleOrderIdFromTarget(allocator, target) catch null) |order_id| {
+            defer allocator.free(order_id);
+            if (std.mem.eql(u8, method, "POST")) {
+                const resp = orders_api.handleSchedule(allocator, self.paths, self.state, target, order_id, body, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+        if (orders_api.transitionOrderIdFromTarget(allocator, target) catch null) |order_id| {
+            defer allocator.free(order_id);
+            const transition = orders_api.transitionFromTarget(target).?;
+            if (std.mem.eql(u8, method, "POST")) {
+                const resp = orders_api.handleTransition(allocator, self.paths, self.state, target, order_id, transition, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+        if (orders_api.orderIdFromTarget(allocator, target) catch null) |order_id| {
+            defer allocator.free(order_id);
+            if (std.mem.eql(u8, method, "GET")) {
+                const resp = orders_api.handleGet(allocator, self.paths, target, order_id);
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            if (std.mem.eql(u8, method, "PATCH")) {
+                const resp = orders_api.handleUpdate(allocator, self.paths, self.state, target, order_id, body, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            if (std.mem.eql(u8, method, "DELETE")) {
+                const resp = orders_api.handleDelete(allocator, self.paths, self.state, target, order_id, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
+
         // Providers API — /api/providers[/{id}[/validate]]
         if (providers_api.isProvidersPath(target)) {
             if (std.mem.eql(u8, target, "/api/providers") or std.mem.startsWith(u8, target, "/api/providers?")) {
@@ -2669,6 +2716,15 @@ const TestContext = struct {
     }
 };
 
+fn expectFileNotFound(path: []const u8) !void {
+    if (std_compat.fs.openFileAbsolute(path, .{})) |file| {
+        file.close();
+        return error.ExpectedFileNotFound;
+    } else |err| {
+        try std.testing.expectEqual(error.FileNotFound, err);
+    }
+}
+
 fn writeUiModuleEntrypoint(allocator: std.mem.Allocator, module_dir: []const u8) !void {
     const module_path = try std.fs.path.join(allocator, &.{ module_dir, "module.js" });
     defer allocator.free(module_path);
@@ -3330,6 +3386,171 @@ test "route POST and GET /api/events are space scoped and cursor paged" {
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":1") != null);
         try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":3") == null);
     }
+}
+
+test "route /api/orders CRUD transitions and emits events" {
+    var ctx = TestContext.init(std.testing.allocator);
+    defer ctx.deinit(std.testing.allocator);
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/orders?space=ops",
+            "{\"title\":\"Morning report\",\"summary\":\"Daily brief\",\"content\":\"# Brief\\n\"}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"id\":\"order-1\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"draft\"") != null);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "GET", "/api/orders?space=ops", "");
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"title\":\"Morning report\"") != null);
+    }
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "PATCH",
+            "/api/orders/order-1?space=ops",
+            "{\"title\":\"Updated report\"}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"title\":\"Updated report\"") != null);
+    }
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/orders/order-1/activate?space=ops",
+            "",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"status\":\"active\"") != null);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "GET", "/api/events?space=ops&subject_type=order", "");
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.created\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.updated\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"type\":\"order.activated\"") != null);
+    }
+
+    const doc_path = try ctx.paths.spaceOrderDoc(std.testing.allocator, "ops", "order-1");
+    defer std.testing.allocator.free(doc_path);
+    const doc_file = try std_compat.fs.openFileAbsolute(doc_path, .{});
+    defer doc_file.close();
+}
+
+test "route DELETE /api/orders removes order document and emits event" {
+    var ctx = TestContext.init(std.testing.allocator);
+    defer ctx.deinit(std.testing.allocator);
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/orders?space=ops",
+            "{\"title\":\"Temporary order\",\"content\":\"# Temporary\\n\"}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const archive_resp = ctx.route(std.testing.allocator, "POST", "/api/orders/order-1/archive?space=ops", "");
+        defer std.testing.allocator.free(archive_resp.body);
+        try std.testing.expectEqualStrings("200 OK", archive_resp.status);
+
+        const still_readable = ctx.route(std.testing.allocator, "GET", "/api/orders/order-1?space=ops", "");
+        defer std.testing.allocator.free(still_readable.body);
+        try std.testing.expectEqualStrings("200 OK", still_readable.status);
+        try std.testing.expect(std.mem.indexOf(u8, still_readable.body, "\"status\":\"archived\"") != null);
+    }
+
+    {
+        const delete_resp = ctx.route(std.testing.allocator, "DELETE", "/api/orders/order-1?space=ops", "");
+        defer std.testing.allocator.free(delete_resp.body);
+        try std.testing.expectEqualStrings("200 OK", delete_resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, delete_resp.body, "\"status\":\"deleted\"") != null);
+    }
+
+    {
+        const missing = ctx.route(std.testing.allocator, "GET", "/api/orders/order-1?space=ops", "");
+        try std.testing.expectEqualStrings("404 Not Found", missing.status);
+    }
+
+    const doc_path = try ctx.paths.spaceOrderDoc(std.testing.allocator, "ops", "order-1");
+    defer std.testing.allocator.free(doc_path);
+    try expectFileNotFound(doc_path);
+
+    const events_resp = ctx.route(std.testing.allocator, "GET", "/api/events?space=ops&subject_type=order", "");
+    defer std.testing.allocator.free(events_resp.body);
+    try std.testing.expectEqualStrings("200 OK", events_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.deleted\"") != null);
+}
+
+test "route /api/orders unknown item subroutes do not mutate order" {
+    var ctx = TestContext.init(std.testing.allocator);
+    defer ctx.deinit(std.testing.allocator);
+
+    {
+        const resp = ctx.route(
+            std.testing.allocator,
+            "POST",
+            "/api/orders?space=ops",
+            "{\"title\":\"Protected order\",\"schedule\":\"0 9 * * *\",\"content\":\"# Keep\\n\"}",
+        );
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("201 Created", resp.status);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "DELETE", "/api/orders/order-1/not-a-route?space=ops", "");
+        try std.testing.expectEqualStrings("404 Not Found", resp.status);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "PATCH", "/api/orders/order-1/not-a-route?space=ops", "{\"title\":\"Mutated\"}");
+        try std.testing.expectEqualStrings("404 Not Found", resp.status);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "DELETE", "/api/orders/order-1/schedule?space=ops", "");
+        try std.testing.expectEqualStrings("405 Method Not Allowed", resp.status);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "PATCH", "/api/orders/order-1/schedule?space=ops", "{\"schedule\":\"mutated\"}");
+        try std.testing.expectEqualStrings("405 Method Not Allowed", resp.status);
+    }
+
+    {
+        const resp = ctx.route(std.testing.allocator, "GET", "/api/orders/order-1?space=ops", "");
+        defer std.testing.allocator.free(resp.body);
+        try std.testing.expectEqualStrings("200 OK", resp.status);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"title\":\"Protected order\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"title\":\"Mutated\"") == null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"schedule\":\"0 9 * * *\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, resp.body, "\"schedule\":\"mutated\"") == null);
+    }
+
+    const events_resp = ctx.route(std.testing.allocator, "GET", "/api/events?space=ops&subject_type=order", "");
+    defer std.testing.allocator.free(events_resp.body);
+    try std.testing.expectEqualStrings("200 OK", events_resp.status);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.created\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.scheduled\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.deleted\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, events_resp.body, "\"type\":\"order.updated\"") == null);
 }
 
 test "route /api/approvals covers decide state transitions and feedback-required" {
