@@ -57,6 +57,7 @@
   let addSchema = $derived(channelSchemas[addForm.channel_type]);
   let editingChannel = $derived(channels.find((channel) => channel.id === editingId) || null);
   let editSchema = $derived(channelSchemas[editChannelType]);
+  let hasTelegramChannel = $derived(channels.some((channel) => channel.channel_type === "telegram" && (channel.account || "main") === "main"));
 
   const channelColumns: EntityColumn[] = [
     { id: "channel", label: "Channel", type: "select", width: "minmax(150px,.55fr)" },
@@ -151,13 +152,14 @@
     }
     addForm = {
       channel_type: type,
-      account: schema?.hasAccounts ? "default" : type,
+      account: type === "telegram" ? "main" : schema?.hasAccounts ? "default" : type,
       config: defaults,
     };
   }
 
   function openAdd() {
-    resetAddConfig(addForm.channel_type || "telegram");
+    const fallbackType = CHANNEL_OPTIONS.find((option) => option.value !== "telegram")?.value || "telegram";
+    resetAddConfig(hasTelegramChannel ? fallbackType : "telegram");
     addError = "";
     showAddForm = true;
   }
@@ -195,6 +197,16 @@
     addValidating = true;
     addError = "";
     try {
+      if (addForm.channel_type === "telegram") {
+        const telegramBotToken = String(addForm.config.bot_token || "").trim();
+        if (!telegramBotToken) throw new Error("Telegram bot token is required.");
+        await api.connectTelegram({ telegramBotToken });
+        showAddForm = false;
+        resetAddConfig("telegram");
+        message = "Telegram connected. Opening claim step...";
+        window.location.assign("/");
+        return;
+      }
       await api.createSavedChannel({
         channel_type: addForm.channel_type,
         account: addForm.account,
@@ -415,7 +427,7 @@
   >
     {#snippet headerActions()}
       {#if hasNullclaw}
-        <Button size="sm" onclick={openAdd}>+ Add channel</Button>
+        <Button size="sm" onclick={openAdd}>{hasTelegramChannel ? "+ Add channel" : "Connect Telegram"}</Button>
       {/if}
     {/snippet}
   </UniversalEntityView>
@@ -425,7 +437,7 @@
   {/if}
 </div>
 
-<Dialog bind:open={showAddForm} title="Add channel" size="md">
+<Dialog bind:open={showAddForm} title={addForm.channel_type === "telegram" ? "Connect Telegram" : "Add channel"} size="md">
   <div class="field">
     <Label for="add-channel-type">Channel Type</Label>
     <Select id="add-channel-type" bind:value={addForm.channel_type} onchange={(e) => resetAddConfig(e.currentTarget.value)}>
@@ -457,7 +469,9 @@
   {#snippet footer()}
     <Button variant="outline" onclick={() => (showAddForm = false)}>Cancel</Button>
     <Button onclick={handleAdd} disabled={addValidating}>
-      {addValidating ? "Validating..." : "Validate & Save"}
+      {addValidating
+        ? addForm.channel_type === "telegram" ? "Connecting..." : "Validating..."
+        : addForm.channel_type === "telegram" ? "Connect & claim" : "Validate & Save"}
     </Button>
   {/snippet}
 </Dialog>

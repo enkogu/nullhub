@@ -7,6 +7,7 @@ import {
 } from './__fixtures__/handlers';
 import {
   installApiFixture,
+  jsonFixture,
   type InstalledApiFixture,
 } from './__fixtures__/backend';
 
@@ -233,5 +234,27 @@ describe('api client fake backend fixture', () => {
       { provider: 'openrouter', api_key: 'test-key' },
       { channel_type: 'telegram', account: 'ops', config: {} },
     ]);
+  });
+
+  test('connects Telegram through the PocketBase control-plane route', async () => {
+    fixture = installApiFixture([
+      {
+        method: 'POST',
+        path: '/api/me/telegram/connect',
+        handler: (request) => {
+          expect(request.bodyJson).toEqual({ telegramBotToken: '123456:ABC' });
+          return jsonFixture({ telegram: { status: 'waiting' } });
+        },
+      },
+    ]);
+
+    await expect(api.connectTelegram({ telegramBotToken: '123456:ABC' })).resolves.toEqual({
+      telegram: { status: 'waiting' },
+    });
+    expect(fixture.requests).toHaveLength(1);
+    expect(fixture.requests[0]).toMatchObject({
+      method: 'POST',
+      path: '/api/me/telegram/connect',
+    });
   });
 });

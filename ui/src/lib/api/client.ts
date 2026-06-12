@@ -468,6 +468,76 @@ async function request<T>(path: string, options?: ApiRequestInit): Promise<T> {
   return pending;
 }
 
+function pocketBaseAuthHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest',
+  };
+  if (typeof localStorage === 'undefined') return headers;
+  try {
+    const stored = JSON.parse(localStorage.getItem('pocketbase_auth') || '{}');
+    if (stored?.token) headers.Authorization = `Bearer ${stored.token}`;
+  } catch {}
+  return headers;
+}
+
+async function controlPlaneRequest<T>(path: string, options?: ApiRequestInit): Promise<T> {
+  const timeoutMs = requestTimeoutMs(options);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const abortFromCaller = () => controller.abort();
+  options?.signal?.addEventListener('abort', abortFromCaller, { once: true });
+
+  try {
+    const { timeoutMs: _timeoutMs, signal: _signal, headers: optionHeaders, ...fetchOptions } = options || {};
+    const res = await fetch(path, {
+      credentials: 'include',
+      ...fetchOptions,
+      headers: {
+        ...pocketBaseAuthHeaders(),
+        ...(optionHeaders || {}),
+      },
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const body = normalizeMojibakeValue(await res.json().catch(() => null));
+      const errMsg =
+        typeof body?.message === 'string'
+          ? normalizeMojibakeText(body.message)
+          : typeof body?.error === 'string'
+            ? normalizeMojibakeText(body.error)
+            : normalizeMojibakeText(body?.error?.message || `HTTP ${res.status}`);
+      const error = new Error(errMsg) as ApiRequestError;
+      error.status = res.status;
+      error.body = body;
+      throw error;
+    }
+    if (res.status === 204) return undefined as T;
+    const text = await res.text();
+    if (!text) return undefined as T;
+    try {
+      return normalizeApiJson(text, JSON.parse(text));
+    } catch {
+      const error = new Error(`Invalid JSON response from ${path}`) as ApiRequestError;
+      error.status = res.status;
+      error.body = normalizeMojibakeText(text);
+      throw error;
+    }
+  } catch (err) {
+    if ((err as ApiRequestError).status !== undefined) throw err;
+    const error = new Error(
+      err instanceof DOMException && err.name === 'AbortError'
+        ? `Request timed out after ${Math.round(timeoutMs / 1000)}s.`
+        : (err as Error).message || 'API request failed.',
+    ) as ApiRequestError;
+    error.status = 0;
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    options?.signal?.removeEventListener('abort', abortFromCaller);
+  }
+}
+
 export const nullTicketsApi = createNullTicketsApi((c, n, payload) =>
   request<any>(instanceApiPath(c, n, '/tickets'), {
     method: 'POST',
@@ -845,6 +915,8 @@ export const api = {
   // Saved channels
   getSavedChannels: (reveal = false) =>
     request<any>(`/channels${reveal ? '?reveal=true' : ''}`),
+  connectTelegram: (data: { telegramBotToken: string }) =>
+    controlPlaneRequest<any>('/api/me/telegram/connect', { method: 'POST', body: JSON.stringify(data) }),
   createSavedChannel: (data: { channel_type: string; account: string; config: Record<string, any> }) =>
     request<any>('/channels', { method: 'POST', body: JSON.stringify(withSelectedSpaceBody(data)) }),
   updateSavedChannel: (id: string, data: { name?: string; account?: string; config?: Record<string, any> }) =>
