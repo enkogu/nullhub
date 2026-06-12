@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
   import InstanceCard from "$lib/components/InstanceCard.svelte";
-  import { api, approvalsApi, eventsApi, type Approval } from "$lib/api/client";
+  import { api, approvalsApi, charterApi, eventsApi, type Approval, type Charter, type CharterUpdateInput } from "$lib/api/client";
   import { pollWhileVisible } from "$lib/poll";
   import DataState, { type DataStateKind } from "$lib/components/DataState.svelte";
+  import CharterCard, { type CharterCardState } from "$lib/components/charter/CharterCard.svelte";
   import DigestCard, { type DigestCardState } from "$lib/components/dashboard/DigestCard.svelte";
   import type { DigestEvent, DigestUsagePayload } from "$lib/components/dashboard/digest";
   import NeedsYouList, { type NeedsYouListState } from "$lib/components/dashboard/NeedsYouList.svelte";
@@ -58,6 +59,12 @@
   let stopRunningNowPolling: (() => void) | null = null;
   let stopDigestPolling: (() => void) | null = null;
   let currentDigestSpaceId = $state<string | null | undefined>("__initial__");
+  let charter = $state<Charter | null>(null);
+  let charterState = $state<CharterCardState>("idle");
+  let charterError = $state<unknown>(null);
+  let charterRequestedSpaceId = $state<string | null>(null);
+  let homeMounted = $state(false);
+  let selectedSpaceName = $derived(spacesStore.selectedSpace?.name ?? "");
 
   function digestStorageKey() {
     return `nullhub.home_digest.last_seen.${spacesStore.selectedSpaceId || "all"}`;
@@ -121,6 +128,50 @@
     }
   }
 
+  function setCharterNoSpace(storeStatus = spacesStore.status) {
+    charterRequestedSpaceId = null;
+    charter = null;
+    charterError = null;
+    charterState = storeStatus === "ready" ? "empty" : "loading";
+  }
+
+  async function refreshCharter(spaceId = spacesStore.selectedSpaceId, storeStatus = spacesStore.status) {
+    if (!spaceId) {
+      setCharterNoSpace(storeStatus);
+      return;
+    }
+
+    const requestSpaceId = spaceId;
+    charterRequestedSpaceId = requestSpaceId;
+    charter = null;
+    charterError = null;
+    charterState = "loading";
+
+    try {
+      const nextCharter = await charterApi.getCharter({ spaceId: requestSpaceId });
+      if (charterRequestedSpaceId !== requestSpaceId) return;
+      charter = nextCharter;
+      charterState = "ready";
+    } catch (e) {
+      if (charterRequestedSpaceId !== requestSpaceId) return;
+      charter = null;
+      charterError = e;
+      charterState = "error";
+    }
+  }
+
+  async function saveCharter(input: CharterUpdateInput) {
+    const spaceId = spacesStore.selectedSpaceId;
+    if (!spaceId) throw new Error("Select a Space before editing its charter.");
+
+    const saved = await charterApi.updateCharter({ ...input, spaceId });
+    charterRequestedSpaceId = spaceId;
+    charter = saved;
+    charterState = "ready";
+    charterError = null;
+    return saved;
+  }
+
   $effect(() => {
     const selectedSpaceId = spacesStore.selectedSpaceId;
     if (currentDigestSpaceId === selectedSpaceId) return;
@@ -128,7 +179,17 @@
     digestLastSeenMs = readDigestLastSeen();
   });
 
+  $effect(() => {
+    const selectedSpaceId = spacesStore.selectedSpaceId;
+    const spacesStatus = spacesStore.status;
+    if (!homeMounted) return;
+    untrack(() => {
+      void refreshCharter(selectedSpaceId, spacesStatus);
+    });
+  });
+
   onMount(() => {
+    homeMounted = true;
     refreshTimer = setTimeout(() => void refresh(), 350);
     stopPolling = pollWhileVisible(refresh, 5000);
     needsYouState = "loading";
@@ -143,6 +204,7 @@
   });
 
   onDestroy(() => {
+    homeMounted = false;
     if (refreshTimer) clearTimeout(refreshTimer);
     stopPolling?.();
     stopNeedsYouPolling?.();
@@ -169,6 +231,15 @@
         onRetry={() => void refreshDigest()}
       />
     </div>
+    <CharterCard
+      class="home-charter"
+      {charter}
+      state={charterState}
+      error={charterError}
+      spaceName={selectedSpaceName}
+      onRetry={() => void refreshCharter()}
+      onSave={saveCharter}
+    />
     <NeedsYouList
       approvals={needsYouApprovals}
       state={needsYouState}
@@ -233,11 +304,7 @@
 
   @media (min-width: 64rem) {
     .home-blocks {
-      grid-template-columns: 1fr 1fr;
-    }
-
-    .home-digest {
-      grid-column: 1 / -1;
+      grid-template-columns: minmax(0, 1.2fr) minmax(20rem, 0.8fr);
     }
   }
 

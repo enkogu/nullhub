@@ -1,5 +1,6 @@
 import { createNullBoilerApi } from '$lib/api/nullboiler';
 import { createApprovalsApi } from '$lib/api/approvals';
+import { createCharterApi } from '$lib/api/charter';
 import { createEventsApi } from '$lib/api/events';
 import { createMissionControlApi } from '$lib/api/missionControl';
 import { createNullTicketsApi, createNullTicketsStoreApi } from '$lib/api/nulltickets';
@@ -137,6 +138,12 @@ export type {
   ApprovalStatus,
   ApprovalsApi,
 } from '$lib/api/approvals';
+export type {
+  Charter,
+  CharterApi,
+  CharterScopedOptions,
+  CharterUpdateInput,
+} from '$lib/api/charter';
 export type {
   EventCreateInput,
   EventListPage,
@@ -596,6 +603,7 @@ export const eventsApi = createEventsApi(request, withQuery);
 export const approvalsApi = createApprovalsApi(request, withQuery);
 export const ordersApi = createOrdersApi(request, withQuery);
 export const packagesApi = createPackagesApi(request, withQuery);
+export const charterApi = createCharterApi(request, withQuery);
 
 export const nullWatchApi = {
   getNullWatchHealth: (params?: NullWatchTarget) =>
@@ -910,6 +918,8 @@ export const api = {
   ...approvalsApi,
 
   ...ordersApi,
+
+  ...charterApi,
 
   applyUpdate: (c: string, n: string) =>
     request<any>(instanceApiPath(c, n, '/update'), { method: 'POST' }),
