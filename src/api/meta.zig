@@ -455,6 +455,10 @@ const route_examples_market = [_]ExampleSpec{
         .description = "List manifests installed in a selected Space library.",
     },
     .{
+        .command = "nullhub api POST '/api/market/install?space=ops' --body '{\"package_id\":\"builtin.loop-templates\",\"dry_run\":true}' --pretty",
+        .description = "Preview or install a package manifest into the selected Space.",
+    },
+    .{
         .command = "nullhub api POST '/api/market/export?space=ops' '{\"scope\":\"space\",\"id\":\"export.ops.blueprint\"}' --pretty",
         .description = "Export selected Space data as a local package manifest.",
     },
@@ -629,7 +633,19 @@ const routes = [_]RouteSpec{
         .auth_mode = "optional_bearer",
         .query_params = market_query_params[0..],
         .response = "Package manifest array loaded from the selected Space market library.",
-        .examples = route_examples_market[1..],
+        .examples = route_examples_market[1..2],
+    },
+    .{
+        .id = "market.install.post",
+        .method = "POST",
+        .path_template = "/api/market/install",
+        .category = "market",
+        .summary = "Preview or install a package manifest into the selected Space.",
+        .auth_mode = "optional_bearer",
+        .query_params = market_query_params[0..],
+        .body = "JSON body with package_id/source or inline manifest, optional dry_run=true for blast radius and required-secret preview.",
+        .response = "Install preview or result with required secrets, blast radius, applied resources, and source-tag metadata.",
+        .examples = route_examples_market[2..3],
     },
     .{
         .id = "market.export.post",
@@ -641,7 +657,7 @@ const routes = [_]RouteSpec{
         .query_params = market_query_params[0..],
         .body = "JSON body with scope=space|selection|single, optional id/name/version, and optional selection/single refs.",
         .response = "Export result with package id, library file path, download URL, and manifest JSON.",
-        .examples = route_examples_market[2..3],
+        .examples = route_examples_market[3..4],
     },
     .{
         .id = "market.library.get",
@@ -652,7 +668,7 @@ const routes = [_]RouteSpec{
         .auth_mode = "optional_bearer",
         .query_params = market_query_params[0..],
         .response = "Package manifest JSON.",
-        .examples = route_examples_market[3..],
+        .examples = route_examples_market[4..],
     },
     .{
         .id = "wizard.free_port",
@@ -1944,6 +1960,7 @@ test "jsonAlloc includes stable route metadata" {
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"meta.routes.get\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.catalog.get\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.installed.get\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.install.post\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.export.post\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"market.library.get\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, json, "\"id\": \"charter.get\"") != null);
@@ -1964,6 +1981,7 @@ test "textAlloc renders grouped route list" {
     try std.testing.expect(std.mem.indexOf(u8, text, "PUT /api/charter") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/market/catalog") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/market/installed") != null);
+    try std.testing.expect(std.mem.indexOf(u8, text, "POST /api/market/install") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "POST /api/market/export") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/market/library/{package}.json") != null);
     try std.testing.expect(std.mem.indexOf(u8, text, "GET /api/meta/routes") != null);
