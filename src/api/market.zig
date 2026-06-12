@@ -1,5 +1,6 @@
 const std = @import("std");
 const std_compat = @import("compat");
+const build_options = @import("build_options");
 const paths_mod = @import("../core/paths.zig");
 const helpers = @import("helpers.zig");
 const query = @import("query.zig");
@@ -26,6 +27,9 @@ pub const Scale = enum {
 pub const ValidationError = error{
     InvalidJson,
     ManifestRootNotObject,
+    MissingId,
+    MissingName,
+    MissingVersion,
     MissingScale,
     MissingRequires,
     MissingContributes,
@@ -33,6 +37,9 @@ pub const ValidationError = error{
     MissingSeeds,
     MissingExtends,
     MissingCharter,
+    InvalidId,
+    InvalidName,
+    InvalidVersion,
     InvalidScale,
     InvalidRequires,
     InvalidContributes,
@@ -40,6 +47,8 @@ pub const ValidationError = error{
     InvalidSeeds,
     InvalidExtends,
     InvalidCharter,
+    MissingSecretRef,
+    InvalidSecretRef,
     SecretValueNotAllowed,
 };
 
@@ -62,7 +71,10 @@ pub fn validateManifestJson(allocator: std.mem.Allocator, bytes: []const u8) Val
 }
 
 pub fn handleCatalog(allocator: std.mem.Allocator) helpers.ApiResponse {
-    const body = renderManifestDirectory(allocator, builtin_catalog_dir, true) catch return helpers.serverError();
+    const catalog_dir = resolveBuiltinCatalogDir(allocator) catch return helpers.serverError();
+    defer allocator.free(catalog_dir);
+
+    const body = renderManifestDirectory(allocator, catalog_dir, false) catch return helpers.serverError();
     return helpers.jsonOk(body);
 }
 
@@ -88,6 +100,10 @@ fn validateManifestValue(value: std.json.Value) ValidationError!void {
         else => return error.ManifestRootNotObject,
     };
 
+    try requireString(root, "id", error.MissingId, error.InvalidId);
+    try requireString(root, "name", error.MissingName, error.InvalidName);
+    try requireString(root, "version", error.MissingVersion, error.InvalidVersion);
+
     const scale_value = root.get("scale") orelse return error.MissingScale;
     const scale = switch (scale_value) {
         .string => |raw| raw,
@@ -103,6 +119,21 @@ fn validateManifestValue(value: std.json.Value) ValidationError!void {
     try requireObject(root, "charter", error.MissingCharter, error.InvalidCharter);
 
     if (containsForbiddenSecretValue(root)) return error.SecretValueNotAllowed;
+    try validateConfigSecrets(root.get("config").?.object);
+    try validateSecretRefDeclarations(value);
+}
+
+fn requireString(
+    root: std.json.ObjectMap,
+    key: []const u8,
+    missing_error: ValidationError,
+    invalid_error: ValidationError,
+) ValidationError!void {
+    const value = root.get(key) orelse return missing_error;
+    switch (value) {
+        .string => |raw| if (std.mem.trim(u8, raw, " \t\r\n").len == 0) return invalid_error,
+        else => return invalid_error,
+    }
 }
 
 fn requireArray(
@@ -157,6 +188,103 @@ fn isForbiddenSecretKey(key: []const u8) bool {
     return std.mem.eql(u8, key, "secret_value") or
         std.mem.eql(u8, key, "encrypted_secret_value") or
         std.mem.eql(u8, key, "encrypted_value");
+}
+
+fn validateConfigSecrets(config: std.json.ObjectMap) ValidationError!void {
+    const secrets_value = config.get("secrets") orelse return;
+    const secrets = switch (secrets_value) {
+        .array => |array| array,
+        else => return error.InvalidConfig,
+    };
+
+    for (secrets.items) |item| {
+        const secret = switch (item) {
+            .object => |object| object,
+            else => return error.InvalidConfig,
+        };
+        try validateSecretRefObject(secret);
+    }
+}
+
+fn validateSecretRefDeclarations(value: std.json.Value) ValidationError!void {
+    switch (value) {
+        .object => |object| {
+            if (objectDeclaresSecretRef(object)) {
+                try validateSecretRefObject(object);
+            }
+            var it = object.iterator();
+            while (it.next()) |entry| {
+                try validateSecretRefDeclarations(entry.value_ptr.*);
+            }
+        },
+        .array => |array| {
+            for (array.items) |item| {
+                try validateSecretRefDeclarations(item);
+            }
+        },
+        else => {},
+    }
+}
+
+fn objectDeclaresSecretRef(object: std.json.ObjectMap) bool {
+    if (object.get("secret_ref") != null) return true;
+    const kind_value = object.get("kind") orelse return false;
+    return switch (kind_value) {
+        .string => |kind| std.mem.eql(u8, kind, "secret_ref"),
+        else => false,
+    };
+}
+
+fn validateSecretRefObject(object: std.json.ObjectMap) ValidationError!void {
+    if (object.get("value") != null) return error.SecretValueNotAllowed;
+    const ref_value = object.get("secret_ref") orelse return error.MissingSecretRef;
+    switch (ref_value) {
+        .string => |raw| if (std.mem.trim(u8, raw, " \t\r\n").len == 0) return error.InvalidSecretRef,
+        else => return error.InvalidSecretRef,
+    }
+}
+
+fn resolveBuiltinCatalogDir(allocator: std.mem.Allocator) ![]u8 {
+    if (std_compat.process.getEnvVarOwned(allocator, "NULLHUB_BUILTIN_CATALOG_DIR")) |env_path| {
+        errdefer allocator.free(env_path);
+        if (!catalogDirExists(env_path)) return error.FileNotFound;
+        return env_path;
+    } else |err| switch (err) {
+        error.EnvironmentVariableNotFound => {},
+        else => return err,
+    }
+
+    if (std_compat.fs.selfExePathAlloc(allocator)) |exe_path| {
+        defer allocator.free(exe_path);
+        if (std.fs.path.dirname(exe_path)) |exe_dir| {
+            const candidate_parts = [_][]const []const u8{
+                &.{ exe_dir, "market", "catalog" },
+                &.{ exe_dir, "..", "market", "catalog" },
+                &.{ exe_dir, "..", "share", "nullhub", "market", "catalog" },
+                &.{ exe_dir, "..", "..", "market", "catalog" },
+            };
+            for (candidate_parts) |parts| {
+                if (resolveExistingCatalogDir(allocator, parts)) |candidate| {
+                    return candidate;
+                } else |_| {}
+            }
+        }
+    } else |_| {}
+
+    return try resolveExistingCatalogDir(allocator, &.{ build_options.source_root, "market", "catalog" });
+}
+
+fn resolveExistingCatalogDir(allocator: std.mem.Allocator, parts: []const []const u8) ![]u8 {
+    const candidate = try std.fs.path.resolve(allocator, parts);
+    errdefer allocator.free(candidate);
+    if (!catalogDirExists(candidate)) return error.FileNotFound;
+    return candidate;
+}
+
+fn catalogDirExists(path: []const u8) bool {
+    var dir = openDirAny(path, .{ .iterate = true }) catch return false;
+    dir.close();
+    return true;
 }
 
 fn renderManifestDirectory(allocator: std.mem.Allocator, dir_path: []const u8, missing_ok: bool) ![]const u8 {
@@ -238,26 +366,35 @@ fn manifestForScale(scale: []const u8) []const u8 {
 }
 
 fn manifestWithoutField(field: []const u8) []const u8 {
+    if (std.mem.eql(u8, field, "id")) {
+        return "{\"name\":\"Missing id\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}";
+    }
+    if (std.mem.eql(u8, field, "name")) {
+        return "{\"id\":\"example.missing-name\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}";
+    }
+    if (std.mem.eql(u8, field, "version")) {
+        return "{\"id\":\"example.missing-version\",\"name\":\"Missing version\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}";
+    }
     if (std.mem.eql(u8, field, "scale")) {
-        return "{\"id\":\"example.missing-scale\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}";
+        return "{\"id\":\"example.missing-scale\",\"name\":\"Missing scale\",\"version\":\"1.0.0\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}";
     }
     if (std.mem.eql(u8, field, "requires")) {
-        return "{\"id\":\"example.missing-requires\",\"scale\":\"component\",\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}";
+        return "{\"id\":\"example.missing-requires\",\"name\":\"Missing requires\",\"version\":\"1.0.0\",\"scale\":\"component\",\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}";
     }
     if (std.mem.eql(u8, field, "contributes")) {
-        return "{\"id\":\"example.missing-contributes\",\"scale\":\"component\",\"requires\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}";
+        return "{\"id\":\"example.missing-contributes\",\"name\":\"Missing contributes\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}";
     }
     if (std.mem.eql(u8, field, "config")) {
-        return "{\"id\":\"example.missing-config\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"seeds\":[],\"extends\":[],\"charter\":{}}";
+        return "{\"id\":\"example.missing-config\",\"name\":\"Missing config\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"seeds\":[],\"extends\":[],\"charter\":{}}";
     }
     if (std.mem.eql(u8, field, "seeds")) {
-        return "{\"id\":\"example.missing-seeds\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"extends\":[],\"charter\":{}}";
+        return "{\"id\":\"example.missing-seeds\",\"name\":\"Missing seeds\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"extends\":[],\"charter\":{}}";
     }
     if (std.mem.eql(u8, field, "extends")) {
-        return "{\"id\":\"example.missing-extends\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"charter\":{}}";
+        return "{\"id\":\"example.missing-extends\",\"name\":\"Missing extends\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"charter\":{}}";
     }
     if (std.mem.eql(u8, field, "charter")) {
-        return "{\"id\":\"example.missing-charter\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[]}";
+        return "{\"id\":\"example.missing-charter\",\"name\":\"Missing charter\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[]}";
     }
     unreachable;
 }
@@ -278,12 +415,15 @@ test "market manifest validates all package scales" {
 test "market manifest rejects invalid scale" {
     try std.testing.expectError(
         error.InvalidScale,
-        validateManifestJson(std.testing.allocator, "{\"scale\":\"workflow\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"),
+        validateManifestJson(std.testing.allocator, "{\"id\":\"example.invalid-scale\",\"name\":\"Invalid scale\",\"version\":\"1.0.0\",\"scale\":\"workflow\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"),
     );
 }
 
 test "market manifest rejects missing required fields" {
     const allocator = std.testing.allocator;
+    try std.testing.expectError(error.MissingId, validateManifestJson(allocator, manifestWithoutField("id")));
+    try std.testing.expectError(error.MissingName, validateManifestJson(allocator, manifestWithoutField("name")));
+    try std.testing.expectError(error.MissingVersion, validateManifestJson(allocator, manifestWithoutField("version")));
     try std.testing.expectError(error.MissingScale, validateManifestJson(allocator, manifestWithoutField("scale")));
     try std.testing.expectError(error.MissingRequires, validateManifestJson(allocator, manifestWithoutField("requires")));
     try std.testing.expectError(error.MissingContributes, validateManifestJson(allocator, manifestWithoutField("contributes")));
@@ -295,23 +435,52 @@ test "market manifest rejects missing required fields" {
 
 test "market manifest rejects invalid required field shapes" {
     const allocator = std.testing.allocator;
-    try std.testing.expectError(error.InvalidRequires, validateManifestJson(allocator, "{\"scale\":\"component\",\"requires\":{},\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"));
-    try std.testing.expectError(error.InvalidContributes, validateManifestJson(allocator, "{\"scale\":\"component\",\"requires\":[],\"contributes\":{},\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"));
-    try std.testing.expectError(error.InvalidConfig, validateManifestJson(allocator, "{\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":[],\"seeds\":[],\"extends\":[],\"charter\":{}}"));
-    try std.testing.expectError(error.InvalidSeeds, validateManifestJson(allocator, "{\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":{},\"extends\":[],\"charter\":{}}"));
-    try std.testing.expectError(error.InvalidExtends, validateManifestJson(allocator, "{\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":{},\"charter\":{}}"));
-    try std.testing.expectError(error.InvalidCharter, validateManifestJson(allocator, "{\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":[]}"));
+    try std.testing.expectError(error.InvalidId, validateManifestJson(allocator, "{\"id\":1,\"name\":\"Invalid id\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"));
+    try std.testing.expectError(error.InvalidName, validateManifestJson(allocator, "{\"id\":\"example.invalid-name\",\"name\":\"\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"));
+    try std.testing.expectError(error.InvalidVersion, validateManifestJson(allocator, "{\"id\":\"example.invalid-version\",\"name\":\"Invalid version\",\"version\":1,\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"));
+    try std.testing.expectError(error.InvalidRequires, validateManifestJson(allocator, "{\"id\":\"example.invalid-requires\",\"name\":\"Invalid requires\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":{},\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"));
+    try std.testing.expectError(error.InvalidContributes, validateManifestJson(allocator, "{\"id\":\"example.invalid-contributes\",\"name\":\"Invalid contributes\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":{},\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"));
+    try std.testing.expectError(error.InvalidConfig, validateManifestJson(allocator, "{\"id\":\"example.invalid-config\",\"name\":\"Invalid config\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":[],\"seeds\":[],\"extends\":[],\"charter\":{}}"));
+    try std.testing.expectError(error.InvalidSeeds, validateManifestJson(allocator, "{\"id\":\"example.invalid-seeds\",\"name\":\"Invalid seeds\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":{},\"extends\":[],\"charter\":{}}"));
+    try std.testing.expectError(error.InvalidExtends, validateManifestJson(allocator, "{\"id\":\"example.invalid-extends\",\"name\":\"Invalid extends\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":{},\"charter\":{}}"));
+    try std.testing.expectError(error.InvalidCharter, validateManifestJson(allocator, "{\"id\":\"example.invalid-charter\",\"name\":\"Invalid charter\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":[]}"));
 }
 
 test "market manifest rejects secret values" {
     try std.testing.expectError(
         error.SecretValueNotAllowed,
-        validateManifestJson(std.testing.allocator, "{\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{\"secrets\":[{\"name\":\"api\",\"secret_value\":\"nope\"}]},\"seeds\":[],\"extends\":[],\"charter\":{}}"),
+        validateManifestJson(std.testing.allocator, "{\"id\":\"example.secret-value\",\"name\":\"Secret value\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{\"secrets\":[{\"name\":\"api\",\"secret_value\":\"nope\"}]},\"seeds\":[],\"extends\":[],\"charter\":{}}"),
     );
+}
+
+test "market manifest requires secret refs for secret declarations" {
+    const allocator = std.testing.allocator;
+    try validateManifestJson(allocator, "{\"id\":\"example.secret-ref\",\"name\":\"Secret ref\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[{\"kind\":\"secret_ref\",\"name\":\"api\",\"secret_ref\":\"providers.default.api_key\"}],\"contributes\":[],\"config\":{\"secrets\":[{\"name\":\"api\",\"secret_ref\":\"providers.default.api_key\"}],\"plain\":{\"value\":\"non-secret config stays valid\"}},\"seeds\":[],\"extends\":[],\"charter\":{}}");
+    try std.testing.expectError(error.MissingSecretRef, validateManifestJson(allocator, "{\"id\":\"example.missing-secret-ref\",\"name\":\"Missing secret ref\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[{\"kind\":\"secret_ref\",\"name\":\"api\"}],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"));
+    try std.testing.expectError(error.MissingSecretRef, validateManifestJson(allocator, "{\"id\":\"example.config-secret-ref\",\"name\":\"Config missing secret ref\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{\"secrets\":[{\"name\":\"api\"}]},\"seeds\":[],\"extends\":[],\"charter\":{}}"));
+    try std.testing.expectError(error.SecretValueNotAllowed, validateManifestJson(allocator, "{\"id\":\"example.literal-secret\",\"name\":\"Literal secret\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[{\"kind\":\"secret_ref\",\"name\":\"api\",\"value\":\"literal\"}],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"));
+}
+
+test "market catalog handler fails when builtin catalog directory is missing" {
+    const resp = blk: {
+        const body = renderManifestDirectory(std.testing.allocator, "/tmp/nullhub-definitely-missing-market-catalog", false) catch {
+            break :blk helpers.serverError();
+        };
+        break :blk helpers.jsonOk(body);
+    };
+    try std.testing.expectEqualStrings("500 Internal Server Error", resp.status);
 }
 
 test "market catalog and installed handlers list package manifests" {
     const allocator = std.testing.allocator;
+    const builtin_catalog_root = try resolveBuiltinCatalogDir(allocator);
+    defer allocator.free(builtin_catalog_root);
+    const builtin_catalog_json = try renderManifestDirectory(allocator, builtin_catalog_root, false);
+    defer allocator.free(builtin_catalog_json);
+    try std.testing.expect(std.mem.indexOf(u8, builtin_catalog_json, "\"scale\": \"component\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, builtin_catalog_json, "\"scale\": \"kit\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, builtin_catalog_json, "\"scale\": \"blueprint\"") != null);
+
     var catalog_tmp = std.testing.tmpDir(.{});
     defer catalog_tmp.cleanup();
     var catalog_dir = std_compat.fs.Dir.wrap(catalog_tmp.dir);

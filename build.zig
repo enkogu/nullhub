@@ -44,6 +44,7 @@ pub fn build(b: *std.Build) void {
     var build_options = b.addOptions();
     build_options.addOption([]const u8, "version", app_version);
     build_options.addOption([]const u8, "git_commit", git_commit);
+    build_options.addOption([]const u8, "source_root", b.pathFromRoot("."));
     const build_options_module = build_options.createModule();
     const ui_assets_module = createUiAssetsModule(b, embed_ui);
     const compat_module = b.createModule(.{
@@ -68,6 +69,12 @@ pub fn build(b: *std.Build) void {
         .root_module = exe_module,
     });
     b.installArtifact(exe);
+    b.installDirectory(.{
+        .source_dir = b.path("market"),
+        .install_dir = .prefix,
+        .install_subdir = "market",
+        .include_extensions = &.{".json"},
+    });
 
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
