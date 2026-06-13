@@ -19,6 +19,7 @@ type NullHubFixtureOptions = {
   marketCatalogDelayMs?: number;
   marketInstalled?: JsonBody;
   marketInstalledStatus?: number;
+  marketInstallStatus?: number;
   marketExportStatus?: number;
   loopCatalog?: JsonBody;
   loopCatalogStatus?: number;
@@ -141,6 +142,48 @@ const fixtureMarketCatalog = {
         mission: 'Install durable Loop templates that make repeated agent work explicit and reviewable.',
         autonomy_bounds: ['Each loop must define a check instruction and exit condition'],
         metrics: ['loop_templates_installed'],
+      },
+    },
+    {
+      id: 'builtin.multiplication-demo',
+      name: 'Multiplication Demo Kit',
+      version: '1.0.0',
+      scale: 'kit',
+      summary: 'Fixture kit that installs a reviewed multiplication Loop and a first-run probation approval.',
+      requires: [
+        { kind: 'package', id: 'builtin.nullclaw-agent' },
+        { kind: 'secret_ref', name: 'fake_llm', secret_ref: 'providers.fake_llm.api_key' },
+      ],
+      contributes: [
+        { kind: 'loop_template', name: 'Multiplication Demo Loop' },
+        { kind: 'order_template', name: 'Multiply two numbers' },
+      ],
+      config: {
+        taxonomy: 'loops',
+        install_target: 'orders.loop_library',
+        fixture: 'multiplication-demo',
+        safety: { required_safe_executions: 1 },
+        roles: [
+          {
+            id: 'loop-operator',
+            label: 'Loop operator',
+            description: 'Owns the first reviewed multiplication run.',
+          },
+        ],
+      },
+      seeds: [
+        {
+          kind: 'loop_template',
+          slug: 'multiplication-demo',
+          name: 'Multiplication Demo',
+          tagline: 'Multiply fixture inputs through reviewed agent work.',
+        },
+      ],
+      extends: ['builtin.nullclaw-agent'],
+      charter: {
+        mission: 'Prove install, probation, approval, and automatic dispatch using the fake LLM fixture.',
+        autonomy_bounds: ['No live provider calls', 'First run requires Inbox approval'],
+        metrics: ['multiplication_runs'],
       },
     },
     {
@@ -1076,7 +1119,18 @@ function orderSafetyEvents(order: Record<string, unknown>, events: Record<string
     .sort((a, b) => fixtureNumber(a.id, 0) - fixtureNumber(b.id, 0));
 }
 
+function requiredSafeExecutionsFor(order: Record<string, unknown>): number {
+  const contentSafety = fixtureRecord(fixtureOrderContent(order).safety);
+  const existingSafety = fixtureRecord(order.safety);
+  const configured = fixtureNumber(
+    contentSafety.required_safe_executions ?? contentSafety.requiredSafeExecutions ?? existingSafety.required_safe_executions,
+    2,
+  );
+  return Math.max(1, configured);
+}
+
 function refreshFixtureOrderSafety(order: Record<string, unknown>, events: Record<string, unknown>[]) {
+  const requiredSafeExecutions = requiredSafeExecutionsFor(order);
   const guarded = ['trigger', 'mandate'].includes(fixtureString(order.kind).toLowerCase());
   if (!guarded) {
     order.safety = {
@@ -1085,7 +1139,7 @@ function refreshFixtureOrderSafety(order: Record<string, unknown>, events: Recor
       probation: false,
       circuit_open: false,
       safe_executions: 0,
-      required_safe_executions: 2,
+      required_safe_executions: requiredSafeExecutions,
       consecutive_failures: 0,
       failure_threshold: 3,
     };
@@ -1141,7 +1195,7 @@ function refreshFixtureOrderSafety(order: Record<string, unknown>, events: Recor
 
   const active = fixtureString(order.status) === 'active';
   const circuitOpen = active && circuitOpenedEventId > resetEventId;
-  const probation = active && !circuitOpen && safeExecutions < 2;
+  const probation = active && !circuitOpen && safeExecutions < requiredSafeExecutions;
   const status = !active ? 'inactive' : circuitOpen ? 'circuit_open' : probation ? 'probation' : 'clear';
   order.safety = {
     status,
@@ -1149,7 +1203,7 @@ function refreshFixtureOrderSafety(order: Record<string, unknown>, events: Recor
     probation,
     circuit_open: circuitOpen,
     safe_executions: safeExecutions,
-    required_safe_executions: 2,
+    required_safe_executions: requiredSafeExecutions,
     consecutive_failures: consecutiveFailures,
     failure_threshold: 3,
     reset_event_id: resetEventId,
@@ -1726,7 +1780,11 @@ async function currentSessionRoute(route: Route, options: NullHubFixtureOptions)
   );
 }
 
-async function marketCatalogRoute(route: Route, options: NullHubFixtureOptions) {
+async function marketCatalogRoute(
+  route: Route,
+  options: NullHubFixtureOptions,
+  marketCatalog: Record<string, unknown>[],
+) {
   recordRequest(route, options);
   if (options.marketCatalogDelayMs) {
     await new Promise((resolve) => setTimeout(resolve, options.marketCatalogDelayMs));
@@ -1735,7 +1793,7 @@ async function marketCatalogRoute(route: Route, options: NullHubFixtureOptions) 
     await fulfillJson(route, { error: 'Market catalog unavailable.' }, options.marketCatalogStatus);
     return;
   }
-  await fulfillJson(route, options.marketCatalog || fixtureMarketCatalog);
+  await fulfillJson(route, { packages: marketCatalog });
 }
 
 function packageListFromFixture(body: JsonBody | undefined, fallback: JsonBody): Record<string, unknown>[] {
@@ -1770,7 +1828,12 @@ async function marketInstalledRoute(route: Route, options: NullHubFixtureOptions
   await fulfillJson(route, { packages: marketLibrary });
 }
 
-async function marketExportRoute(route: Route, options: NullHubFixtureOptions, marketLibrary: Record<string, unknown>[]) {
+async function marketExportRoute(
+  route: Route,
+  options: NullHubFixtureOptions,
+  marketLibrary: Record<string, unknown>[],
+  marketCatalog: Record<string, unknown>[],
+) {
   recordRequest(route, options);
   if (options.marketExportStatus && options.marketExportStatus >= 400) {
     await fulfillJson(route, { error: 'Package export failed.' }, options.marketExportStatus);
@@ -1819,6 +1882,9 @@ async function marketExportRoute(route: Route, options: NullHubFixtureOptions, m
   const existingIndex = marketLibrary.findIndex((pkg) => String(pkg.id) === packageId);
   if (existingIndex >= 0) marketLibrary[existingIndex] = exportedPackage;
   else marketLibrary.push(exportedPackage);
+  const catalogIndex = marketCatalog.findIndex((pkg) => String(pkg.id) === packageId);
+  if (catalogIndex >= 0) marketCatalog[catalogIndex] = exportedPackage;
+  else marketCatalog.push(exportedPackage);
 
   await fulfillJson(route, {
     status: 'exported',
@@ -1826,6 +1892,287 @@ async function marketExportRoute(route: Route, options: NullHubFixtureOptions, m
     file: `/tmp/nullhub/spaces/${space}/packages/${packageId}.json`,
     download_url: `/api/market/library/${packageId}.json?space=${space}`,
     package: exportedPackage,
+  }, 201);
+}
+
+function fixtureSourceTag(packageId: string, packageVersion: string, kind: string, id: string) {
+  return `market://package/${packageId}@${packageVersion}#${kind}:${id}`;
+}
+
+function upsertFixturePackage(target: Record<string, unknown>[], pkg: Record<string, unknown>) {
+  const packageId = fixtureString(pkg.id);
+  const existingIndex = target.findIndex((entry) => fixtureString(entry.id) === packageId);
+  if (existingIndex >= 0) target[existingIndex] = pkg;
+  else target.push(pkg);
+}
+
+function fixturePackageById(packages: Record<string, unknown>[], packageId: string) {
+  return packages.find((pkg) => fixtureString(pkg.id) === packageId) || null;
+}
+
+function installMultiplicationDemoFixture(input: {
+  space: string;
+  packageId: string;
+  packageVersion: string;
+  orders: Record<string, unknown>[];
+  events: Record<string, unknown>[];
+  approvals: Record<string, unknown>[];
+  nowMs: number;
+}) {
+  const orderId = 'multiplication-demo-loop';
+  let order = input.orders.find((entry) => fixtureString(entry.id) === orderId && fixtureString(entry.space_id) === input.space);
+  if (!order) {
+    order = {
+      id: orderId,
+      space_id: input.space,
+      title: 'Multiplication Demo Loop',
+      summary: 'Multiply fixture inputs and attach Work evidence.',
+      kind: 'trigger',
+      goal: 'multiplication-demo-installed',
+      status: 'active',
+      schedule: 'event:demo.multiply.requested',
+      signal: 'demo.multiply.requested',
+      tier: 'T1',
+      exec_count: 0,
+      doc_path: `orders/${orderId}.md`,
+      content: JSON.stringify({
+        trigger: {
+          event_type: 'demo.multiply.requested',
+          source: 'fixture',
+          subject_type: 'demo',
+        },
+        tier: 'T1',
+        action: {
+          type: 'run_agent',
+          target: 'Athena',
+          instructions: 'Multiply 6 by 7 using the fake LLM fixture and attach the result as Work evidence.',
+        },
+        safety: { required_safe_executions: 1 },
+      }),
+      tags: [
+        `package:${input.packageId}`,
+        fixtureSourceTag(input.packageId, input.packageVersion, 'order', orderId),
+      ],
+      created_at_ms: input.nowMs,
+      updated_at_ms: input.nowMs,
+    };
+    input.orders.unshift(order);
+  }
+
+  const packageEvent = appendFixtureEvent(input.events, {
+    space_id: input.space,
+    type: 'package.installed',
+    source: 'nullhub',
+    subject_type: 'package',
+    subject_id: input.packageId,
+    title: 'Package installed',
+    summary: 'Multiplication Demo Kit installed into the selected Space.',
+    severity: 'success',
+    created_at_ms: input.nowMs,
+    payload: {
+      package_id: input.packageId,
+      source_tag: fixtureSourceTag(input.packageId, input.packageVersion, 'package', input.packageId),
+    },
+  });
+
+  const triggerEvent = appendFixtureEvent(input.events, {
+    space_id: input.space,
+    type: 'demo.multiply.requested',
+    source: 'fixture',
+    subject_type: 'demo',
+    subject_id: 'multiplication-demo-6x7',
+    title: 'Multiplication demo requested',
+    summary: 'Fixture asks the installed Loop to calculate 6 x 7.',
+    severity: 'info',
+    created_at_ms: input.nowMs + 1,
+    payload: {
+      package_id: input.packageId,
+      left: 6,
+      right: 7,
+      expected: 42,
+    },
+  });
+
+  const targetRef = `order:${orderId}:event:${triggerEvent.id}`;
+  let approval = input.approvals.find((entry) => fixtureString(entry.target_ref) === targetRef);
+  if (!approval) {
+    approval = {
+      id: nextFixtureApprovalId(input.approvals),
+      space_id: input.space,
+      kind: 'question',
+      queue: 'dispatcher',
+      target_ref: targetRef,
+      title: 'Approve first Multiplication Demo run',
+      summary: 'Probation requires approval before the installed multiplication Loop can move to automatic dispatch.',
+      status: 'pending',
+      feedback: '',
+      created_at_ms: input.nowMs + 2,
+      decided_at_ms: 0,
+      dispatch: {
+        order_id: orderId,
+        trigger_event_id: triggerEvent.id,
+        tier: 'T1',
+        action: 'run_agent',
+        run_ref: 'run-multiplication-demo-6x7',
+        task_id: 'task-multiplication-demo-6x7',
+        title: 'Multiplication demo run: 6 x 7',
+        instance: 'Athena',
+        now_ms: input.nowMs + 3,
+      },
+      tags: [
+        `package:${input.packageId}`,
+        fixtureSourceTag(input.packageId, input.packageVersion, 'approval', 'first-run'),
+      ],
+    };
+    input.approvals.unshift(approval);
+  }
+
+  appendFixtureEvent(input.events, {
+    space_id: input.space,
+    type: 'dispatcher.approval_requested',
+    source: 'nullhub.dispatcher',
+    subject_type: 'order',
+    subject_id: orderId,
+    title: 'Dispatcher approval requested: Multiplication Demo Loop',
+    summary: `Installed package ${input.packageId} queued approval ${approval.id} before the first probationary run.`,
+    severity: 'warning',
+    created_at_ms: input.nowMs + 2,
+    payload: {
+      order_id: orderId,
+      package_event_id: packageEvent.id,
+      trigger_event_id: triggerEvent.id,
+      approval_id: approval.id,
+      package_id: input.packageId,
+    },
+  });
+
+  refreshFixtureOrderSafety(order, input.events);
+  return { order, triggerEvent, approval };
+}
+
+async function marketInstallRoute(
+  route: Route,
+  options: NullHubFixtureOptions,
+  marketLibrary: Record<string, unknown>[],
+  marketCatalog: Record<string, unknown>[],
+  orders: Record<string, unknown>[],
+  events: Record<string, unknown>[],
+  approvals: Record<string, unknown>[],
+) {
+  recordRequest(route, options);
+  if (options.marketInstallStatus && options.marketInstallStatus >= 400) {
+    await fulfillJson(route, { error: 'Package install failed.' }, options.marketInstallStatus);
+    return;
+  }
+  if (route.request().method() !== 'POST') {
+    await fulfillJson(route, { error: 'method not allowed' }, 405);
+    return;
+  }
+
+  const url = new URL(route.request().url());
+  const space = url.searchParams.get('space');
+  if (!space) {
+    await fulfillJson(route, { error: 'space query is required' }, 400);
+    return;
+  }
+
+  const payload = route.request().postDataJSON() as Record<string, unknown> | null;
+  const inlineManifest = fixtureRecord(payload?.manifest);
+  const packageId = fixtureString(
+    inlineManifest.id || payload?.package_id || payload?.packageId || payload?.id || payload?.package,
+  );
+  if (!packageId) {
+    await fulfillJson(route, { error: 'package_id or manifest is required' }, 400);
+    return;
+  }
+
+  const sourcePackage =
+    Object.keys(inlineManifest).length > 0
+      ? inlineManifest
+      : fixturePackageById(marketCatalog, packageId) || fixturePackageById(marketLibrary, packageId);
+  if (!sourcePackage) {
+    await fulfillJson(route, { error: 'package not found' }, 404);
+    return;
+  }
+
+  const packageVersion = fixtureString(sourcePackage.version) || '1.0.0';
+  const installedPackage = {
+    ...cloneFixture(sourcePackage),
+    install: {
+      space,
+      status: 'installed',
+      installed_at_ms: Date.now(),
+      source_tag: fixtureSourceTag(packageId, packageVersion, 'package', packageId),
+    },
+    tags: [
+      `space:${space}`,
+      `package:${packageId}`,
+      fixtureSourceTag(packageId, packageVersion, 'package', packageId),
+    ],
+  };
+  upsertFixturePackage(marketLibrary, installedPackage);
+
+  const applied = [
+    {
+      kind: 'package',
+      id: packageId,
+      source_tag: fixtureSourceTag(packageId, packageVersion, 'package', packageId),
+    },
+  ];
+
+  const config = fixtureRecord(sourcePackage.config);
+  let probation: Record<string, unknown> | null = null;
+  if (fixtureString(config.fixture) === 'multiplication-demo' || packageId === 'builtin.multiplication-demo') {
+    const installed = installMultiplicationDemoFixture({
+      space,
+      packageId,
+      packageVersion,
+      orders,
+      events,
+      approvals,
+      nowMs: Date.now(),
+    });
+    applied.push({
+      kind: 'order',
+      id: fixtureString(installed.order.id),
+      source_tag: fixtureSourceTag(packageId, packageVersion, 'order', fixtureString(installed.order.id)),
+    });
+    applied.push({
+      kind: 'approval',
+      id: String(installed.approval.id),
+      source_tag: fixtureSourceTag(packageId, packageVersion, 'approval', 'first-run'),
+    });
+    probation = {
+      status: 'approval_required',
+      approval_id: installed.approval.id,
+      order_id: installed.order.id,
+      trigger_event_id: installed.triggerEvent.id,
+    };
+  } else {
+    appendFixtureEvent(events, {
+      space_id: space,
+      type: 'package.installed',
+      source: 'nullhub',
+      subject_type: 'package',
+      subject_id: packageId,
+      title: 'Package installed',
+      summary: `${fixtureString(sourcePackage.name) || packageId} installed into the selected Space.`,
+      severity: 'success',
+      created_at_ms: Date.now(),
+      payload: {
+        package_id: packageId,
+        source_tag: fixtureSourceTag(packageId, packageVersion, 'package', packageId),
+      },
+    });
+  }
+
+  await fulfillJson(route, {
+    status: 'installed',
+    space_id: space,
+    package_id: packageId,
+    package: installedPackage,
+    applied,
+    probation,
   }, 201);
 }
 
@@ -2237,6 +2584,7 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   const tasks = options.nullticketsTasks || [];
   const artifacts = (options.nullticketsArtifacts || []).map((artifact) => ({ ...artifact }));
   const runEvents = (options.nullticketsRunEvents || []).map((event) => ({ ...event }));
+  const marketCatalog = packageListFromFixture(options.marketCatalog, fixtureMarketCatalog);
   const marketLibrary = packageListFromFixture(options.marketInstalled, fixtureMarketInstalled);
   const approvals = (options.approvals || fixtureApprovals).map((approval) => ({ ...approval }));
 
@@ -2258,12 +2606,18 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/api/mission-control/replays', (route) => fulfillJson(route, missionControlReplays));
   await page.route('**/api/components', (route) => fulfillJson(route, fixtureComponents));
   await page.route('**/nullhub-api/components', (route) => fulfillJson(route, fixtureComponents));
-  await page.route('**/api/market/catalog**', (route) => marketCatalogRoute(route, options));
-  await page.route('**/nullhub-api/market/catalog**', (route) => marketCatalogRoute(route, options));
+  await page.route('**/api/market/catalog**', (route) => marketCatalogRoute(route, options, marketCatalog));
+  await page.route('**/nullhub-api/market/catalog**', (route) => marketCatalogRoute(route, options, marketCatalog));
   await page.route('**/api/market/installed**', (route) => marketInstalledRoute(route, options, marketLibrary));
   await page.route('**/nullhub-api/market/installed**', (route) => marketInstalledRoute(route, options, marketLibrary));
-  await page.route('**/api/market/export**', (route) => marketExportRoute(route, options, marketLibrary));
-  await page.route('**/nullhub-api/market/export**', (route) => marketExportRoute(route, options, marketLibrary));
+  await page.route(/\/api\/market\/install(?:\?.*)?$/, (route) =>
+    marketInstallRoute(route, options, marketLibrary, marketCatalog, orders, events, approvals),
+  );
+  await page.route(/\/nullhub-api\/market\/install(?:\?.*)?$/, (route) =>
+    marketInstallRoute(route, options, marketLibrary, marketCatalog, orders, events, approvals),
+  );
+  await page.route('**/api/market/export**', (route) => marketExportRoute(route, options, marketLibrary, marketCatalog));
+  await page.route('**/nullhub-api/market/export**', (route) => marketExportRoute(route, options, marketLibrary, marketCatalog));
   await page.route('**/api/settings', (route) => fulfillJson(route, fixtureSettings));
   await page.route('**/nullhub-api/settings', (route) => fulfillJson(route, fixtureSettings));
   await page.route('**/api/service/status', (route) => fulfillJson(route, fixtureServiceStatus));

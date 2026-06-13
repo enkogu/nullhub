@@ -150,6 +150,50 @@ assert_json_field() {
     fi
 }
 
+assert_json_request_field() {
+    local description="$1"
+    local expected_status="$2"
+    local method="$3"
+    local url="$4"
+    local field="$5"
+    local expected="$6"
+    local body="${7:-}"
+    local response_file="$TEST_HOME/response.json"
+    local actual_status=""
+    local curl_exit=0
+    local actual=""
+
+    fail_if_server_exited "$description (before request)"
+    set +e
+    if [ -n "$body" ]; then
+        actual_status=$(curl -s -o "$response_file" -w "%{http_code}" -X "$method" -H "Content-Type: application/json" -d "$body" "$url")
+    else
+        actual_status=$(curl -s -o "$response_file" -w "%{http_code}" -X "$method" "$url")
+    fi
+    curl_exit=$?
+    set -e
+    fail_if_server_exited "$description (after request)"
+
+    if [ "$curl_exit" -ne 0 ]; then
+        actual="CURL_ERROR($curl_exit)"
+    else
+        actual=$(python3 -c "import sys,json; print(json.load(sys.stdin)$field)" < "$response_file" 2>/dev/null || echo "PARSE_ERROR")
+    fi
+
+    if [ "$actual_status" = "$expected_status" ] && [ "$actual" = "$expected" ]; then
+        echo -e "${GREEN}PASS${NC}: $description (HTTP $actual_status, $field = $actual)"
+        PASSED=$((PASSED + 1))
+    else
+        echo -e "${RED}FAIL${NC}: $description (expected HTTP $expected_status and $field = $expected, got HTTP ${actual_status:-000} and $actual)"
+        if [ -s "$response_file" ]; then
+            echo "--- response body ---"
+            sed -n '1,40p' "$response_file"
+            echo "--- end response body ---"
+        fi
+        FAILED=$((FAILED + 1))
+    fi
+}
+
 echo ""
 echo "=== Health ==="
 assert_status "GET /health returns 200" "200" GET "$BASE/health"
@@ -185,6 +229,64 @@ assert_status "PUT /api/settings returns 200" "200" PUT "$BASE/api/settings" "{\
 echo ""
 echo "=== Service API ==="
 assert_status "GET /api/service/status returns 200" "200" GET "$BASE/api/service/status"
+
+echo ""
+echo "=== Market install/export round trip ==="
+assert_json_request_field "POST /api/spaces creates ops Space" "201" POST "$BASE/api/spaces" "['id']" "ops" '{"id":"ops","name":"Operations","kind":"workspace","stage":"active"}'
+assert_json_request_field "POST /api/spaces creates fresh Space" "201" POST "$BASE/api/spaces" "['id']" "fresh" '{"id":"fresh","name":"Fresh","kind":"workspace","stage":"active"}'
+
+MULTIPLICATION_INSTALL_BODY=$(cat <<'JSON'
+{
+  "manifest": {
+    "id": "test.multiplication-demo",
+    "name": "Multiplication Demo Kit",
+    "version": "1.0.0",
+    "scale": "kit",
+    "requires": [
+      { "kind": "secret_ref", "name": "fake_llm", "secret_ref": "providers.fake_llm.api_key" }
+    ],
+    "contributes": [
+      { "kind": "order_template", "name": "Multiplication Demo Loop" }
+    ],
+    "config": {
+      "secrets": [
+        { "name": "fake_llm", "secret_ref": "providers.fake_llm.api_key" }
+      ]
+    },
+    "seeds": [
+      {
+        "kind": "order",
+        "id": "multiplication-demo-loop",
+        "title": "Multiplication Demo Loop",
+        "summary": "Multiply fixture inputs and attach Work evidence.",
+        "order_kind": "loop",
+        "status": "active",
+        "schedule": "manual",
+        "content": "Run the fake-provider multiplication demo and record 6 x 7 = 42."
+      }
+    ],
+    "extends": [],
+    "charter": {
+      "mission": "Exercise install, package tagging, export, and import with fake providers only."
+    }
+  }
+}
+JSON
+)
+
+assert_json_request_field "POST /api/market/install applies multiplication kit" "201" POST "$BASE/api/market/install?space=ops" "['status']" "installed" "$MULTIPLICATION_INSTALL_BODY"
+assert_json_field "Installed package source tag is traceable" "$BASE/api/market/installed?space=ops" "['packages'][0]['id']" "test.multiplication-demo"
+assert_json_field "Installed order is visible in Orders" "$BASE/api/orders?space=ops" "['orders'][0]['title']" "Multiplication Demo Loop"
+
+EXPORT_BODY='{"id":"export.ops.multiplication-blueprint","scope":"space","name":"Multiplication Space Blueprint","summary":"Recreates the multiplication demo Space."}'
+assert_json_request_field "POST /api/market/export packs ops Space as Blueprint" "201" POST "$BASE/api/market/export?space=ops" "['package_id']" "export.ops.multiplication-blueprint" "$EXPORT_BODY"
+assert_status "GET exported Blueprint manifest returns 200" "200" GET "$BASE/api/market/library/export.ops.multiplication-blueprint.json?space=ops"
+
+EXPORTED_BLUEPRINT=$(curl -s "$BASE/api/market/library/export.ops.multiplication-blueprint.json?space=ops")
+BLUEPRINT_INSTALL_BODY=$(printf '%s' "$EXPORTED_BLUEPRINT" | python3 -c 'import json,sys; print(json.dumps({"manifest": json.load(sys.stdin)}))')
+assert_json_request_field "POST exported Blueprint installs into fresh Space" "201" POST "$BASE/api/market/install?space=fresh" "['status']" "installed" "$BLUEPRINT_INSTALL_BODY"
+assert_json_field "Fresh Space library contains exported Blueprint" "$BASE/api/market/installed?space=fresh" "['packages'][0]['id']" "export.ops.multiplication-blueprint"
+assert_json_field "Fresh Space contains recreated order" "$BASE/api/orders?space=fresh" "['orders'][0]['title']" "Multiplication Demo Loop"
 
 echo ""
 echo "=== Unknown routes ==="
