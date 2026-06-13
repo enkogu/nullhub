@@ -1959,7 +1959,9 @@ fn isSecretishKey(key: []const u8) bool {
         containsAsciiIgnoreCase(key, "api_key") or
         containsAsciiIgnoreCase(key, "apikey") or
         containsAsciiIgnoreCase(key, "password") or
-        containsAsciiIgnoreCase(key, "private_key");
+        containsAsciiIgnoreCase(key, "private_key") or
+        containsNormalizedAsciiIgnoreCase(key, "apikey") or
+        containsNormalizedAsciiIgnoreCase(key, "privatekey");
 }
 
 fn containsAsciiIgnoreCase(haystack: []const u8, needle: []const u8) bool {
@@ -1970,6 +1972,34 @@ fn containsAsciiIgnoreCase(haystack: []const u8, needle: []const u8) bool {
         if (std.ascii.eqlIgnoreCase(haystack[idx .. idx + needle.len], needle)) return true;
     }
     return false;
+}
+
+fn containsNormalizedAsciiIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    var start: usize = 0;
+    while (start < haystack.len) : (start += 1) {
+        if (isSecretKeySeparator(haystack[start])) continue;
+        var haystack_idx = start;
+        var needle_idx: usize = 0;
+        while (haystack_idx < haystack.len and needle_idx < needle.len) : (haystack_idx += 1) {
+            const byte = haystack[haystack_idx];
+            if (isSecretKeySeparator(byte)) continue;
+            if (std.ascii.toLower(byte) != std.ascii.toLower(needle[needle_idx])) break;
+            needle_idx += 1;
+        }
+        if (needle_idx == needle.len) return true;
+    }
+    return false;
+}
+
+fn isSecretKeySeparator(byte: u8) bool {
+    return byte == '_' or byte == '-' or byte == ' ' or byte == '.';
+}
+
+fn isPemPrivateKeyLiteral(raw: []const u8) bool {
+    const trimmed = std.mem.trim(u8, raw, " \t\r\n");
+    return containsAsciiIgnoreCase(trimmed, "-----BEGIN ") and
+        containsAsciiIgnoreCase(trimmed, "PRIVATE KEY-----");
 }
 
 fn scaleString(scale: Scale) []const u8 {
@@ -2098,6 +2128,9 @@ fn validateNoLiteralSecrets(value: std.json.Value) ValidationError!void {
         },
         .array => |array| {
             for (array.items) |item| try validateNoLiteralSecrets(item);
+        },
+        .string => |raw| {
+            if (isPemPrivateKeyLiteral(raw)) return error.SecretValueNotAllowed;
         },
         else => {},
     }
@@ -2333,6 +2366,89 @@ fn writeManifest(dir: std_compat.fs.Dir, name: []const u8, bytes: []const u8) !v
     try file.writeAll(bytes);
 }
 
+fn manifestWithChannelConfigLiteral(allocator: std.mem.Allocator, package_id: []const u8, key: []const u8, value: []const u8) ![]u8 {
+    var buf = std.array_list.Managed(u8).init(allocator);
+    errdefer buf.deinit();
+
+    try buf.appendSlice("{\"id\":\"");
+    try appendEscaped(&buf, package_id);
+    try buf.appendSlice("\",\"name\":\"");
+    try appendEscaped(&buf, package_id);
+    try buf.appendSlice("\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[{\"kind\":\"channel\",\"channel_type\":\"telegram\",\"account\":\"@ops\",\"config\":{\"");
+    try appendEscaped(&buf, key);
+    try buf.appendSlice("\":\"");
+    try appendEscaped(&buf, value);
+    try buf.appendSlice("\"}}],\"extends\":[],\"charter\":{}}");
+    return buf.toOwnedSlice();
+}
+
+fn expectInlineInstallRejectsLiteralConfig(allocator: std.mem.Allocator, package_id: []const u8, key: []const u8, value: []const u8) !void {
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    const manifest = try manifestWithChannelConfigLiteral(allocator, package_id, key, value);
+    defer allocator.free(manifest);
+    const body = try std.fmt.allocPrint(allocator, "{{\"manifest\":{s}}}", .{manifest});
+    defer allocator.free(body);
+
+    const resp = handleInstall(
+        allocator,
+        fixture.paths,
+        &state,
+        "/api/market/install?space=ops",
+        body,
+        6400,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    try std.testing.expectEqualStrings("{\"error\":\"invalid package manifest\"}", resp.body);
+    try std.testing.expectEqual(@as(usize, 0), state.savedChannels().len);
+    try std.testing.expectEqual(@as(usize, 0), state.eventsList().len);
+
+    const manifest_path = try fixture.paths.spacePackageLibraryManifest(allocator, "ops", package_id);
+    defer allocator.free(manifest_path);
+    try std.testing.expectError(error.FileNotFound, std_compat.fs.readFileAbsolute(allocator, manifest_path, max_manifest_bytes));
+}
+
+fn expectLibraryInstallRejectsLiteralConfig(allocator: std.mem.Allocator, package_id: []const u8, key: []const u8, value: []const u8) !void {
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    const library_dir = try fixture.paths.spacePackageLibraryDir(allocator, "ops");
+    defer allocator.free(library_dir);
+    try std_compat.fs.makePathAbsolute(library_dir);
+    var library = try std_compat.fs.openDirAbsolute(library_dir, .{});
+    defer library.close();
+
+    const manifest = try manifestWithChannelConfigLiteral(allocator, package_id, key, value);
+    defer allocator.free(manifest);
+    const manifest_filename = try std.fmt.allocPrint(allocator, "{s}.json", .{package_id});
+    defer allocator.free(manifest_filename);
+    try writeManifest(library, manifest_filename, manifest);
+
+    const body = try std.fmt.allocPrint(allocator, "{{\"package_id\":\"{s}\",\"source\":\"library\"}}", .{package_id});
+    defer allocator.free(body);
+    const resp = handleInstall(
+        allocator,
+        fixture.paths,
+        &state,
+        "/api/market/install?space=ops",
+        body,
+        6500,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    try std.testing.expectEqualStrings("{\"error\":\"invalid package manifest\"}", resp.body);
+    try std.testing.expectEqual(@as(usize, 0), state.savedChannels().len);
+    try std.testing.expectEqual(@as(usize, 0), state.eventsList().len);
+}
+
 test "market manifest validates all package scales" {
     const allocator = std.testing.allocator;
     try validateManifestJson(allocator, manifestForScale("component"));
@@ -2394,6 +2510,31 @@ test "market manifest rejects literal secret-like install keys" {
     try std.testing.expectError(error.SecretValueNotAllowed, validateManifestJson(allocator, "{\"id\":\"example.provider-literal\",\"name\":\"Provider literal\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[{\"kind\":\"provider\",\"provider\":\"openrouter\",\"api_key\":\"sk-literal\"}],\"extends\":[],\"charter\":{}}"));
     try std.testing.expectError(error.SecretValueNotAllowed, validateManifestJson(allocator, "{\"id\":\"example.channel-literal\",\"name\":\"Channel literal\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[{\"kind\":\"channel\",\"channel_type\":\"telegram\",\"config\":{\"bot_token\":\"literal-token\"}}],\"extends\":[],\"charter\":{}}"));
     try validateManifestJson(allocator, "{\"id\":\"example.channel-ref\",\"name\":\"Channel ref\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[{\"kind\":\"channel\",\"channel_type\":\"telegram\",\"config\":{\"bot_token\":{\"secret_ref\":\"channels.telegram.ops.bot_token\"}}}],\"extends\":[],\"charter\":{}}");
+}
+
+test "market manifest rejects private key variants and pem-looking literals" {
+    const allocator = std.testing.allocator;
+    const pem_private_key =
+        "-----BEGIN PRIVATE KEY-----\n" ++
+        "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n" ++
+        "-----END PRIVATE KEY-----";
+    const cases = [_]struct {
+        id: []const u8,
+        key: []const u8,
+        value: []const u8,
+    }{
+        .{ .id = "example.private-key-underscore", .key = "private_key", .value = "literal-private-key" },
+        .{ .id = "example.private-key-hyphen", .key = "private-key", .value = "literal-private-key" },
+        .{ .id = "example.private-key-camel", .key = "privateKey", .value = "literal-private-key" },
+        .{ .id = "example.private-key-space", .key = "private key", .value = "literal-private-key" },
+        .{ .id = "example.pem-content", .key = "notes", .value = pem_private_key },
+    };
+
+    for (cases) |item| {
+        const manifest = try manifestWithChannelConfigLiteral(allocator, item.id, item.key, item.value);
+        defer allocator.free(manifest);
+        try std.testing.expectError(error.SecretValueNotAllowed, validateManifestJson(allocator, manifest));
+    }
 }
 
 test "market catalog handler fails when builtin catalog directory is missing" {
@@ -2734,6 +2875,29 @@ test "market install rejects literal channel bot token before persisting" {
     try std.testing.expectError(error.FileNotFound, std_compat.fs.readFileAbsolute(allocator, manifest_path, max_manifest_bytes));
 }
 
+test "market install rejects inline literal token password private key and pem values before persisting" {
+    const allocator = std.testing.allocator;
+    const pem_private_key =
+        "-----BEGIN PRIVATE KEY-----\n" ++
+        "MIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n" ++
+        "-----END PRIVATE KEY-----";
+    const cases = [_]struct {
+        id: []const u8,
+        key: []const u8,
+        value: []const u8,
+    }{
+        .{ .id = "test.inline-literal-token", .key = "token", .value = "literal-inline-token" },
+        .{ .id = "test.inline-literal-password", .key = "password", .value = "literal-inline-password" },
+        .{ .id = "test.inline-literal-private-key", .key = "private-key", .value = "literal-inline-private-key" },
+        .{ .id = "test.inline-literal-private-key-camel", .key = "privateKey", .value = "literal-inline-private-key" },
+        .{ .id = "test.inline-literal-pem", .key = "notes", .value = pem_private_key },
+    };
+
+    for (cases) |item| {
+        try expectInlineInstallRejectsLiteralConfig(allocator, item.id, item.key, item.value);
+    }
+}
+
 test "market install rejects literal secrets from library source before applying" {
     const allocator = std.testing.allocator;
     var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
@@ -2784,6 +2948,29 @@ test "market install rejects literal secrets from library source before applying
     try std.testing.expectEqualStrings("{\"error\":\"invalid package manifest\"}", resp.body);
     try std.testing.expectEqual(@as(usize, 0), state.savedChannels().len);
     try std.testing.expectEqual(@as(usize, 0), state.eventsList().len);
+}
+
+test "market install rejects library literal token password private key and pem values before applying" {
+    const allocator = std.testing.allocator;
+    const pem_private_key =
+        "-----BEGIN OPENSSH PRIVATE KEY-----\n" ++
+        "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAA\n" ++
+        "-----END OPENSSH PRIVATE KEY-----";
+    const cases = [_]struct {
+        id: []const u8,
+        key: []const u8,
+        value: []const u8,
+    }{
+        .{ .id = "test.library-literal-token", .key = "token", .value = "literal-library-token" },
+        .{ .id = "test.library-literal-password", .key = "password", .value = "literal-library-password" },
+        .{ .id = "test.library-literal-private-key", .key = "private-key", .value = "literal-library-private-key" },
+        .{ .id = "test.library-literal-private-key-camel", .key = "privateKey", .value = "literal-library-private-key" },
+        .{ .id = "test.library-literal-pem", .key = "description", .value = pem_private_key },
+    };
+
+    for (cases) |item| {
+        try expectLibraryInstallRejectsLiteralConfig(allocator, item.id, item.key, item.value);
+    }
 }
 
 test "market install dry run reports blast radius and required secrets without mutation" {
