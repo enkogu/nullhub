@@ -274,8 +274,8 @@ MULTIPLICATION_INSTALL_BODY=$(cat <<'JSON'
 JSON
 )
 
-assert_json_request_field "POST /api/market/install applies multiplication kit" "201" POST "$BASE/api/market/install?space=ops" "['status']" "installed" "$MULTIPLICATION_INSTALL_BODY"
-assert_json_field "Installed package source tag is traceable" "$BASE/api/market/installed?space=ops" "['packages'][0]['id']" "test.multiplication-demo"
+assert_json_request_field "POST /api/market/install applies multiplication kit with source tag" "201" POST "$BASE/api/market/install?space=ops" "['source']['source_tag']" "market://package/test.multiplication-demo@1.0.0#package:test.multiplication-demo" "$MULTIPLICATION_INSTALL_BODY"
+assert_json_field "Installed package appears in ops library" "$BASE/api/market/installed?space=ops" "['packages'][0]['id']" "test.multiplication-demo"
 assert_json_field "Installed order is visible in Orders" "$BASE/api/orders?space=ops" "['orders'][0]['title']" "Multiplication Demo Loop"
 
 EXPORT_BODY='{"id":"export.ops.multiplication-blueprint","scope":"space","name":"Multiplication Space Blueprint","summary":"Recreates the multiplication demo Space."}'

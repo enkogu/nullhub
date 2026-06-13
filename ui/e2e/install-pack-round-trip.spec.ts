@@ -54,6 +54,14 @@ async function fetchOrder(page: Page, id: string, space = 'ops'): Promise<Fixtur
   );
 }
 
+async function fetchJson(page: Page, path: string): Promise<FixtureRecord> {
+  return page.evaluate(async (requestPath) => {
+    const response = await fetch(requestPath);
+    if (!response.ok) throw new Error(`fetch failed ${response.status}: ${await response.text()}`);
+    return response.json();
+  }, path);
+}
+
 const runningFixtureStatus = {
   ok: true,
   version: 'playwright-fixture',
@@ -247,6 +255,73 @@ test('E2E-4/E2E-7 installs multiplication kit, clears probation, packs a bluepri
     space_id: 'multiplier-lab',
     package_id: 'export.ops.multiplication-blueprint',
   });
+  expect(blueprintInstall.applied).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: 'package',
+        id: 'export.ops.multiplication-blueprint',
+        source_tag:
+          'market://package/export.ops.multiplication-blueprint@1.0.0#package:export.ops.multiplication-blueprint',
+      }),
+      expect.objectContaining({
+        kind: 'order',
+        id: 'multiplication-demo-loop',
+        source_tag: 'market://package/export.ops.multiplication-blueprint@1.0.0#order:multiplication-demo-loop',
+      }),
+    ]),
+  );
+
+  const recreatedOrder = await fetchOrder(page, 'multiplication-demo-loop', 'multiplier-lab');
+  expect(recreatedOrder).toMatchObject({
+    id: 'multiplication-demo-loop',
+    space_id: 'multiplier-lab',
+    title: 'Multiplication Demo Loop',
+    summary: 'Multiply fixture inputs and attach Work evidence.',
+    kind: 'trigger',
+    status: 'active',
+    schedule: 'event:demo.multiply.requested',
+  });
+  expect(recreatedOrder.tags).toEqual(
+    expect.arrayContaining([
+      'package:export.ops.multiplication-blueprint',
+      'market://package/export.ops.multiplication-blueprint@1.0.0#order:multiplication-demo-loop',
+    ]),
+  );
+
+  const multiplierLibrary = await fetchJson(page, '/api/market/installed?space=multiplier-lab');
+  const multiplierPackageIds = (multiplierLibrary.packages as FixtureRecord[]).map((pkg) => String(pkg.id));
+  expect(multiplierPackageIds).toContain('export.ops.multiplication-blueprint');
+  expect(multiplierPackageIds).not.toContain('builtin.multiplication-demo');
+
+  const multiplierEvents = await fetchJson(page, '/api/events?space=multiplier-lab&type=package.installed&limit=20');
+  expect(multiplierEvents.events).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        space_id: 'multiplier-lab',
+        type: 'package.installed',
+        subject_id: 'export.ops.multiplication-blueprint',
+        payload: expect.objectContaining({
+          source_tag:
+            'market://package/export.ops.multiplication-blueprint@1.0.0#package:export.ops.multiplication-blueprint',
+        }),
+      }),
+    ]),
+  );
+
+  await page.goto('/orders?space=multiplier-lab');
+  await expect(page.getByRole('heading', { name: 'Orders', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Multiplication Demo Loop' })).toBeVisible();
+  await expectNonBlankMain(page, 'Orders for recreated blueprint Space');
+
+  await page.goto('/market?space=multiplier-lab');
+  await page.getByRole('tab', { name: 'Installed' }).click();
+  const recreatedPackageCard = page.locator('[data-slot="library-package-card"]').filter({
+    hasText: 'Multiplication Space Blueprint',
+  });
+  await expect(recreatedPackageCard).toBeVisible();
+  await expect(recreatedPackageCard.getByText('export.ops.multiplication-blueprint')).toBeVisible();
+  await expect(page.locator('[data-slot="library-package-card"]').filter({ hasText: 'builtin.multiplication-demo' })).toHaveCount(0);
+  await expectNonBlankMain(page, 'Installed packages for recreated blueprint Space');
 
   await page.goto('/?space=multiplier-lab');
   await expect(page.getByRole('heading', { name: 'Home', level: 1 })).toBeVisible();

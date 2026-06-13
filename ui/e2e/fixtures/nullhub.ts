@@ -1,6 +1,7 @@
 import type { Page, Route } from '@playwright/test';
 
 type JsonBody = Record<string, unknown> | unknown[];
+type MarketLibraries = Record<string, Record<string, unknown>[]>;
 type NullHubFixtureOptions = {
   requests?: string[];
   nullticketsActions?: string[];
@@ -1802,6 +1803,45 @@ function packageListFromFixture(body: JsonBody | undefined, fallback: JsonBody):
   return Array.isArray(packages) ? packages.map((pkg) => ({ ...(pkg as Record<string, unknown>) })) : [];
 }
 
+function marketLibraryForSpace(marketLibraries: MarketLibraries, space: string): Record<string, unknown>[] {
+  marketLibraries[space] ||= [];
+  return marketLibraries[space];
+}
+
+function fixtureSlug(value: string): string {
+  return (
+    fixtureString(value)
+      .toLowerCase()
+      .replace(/[^a-z0-9._-]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'seed'
+  );
+}
+
+function exportedSeedsForSpace(space: string, orders: Record<string, unknown>[]): Record<string, unknown>[] {
+  const orderSeeds = orders
+    .filter((order) => fixtureString(order.space_id ?? order.spaceId) === space)
+    .map((order) => {
+      const id = fixtureString(order.id) || fixtureSlug(fixtureString(order.title));
+      return {
+        kind: 'order',
+        id,
+        title: fixtureString(order.title) || id,
+        summary: fixtureString(order.summary),
+        order_kind: fixtureString(order.kind) || 'mandate',
+        status: fixtureString(order.status) || 'draft',
+        schedule: fixtureString(order.schedule),
+        signal: fixtureString(order.signal),
+        tier: fixtureString(order.tier),
+        exec_count: fixtureNumber(order.exec_count ?? order.execCount, 0),
+        doc_path: fixtureString(order.doc_path ?? order.docPath) || `orders/${id}.md`,
+        content: fixtureString(order.content),
+      };
+    });
+
+  if (orderSeeds.length > 0) return orderSeeds;
+  return [{ kind: 'space', id: space, name: space }];
+}
+
 function exportedScaleForScope(scope: string): string {
   if (scope === 'selection') return 'kit';
   if (scope === 'single') return 'component';
@@ -1814,7 +1854,7 @@ function exportedNameForScope(scope: string): string {
   return 'Exported Space Blueprint';
 }
 
-async function marketInstalledRoute(route: Route, options: NullHubFixtureOptions, marketLibrary: Record<string, unknown>[]) {
+async function marketInstalledRoute(route: Route, options: NullHubFixtureOptions, marketLibraries: MarketLibraries) {
   recordRequest(route, options);
   if (options.marketInstalledStatus && options.marketInstalledStatus >= 400) {
     await fulfillJson(route, { error: 'Installed package library unavailable.' }, options.marketInstalledStatus);
@@ -1825,14 +1865,15 @@ async function marketInstalledRoute(route: Route, options: NullHubFixtureOptions
     await fulfillJson(route, { error: 'space query is required' }, 400);
     return;
   }
-  await fulfillJson(route, { packages: marketLibrary });
+  await fulfillJson(route, { packages: marketLibraryForSpace(marketLibraries, url.searchParams.get('space') || '') });
 }
 
 async function marketExportRoute(
   route: Route,
   options: NullHubFixtureOptions,
-  marketLibrary: Record<string, unknown>[],
+  marketLibraries: MarketLibraries,
   marketCatalog: Record<string, unknown>[],
+  orders: Record<string, unknown>[],
 ) {
   recordRequest(route, options);
   if (options.marketExportStatus && options.marketExportStatus >= 400) {
@@ -1862,6 +1903,7 @@ async function marketExportRoute(
   const single = (payload?.single || {}) as Record<string, unknown>;
   const singlePackage = String(single.id || '');
   const extendsPackages = scope === 'selection' ? selectedPackages : scope === 'single' && singlePackage ? [singlePackage] : [];
+  const sourceLibrary = marketLibraryForSpace(marketLibraries, space);
   const exportedPackage = {
     id: packageId,
     name,
@@ -1871,7 +1913,7 @@ async function marketExportRoute(
     requires: [],
     contributes: [{ kind: 'package', name }],
     config: { export: { source_space: space, scope } },
-    seeds: scope === 'space' ? [{ kind: 'space', id: space, name: space }] : [],
+    seeds: scope === 'space' ? exportedSeedsForSpace(space, orders) : [],
     extends: extendsPackages,
     charter: {
       mission: `Exported package from ${space}.`,
@@ -1879,9 +1921,7 @@ async function marketExportRoute(
       metrics: ['package_exports'],
     },
   };
-  const existingIndex = marketLibrary.findIndex((pkg) => String(pkg.id) === packageId);
-  if (existingIndex >= 0) marketLibrary[existingIndex] = exportedPackage;
-  else marketLibrary.push(exportedPackage);
+  upsertFixturePackage(sourceLibrary, exportedPackage);
   const catalogIndex = marketCatalog.findIndex((pkg) => String(pkg.id) === packageId);
   if (catalogIndex >= 0) marketCatalog[catalogIndex] = exportedPackage;
   else marketCatalog.push(exportedPackage);
@@ -1908,6 +1948,81 @@ function upsertFixturePackage(target: Record<string, unknown>[], pkg: Record<str
 
 function fixturePackageById(packages: Record<string, unknown>[], packageId: string) {
   return packages.find((pkg) => fixtureString(pkg.id) === packageId) || null;
+}
+
+function fixturePackageByIdInLibraries(marketLibraries: MarketLibraries, packageId: string) {
+  for (const packages of Object.values(marketLibraries)) {
+    const found = fixturePackageById(packages, packageId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function seedId(seed: Record<string, unknown>, fallback: string): string {
+  return fixtureString(seed.id) || fixtureString(seed.slug) || fixtureSlug(fixtureString(seed.title ?? seed.name) || fallback);
+}
+
+function installPackageSeeds(input: {
+  space: string;
+  packageId: string;
+  packageVersion: string;
+  sourcePackage: Record<string, unknown>;
+  orders: Record<string, unknown>[];
+  nowMs: number;
+}) {
+  const seeds = Array.isArray(input.sourcePackage.seeds) ? (input.sourcePackage.seeds as Record<string, unknown>[]) : [];
+  const applied: Record<string, unknown>[] = [];
+
+  seeds.forEach((seed, index) => {
+    const kind = fixtureString(seed.kind);
+    if (!kind) return;
+
+    const id = seedId(seed, `${input.packageId}-${index + 1}`);
+    const sourceTag = fixtureSourceTag(input.packageId, input.packageVersion, kind === 'order_template' ? 'order' : kind, id);
+
+    if (kind === 'order' || kind === 'order_template') {
+      let order = input.orders.find(
+        (entry) => fixtureString(entry.id) === id && fixtureString(entry.space_id ?? entry.spaceId) === input.space,
+      );
+      if (!order) {
+        const orderKind = fixtureString(seed.order_kind ?? seed.orderKind ?? seed.type) || (kind === 'order_template' ? 'template' : 'mandate');
+        order = {
+          id,
+          space_id: input.space,
+          title: fixtureString(seed.title ?? seed.name) || id,
+          summary: fixtureString(seed.summary ?? seed.tagline),
+          kind: orderKind,
+          goal: fixtureString(seed.goal),
+          status: fixtureString(seed.status) || 'draft',
+          schedule: fixtureString(seed.schedule),
+          signal: fixtureString(seed.signal),
+          tier: fixtureString(seed.tier),
+          exec_count: fixtureNumber(seed.exec_count ?? seed.execCount, 0),
+          doc_path: fixtureString(seed.doc_path ?? seed.docPath) || `orders/${id}.md`,
+          content: fixtureString(seed.content ?? seed.body),
+          tags: [`package:${input.packageId}`, sourceTag],
+          created_at_ms: input.nowMs,
+          updated_at_ms: input.nowMs,
+        };
+        input.orders.unshift(order);
+      }
+
+      applied.push({
+        kind: 'order',
+        id,
+        source_tag: sourceTag,
+      });
+      return;
+    }
+
+    applied.push({
+      kind,
+      id,
+      source_tag: sourceTag,
+    });
+  });
+
+  return applied;
 }
 
 function installMultiplicationDemoFixture(input: {
@@ -2053,7 +2168,7 @@ function installMultiplicationDemoFixture(input: {
 async function marketInstallRoute(
   route: Route,
   options: NullHubFixtureOptions,
-  marketLibrary: Record<string, unknown>[],
+  marketLibraries: MarketLibraries,
   marketCatalog: Record<string, unknown>[],
   orders: Record<string, unknown>[],
   events: Record<string, unknown>[],
@@ -2089,7 +2204,9 @@ async function marketInstallRoute(
   const sourcePackage =
     Object.keys(inlineManifest).length > 0
       ? inlineManifest
-      : fixturePackageById(marketCatalog, packageId) || fixturePackageById(marketLibrary, packageId);
+      : fixturePackageById(marketCatalog, packageId) ||
+        fixturePackageById(marketLibraryForSpace(marketLibraries, space), packageId) ||
+        fixturePackageByIdInLibraries(marketLibraries, packageId);
   if (!sourcePackage) {
     await fulfillJson(route, { error: 'package not found' }, 404);
     return;
@@ -2110,7 +2227,7 @@ async function marketInstallRoute(
       fixtureSourceTag(packageId, packageVersion, 'package', packageId),
     ],
   };
-  upsertFixturePackage(marketLibrary, installedPackage);
+  upsertFixturePackage(marketLibraryForSpace(marketLibraries, space), installedPackage);
 
   const applied = [
     {
@@ -2149,6 +2266,16 @@ async function marketInstallRoute(
       trigger_event_id: installed.triggerEvent.id,
     };
   } else {
+    applied.push(
+      ...installPackageSeeds({
+        space,
+        packageId,
+        packageVersion,
+        sourcePackage,
+        orders,
+        nowMs: Date.now(),
+      }),
+    );
     appendFixtureEvent(events, {
       space_id: space,
       type: 'package.installed',
@@ -2585,7 +2712,9 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   const artifacts = (options.nullticketsArtifacts || []).map((artifact) => ({ ...artifact }));
   const runEvents = (options.nullticketsRunEvents || []).map((event) => ({ ...event }));
   const marketCatalog = packageListFromFixture(options.marketCatalog, fixtureMarketCatalog);
-  const marketLibrary = packageListFromFixture(options.marketInstalled, fixtureMarketInstalled);
+  const marketLibraries: MarketLibraries = {
+    ops: packageListFromFixture(options.marketInstalled, fixtureMarketInstalled),
+  };
   const approvals = (options.approvals || fixtureApprovals).map((approval) => ({ ...approval }));
 
   await page.route('**/site.webmanifest', (route) =>
@@ -2608,16 +2737,16 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/nullhub-api/components', (route) => fulfillJson(route, fixtureComponents));
   await page.route('**/api/market/catalog**', (route) => marketCatalogRoute(route, options, marketCatalog));
   await page.route('**/nullhub-api/market/catalog**', (route) => marketCatalogRoute(route, options, marketCatalog));
-  await page.route('**/api/market/installed**', (route) => marketInstalledRoute(route, options, marketLibrary));
-  await page.route('**/nullhub-api/market/installed**', (route) => marketInstalledRoute(route, options, marketLibrary));
+  await page.route('**/api/market/installed**', (route) => marketInstalledRoute(route, options, marketLibraries));
+  await page.route('**/nullhub-api/market/installed**', (route) => marketInstalledRoute(route, options, marketLibraries));
   await page.route(/\/api\/market\/install(?:\?.*)?$/, (route) =>
-    marketInstallRoute(route, options, marketLibrary, marketCatalog, orders, events, approvals),
+    marketInstallRoute(route, options, marketLibraries, marketCatalog, orders, events, approvals),
   );
   await page.route(/\/nullhub-api\/market\/install(?:\?.*)?$/, (route) =>
-    marketInstallRoute(route, options, marketLibrary, marketCatalog, orders, events, approvals),
+    marketInstallRoute(route, options, marketLibraries, marketCatalog, orders, events, approvals),
   );
-  await page.route('**/api/market/export**', (route) => marketExportRoute(route, options, marketLibrary, marketCatalog));
-  await page.route('**/nullhub-api/market/export**', (route) => marketExportRoute(route, options, marketLibrary, marketCatalog));
+  await page.route('**/api/market/export**', (route) => marketExportRoute(route, options, marketLibraries, marketCatalog, orders));
+  await page.route('**/nullhub-api/market/export**', (route) => marketExportRoute(route, options, marketLibraries, marketCatalog, orders));
   await page.route('**/api/settings', (route) => fulfillJson(route, fixtureSettings));
   await page.route('**/nullhub-api/settings', (route) => fulfillJson(route, fixtureSettings));
   await page.route('**/api/service/status', (route) => fulfillJson(route, fixtureServiceStatus));
