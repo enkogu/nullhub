@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -37,4 +40,10 @@ jobs:
       build_args: -Dbuild-ui=false
       # E2E runs only on the native Linux target.
       e2e_target: linux-x86_64
-      e2e_command: bash tests/test_e2e.sh
+      e2e_command: |
+        bash tests/test_e2e.sh
+        if [ "${GITHUB_EVENT_NAME:-}" = "schedule" ] || [ "${GITHUB_EVENT_NAME:-}" = "workflow_dispatch" ]; then
+          npm --prefix ui run test:e2e:nightly
+        else
+          npm --prefix ui run test:e2e:smoke
+        fi

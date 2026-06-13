@@ -19,8 +19,8 @@ npm --prefix ui run test:e2e
   shell/Home degradation, Inbox approve/evidence, scheduled order lifecycle,
   Market catalog, and empty Space creation/scoping.
 - Full: runs all Playwright fixture-mode specs.
-- Nightly: currently equivalent to Full; no separate long-running project or
-  live-provider lane is defined here.
+- Nightly: currently equivalent to Full and wired through CI for scheduled and
+  manual runs; no separate live-provider lane is defined here.
 - `test:e2e`: canonical raw Playwright entrypoint, also all specs.
 
 ## Scenario Coverage
