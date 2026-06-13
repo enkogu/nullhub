@@ -10,6 +10,9 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.svelte-check.json",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:smoke": "playwright test --grep @smoke",
+    "test:e2e:full": "playwright test",
+    "test:e2e:nightly": "playwright test",
     "test:mcp": "node src/lib/mcpEditor.test.mjs",
     "test:mission-control": "node src/lib/missionControl/replayAutomation.test.mjs",
     "preview": "vite preview"

@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 import { installNullHubFixtureRoutes } from '../fixtures/nullhub';
 
+test.describe.configure({ mode: 'serial' });
+
 function collectRuntimeFailures(page: Page) {
   const runtimeErrors: string[] = [];
 
@@ -14,7 +16,7 @@ function collectRuntimeFailures(page: Page) {
   return { runtimeErrors };
 }
 
-test('approve removes the card and decrements the pending count', async ({ page }, testInfo) => {
+test('approve removes the card, decrements the pending count, and records Work evidence @smoke', async ({ page }, testInfo) => {
   const { runtimeErrors } = collectRuntimeFailures(page);
   const requests: string[] = [];
   await installNullHubFixtureRoutes(page, { requests });
@@ -50,7 +52,24 @@ test('approve removes the card and decrements the pending count', async ({ page 
 
   expect(requests.some((entry) => entry.startsWith('/api/approvals?space=ops'))).toBe(true);
   expect(requests.filter((entry) => entry === '/api/approvals?space=ops&status=pending&limit=100').length).toBeGreaterThanOrEqual(2);
-  expect(runtimeErrors).toEqual([]);
+
+  const duplicateDecision = await page.evaluate(async () => {
+    const response = await fetch('/api/approvals/1/decide?space=ops', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ decision: 'approved' }),
+    });
+    return { status: response.status, body: await response.json() };
+  });
+  expect(duplicateDecision).toMatchObject({ status: 409, body: { error: 'approval already decided' } });
+
+  await page.goto('/work/activity?space=ops');
+  await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();
+  await expect(page.getByRole('article', { name: /Approval approved: Sign the v2 deploy plan from Nullhub Inbox/i })).toContainText(
+    'Approval approved: Sign the v2 deploy plan',
+  );
+
+  expect(runtimeErrors.filter((entry) => !entry.includes('409 (Conflict)'))).toEqual([]);
 });
 
 test('push_back requires feedback before re-running the target', async ({ page }, testInfo) => {
@@ -86,7 +105,44 @@ test('push_back requires feedback before re-running the target', async ({ page }
   await page.getByRole('switch').click();
   await expect(page.getByText('Needs a rollback plan before signing.')).toBeVisible();
 
+  await page.goto('/work/activity?space=ops');
+  await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();
+  await expect(page.getByRole('article', { name: /Approval returned: Sign the v2 deploy plan from Nullhub Inbox/i })).toContainText(
+    'Returned for rework: Needs a rollback plan before signing.',
+  );
+
   const screenshotPath = testInfo.outputPath('inbox-push-back.png');
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  console.log(`screenshot: ${screenshotPath}`);
+
+  expect(runtimeErrors).toEqual([]);
+});
+
+test('reject records terminal Work evidence', async ({ page }, testInfo) => {
+  const { runtimeErrors } = collectRuntimeFailures(page);
+  await installNullHubFixtureRoutes(page);
+
+  await page.goto('/inbox');
+  await expect(page.getByText('Sign the v2 deploy plan')).toBeVisible();
+
+  const decideRequest = page.waitForRequest(
+    (request) => request.url().includes('/approvals/1/decide') && request.method() === 'POST',
+    { timeout: 15_000 },
+  );
+  await page.getByRole('button', { name: 'Reject', exact: true }).click();
+
+  const request = await decideRequest;
+  expect(request.postDataJSON()).toMatchObject({ decision: 'rejected' });
+  await expect(page.getByRole('button', { name: /^All/ })).toContainText('2');
+  await expect(page.getByTestId('inbox-pending-badge')).toHaveText('2');
+
+  await page.goto('/work/activity?space=ops');
+  await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();
+  await expect(page.getByRole('article', { name: /Approval rejected: Sign the v2 deploy plan from Nullhub Inbox/i })).toContainText(
+    'Approval rejected: Sign the v2 deploy plan',
+  );
+
+  const screenshotPath = testInfo.outputPath('inbox-reject.png');
   await page.screenshot({ path: screenshotPath, fullPage: true });
   console.log(`screenshot: ${screenshotPath}`);
 

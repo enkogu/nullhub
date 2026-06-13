@@ -1227,6 +1227,18 @@ function appendFixtureEvent(events: Record<string, unknown>[], event: Record<str
   return next;
 }
 
+function approvalDecisionEventType(decision: string) {
+  if (decision === 'pushed_back') return 'approval.returned';
+  return `approval.${decision}`;
+}
+
+function approvalDecisionTitle(decision: string) {
+  if (decision === 'approved') return 'Approval approved';
+  if (decision === 'pushed_back') return 'Approval returned';
+  if (decision === 'rejected') return 'Approval rejected';
+  return 'Approval decided';
+}
+
 function appendFixtureTask(
   tasks: Record<string, unknown>[],
   input: {
@@ -1756,6 +1768,28 @@ async function approvalDecideRoute(
   approval.status = decision;
   approval.feedback = feedback.trim();
   approval.decided_at_ms = Date.now();
+  appendFixtureEvent(events, {
+    space_id: approval.space_id,
+    type: approvalDecisionEventType(decision),
+    source: 'nullhub.inbox',
+    subject_type: 'approval',
+    subject_id: String(approval.id),
+    title: `${approvalDecisionTitle(decision)}: ${fixtureString(approval.title)}`,
+    summary:
+      decision === 'pushed_back' && feedback.trim()
+        ? `Returned for rework: ${feedback.trim()}`
+        : `${approvalDecisionTitle(decision)} for ${fixtureString(approval.target_ref) || `approval ${approval.id}`}.`,
+    severity: decision === 'rejected' ? 'warning' : 'info',
+    created_at_ms: approval.decided_at_ms,
+    payload: {
+      approval_id: approval.id,
+      decision,
+      feedback: feedback.trim(),
+      target_ref: approval.target_ref,
+      queue: approval.queue,
+      kind: approval.kind,
+    },
+  });
   if (decision === 'approved') {
     approval.dispatch_result = executeApprovedDispatcherApproval(approval, orders, events, tasks);
   }

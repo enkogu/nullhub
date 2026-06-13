@@ -3,6 +3,15 @@ import { installNullHubFixtureRoutes } from './fixtures/nullhub';
 
 const SELECTED_SPACE_STORAGE_KEY = 'nullhub:selected-space';
 const ALL_SPACES_STORAGE_VALUE = '__all__';
+const PRIMARY_IA_ITEMS = [
+  { key: 'home', label: 'Home' },
+  { key: 'inbox', label: 'Inbox' },
+  { key: 'work', label: 'Work' },
+  { key: 'orders', label: 'Orders' },
+  { key: 'team', label: 'Team' },
+  { key: 'market', label: 'Market' },
+  { key: 'system', label: 'System' },
+] as const;
 const spaceSwitcherUsageBySpace = {
   ops: {
     totals: { total_cost_usd: 12.3456 },
@@ -43,7 +52,27 @@ async function expectNonBlankShell(page: Page, label: string) {
   expect(content.length, `${label} should render nonblank content`).toBeGreaterThan(24);
 }
 
-test('renders the app shell in fixture mode without console errors', async ({ page }, testInfo) => {
+async function expectPrimaryIaVisibleAndOrdered(page: Page) {
+  const primaryNav = page.getByLabel('Primary navigation');
+  const expectedKeys = PRIMARY_IA_ITEMS.map((item) => item.key);
+
+  for (const item of PRIMARY_IA_ITEMS) {
+    const navItem = primaryNav.locator(`[data-app-sidebar-item="${item.key}"]`);
+    await expect(navItem, `${item.label} should be visible in primary nav`).toBeVisible();
+    await expect(navItem).toContainText(item.label);
+  }
+
+  // Legacy compatibility links may still be mounted; keep this assertion focused on the product IA order.
+  const productKeys = await primaryNav.locator('[data-app-sidebar-item]').evaluateAll((items, keys) => {
+    const keySet = new Set(keys);
+    return items
+      .map((item) => item.getAttribute('data-app-sidebar-item') || '')
+      .filter((key) => keySet.has(key));
+  }, expectedKeys);
+  expect(productKeys).toEqual(expectedKeys);
+}
+
+test('renders the app shell in fixture mode without console errors @smoke', async ({ page }, testInfo) => {
   const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
 
   await installNullHubFixtureRoutes(page);
@@ -53,7 +82,8 @@ test('renders the app shell in fixture mode without console errors', async ({ pa
   await expect(page.locator('.shadcn-app')).toBeVisible();
   await expect(page.locator('main.real-content')).toBeVisible();
   await expect(page.getByRole('button', { name: /Operations 3 pending/ })).toBeVisible();
-  await expect(page.getByLabel('Primary navigation').getByRole('link', { name: 'Home' })).toBeVisible();
+  await expect(page.locator('[data-slot="space-switcher"]')).toBeVisible();
+  await expectPrimaryIaVisibleAndOrdered(page);
   await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
   await expect(page.getByText('No instances installed yet.')).toBeVisible();
 
@@ -68,13 +98,15 @@ test('renders the app shell in fixture mode without console errors', async ({ pa
   expect(runtimeErrors).toEqual([]);
 });
 
-test('primary shell controls reach all product sections in fixture mode', async ({ page }, testInfo) => {
+test('primary shell controls reach all product sections in fixture mode @smoke', async ({ page }, testInfo) => {
   const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
   const requests: string[] = [];
   await installNullHubFixtureRoutes(page, { requests, usageBySpace: spaceSwitcherUsageBySpace });
 
   await page.goto('/');
   const primaryNav = page.getByLabel('Primary navigation');
+  await expectPrimaryIaVisibleAndOrdered(page);
+  await expect(page.locator('[data-slot="space-switcher"]')).toBeVisible();
 
   await primaryNav.getByRole('link', { name: 'Home' }).click();
   await expect(page).toHaveURL(/\/$/);
@@ -113,6 +145,7 @@ test('primary shell controls reach all product sections in fixture mode', async 
   await page.getByRole('button', { name: /Operations 3 pending/ }).click();
   await expect(page.getByRole('menuitem', { name: /Operations active 3 pending 1 live \$12\.35 spend/ })).toBeVisible();
   await expect(page.getByRole('menuitem', { name: /Lab paused 0 pending 0 live \$1\.25 spend/ })).toBeVisible();
+  await expect(page.getByRole('menuitem', { name: 'New space' })).toBeVisible();
   await page.getByRole('menuitem', { name: /Lab paused 0 pending 0 live \$1\.25 spend/ }).click();
   await expect(page).toHaveURL(/(?:\?|&)space=lab(?:&|$)/);
   await expect(page.getByRole('button', { name: /Lab 0 pending/ })).toBeVisible();
@@ -131,6 +164,41 @@ test('primary shell controls reach all product sections in fixture mode', async 
   expect(requests).toContain('/api/providers?space=lab');
   expect(failedResponses).toEqual([]);
   expect(runtimeErrors).toEqual([]);
+});
+
+test('Home keeps the shell usable when dashboard sources are degraded @smoke', async ({ page }) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
+  await installNullHubFixtureRoutes(page, {
+    approvalsStatus: 503,
+    charterStatus: 503,
+    eventsStatus: 503,
+    usageStatus: 503,
+  });
+
+  await page.goto('/');
+
+  await expectPrimaryIaVisibleAndOrdered(page);
+  await expect(page.getByRole('heading', { name: 'Home' })).toBeVisible();
+  await expect(page.locator('[data-slot="space-switcher"]')).toBeVisible();
+  await expect(page.locator('[data-slot="space-switcher"]').getByRole('button', { name: /Operations/ })).toBeVisible();
+  await expect(page.getByText('Digest unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('Charter unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('Approvals unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText('Live runs unavailable', { exact: true })).toBeVisible();
+  await expect(page.getByText(/No instances installed yet\.|Unable to load workspace/)).toBeVisible();
+  await expectNonBlankShell(page, 'Home degraded sources');
+
+  expect(failedResponses.length).toBeGreaterThanOrEqual(4);
+  expect(
+    failedResponses.every((failure) =>
+      /^503 .+\/api\/(approvals|charter|events|usage)(?:\?|$)/.test(failure),
+    ),
+  ).toBe(true);
+  expect(
+    runtimeErrors.every((error) =>
+      error === 'Failed to load resource: the server responded with a status of 503 (Service Unavailable)',
+    ),
+  ).toBe(true);
 });
 
 test('space switcher reloads product reads with the selected space scope', async ({ page }) => {

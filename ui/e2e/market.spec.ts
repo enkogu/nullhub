@@ -18,7 +18,28 @@ function collectRuntimeFailures(page: Page) {
   return { runtimeErrors, failedResponses };
 }
 
-test('market catalog renders populated package grid, filters, and package detail', async ({ page }, testInfo) => {
+const runningMarketFixtureStatus = {
+  ok: true,
+  version: 'playwright-fixture',
+  components: {
+    nullclaw: { status: 'running', running: 1, total: 1 },
+  },
+  instances: {
+    nullclaw: {
+      Athena: {
+        status: 'running',
+        version: 'playwright-fixture',
+        role: 'Tool maintainer',
+        current_work: 'Waiting for staged market installs',
+        current_runs: 0,
+        space_id: 'ops',
+        auto_start: true,
+      },
+    },
+  },
+};
+
+test('market catalog renders populated package grid, filters, and package detail @smoke', async ({ page }, testInfo) => {
   const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
   const requests: string[] = [];
   await installNullHubFixtureRoutes(page, { requests });
@@ -52,6 +73,62 @@ test('market catalog renders populated package grid, filters, and package detail
 
   expect(requests).toContain('/api/market/catalog');
   expect(requests).toContain('/api/market/installed?space=ops');
+  expect(failedResponses).toEqual([]);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test('market install wizard blocks staging until required secrets and dependencies are acknowledged', async ({
+  page,
+}, testInfo) => {
+  const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
+  const requests: string[] = [];
+  const stageInstallRequests = () => requests.filter((request) => /^\/api\/market\/install(?:\?|$)/.test(request));
+  await installNullHubFixtureRoutes(page, {
+    requests,
+    status: runningMarketFixtureStatus,
+    instances: runningMarketFixtureStatus.instances,
+    marketInstalled: { packages: [] },
+  });
+
+  await page.goto('/market/install/builtin.mcp-server-starters?space=ops');
+  await expect(page.getByRole('heading', { name: 'MCP Server Starters', level: 1 })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Kit install' })).toBeVisible();
+
+  await page.getByLabel('Accept install preview').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('heading', { name: 'Connect' })).toBeVisible();
+  await expect(page.getByText('providers.search.api_key')).toBeVisible();
+  await expect(page.getByText('Package: builtin.nullclaw-agent')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Enact/ })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Stage install' })).toHaveCount(0);
+
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('alert')).toContainText('Confirm every required secret ref before continuing.');
+  expect(stageInstallRequests()).toEqual([]);
+
+  await page.getByLabel('Confirm providers.search.api_key').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('alert')).toContainText('Review package and component dependencies before continuing.');
+  expect(stageInstallRequests()).toEqual([]);
+
+  await page.getByLabel('Acknowledge dependencies').click();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByRole('heading', { name: 'Staff', exact: true })).toBeVisible();
+  await expect(page.getByText('Assigned to Athena (running)')).toBeVisible();
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByLabel('Install label')).toHaveValue('MCP Server Starters');
+  await page.getByRole('button', { name: 'Continue' }).click();
+  await expect(page.getByText('No backend install is executed from this screen in this release.')).toBeVisible();
+
+  await page.getByLabel('Confirm enactment review').click();
+  await page.getByRole('button', { name: 'Stage install' }).click();
+  await expect(page.getByText('MCP Server Starters install plan is staged for Operations.')).toBeVisible();
+  expect(stageInstallRequests()).toEqual([]);
+
+  const screenshotPath = testInfo.outputPath('market-install-staging.png');
+  await page.screenshot({ path: screenshotPath, fullPage: true });
+  console.log(`screenshot: ${screenshotPath}`);
+
   expect(failedResponses).toEqual([]);
   expect(runtimeErrors).toEqual([]);
 });

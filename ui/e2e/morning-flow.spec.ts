@@ -129,7 +129,7 @@ function producerEvents(nowMs: number) {
   ];
 }
 
-test('E2E-1 morning digest leads to inbox decision and quiet work state', async ({ page }, testInfo) => {
+test('E2E-1 morning digest leads to inbox decision and Work approval evidence', async ({ page }, testInfo) => {
   const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
   const requests: string[] = [];
   const nowMs = Date.now();
@@ -209,12 +209,14 @@ test('E2E-1 morning digest leads to inbox decision and quiet work state', async 
   await page.getByRole('navigation', { name: 'Work tabs' }).getByRole('link', { name: 'Live' }).click();
   await expect(page).toHaveURL(/\/work\/live$/);
   await expect(page.getByRole('heading', { name: 'Live', exact: true })).toBeVisible();
-  await expect(page.getByText('No live runs')).toBeVisible();
-  await expectNonBlankShell(page, 'Work quiet state');
+  const approvalEvidence = page.getByRole('article', { name: /Approval approved: Approve morning support summary/i });
+  await expect(approvalEvidence).toBeVisible();
+  await expect(approvalEvidence).toContainText('Approval approved for order:morning-digest.');
+  await expectNonBlankShell(page, 'Work approval evidence state');
 
-  const quietScreenshot = testInfo.outputPath('morning-flow-quiet.png');
-  await page.screenshot({ path: quietScreenshot, fullPage: true });
-  console.log(`screenshot: ${quietScreenshot}`);
+  const evidenceScreenshot = testInfo.outputPath('morning-flow-work-evidence.png');
+  await page.screenshot({ path: evidenceScreenshot, fullPage: true });
+  console.log(`screenshot: ${evidenceScreenshot}`);
 
   expect(requests).toContain('/api/approvals?space=ops&status=pending&limit=25');
   expect(requests).toContain('/api/events?space=ops&limit=100');

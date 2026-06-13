@@ -5,6 +5,8 @@ type FixtureRecord = Record<string, any>;
 
 const orderId = 'vd38-scheduled-order';
 const spaceId = 'ops';
+const firstRunRef = 'scheduled-order-run-1';
+const secondRunRef = 'scheduled-order-run-2';
 
 function collectRuntimeFailures(page: Page) {
   const runtimeErrors: string[] = [];
@@ -94,7 +96,7 @@ async function fireSchedule(page: Page, input: {
   }, { id: orderId, space: spaceId, ...input });
 }
 
-test('E2E-38 scheduled order fires work evidence and pause blocks future runs', async ({ page }, testInfo) => {
+test('E2E-38 scheduled order fires work evidence and pause blocks future runs @smoke', async ({ page }, testInfo) => {
   const { runtimeErrors, failedResponses } = collectRuntimeFailures(page);
   const requests: string[] = [];
   const orders: FixtureRecord[] = [];
@@ -166,13 +168,14 @@ test('E2E-38 scheduled order fires work evidence and pause blocks future runs', 
   await expect(page.getByRole('button', { name: 'Suspend' })).toBeVisible();
 
   const firstFire = await fireSchedule(page, {
-    runRef: 'scheduled-order-run-1',
+    runRef: firstRunRef,
     title: 'Customer escalation digest',
     nowMs: nowMs + 5 * 60_000,
   });
   expect(firstFire).toMatchObject({
     fired: true,
     event: {
+      space_id: spaceId,
       type: 'order.executed',
       source: 'cron',
       subject_type: 'order',
@@ -186,6 +189,23 @@ test('E2E-38 scheduled order fires work evidence and pause blocks future runs', 
         run_ref: 'scheduled-order-run-1',
       },
     },
+    task: {
+      space_id: spaceId,
+      tickets_instance: 'tickets',
+      title: 'Customer escalation digest',
+      description: `Work evidence created from scheduled order ${orderId}.`,
+      latest_run: {
+        id: firstRunRef,
+        status: 'running',
+        agent_id: 'Athena',
+      },
+    },
+    order: {
+      id: orderId,
+      space_id: spaceId,
+      status: 'active',
+      exec_count: 1,
+    },
   });
   expect(firstFire.event.payload.run_id).toBeUndefined();
   expect(firstFire.event.payload.runRef).toBeUndefined();
@@ -193,17 +213,35 @@ test('E2E-38 scheduled order fires work evidence and pause blocks future runs', 
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Execution history' })).toBeVisible();
   await expect(page.getByText('order.executed')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'Open run scheduled-order-run-1' })).toHaveAttribute(
+  const historyRunLink = page.getByRole('link', { name: `Open run ${firstRunRef}` });
+  await expect(historyRunLink).toHaveAttribute(
     'href',
-    '/work/runs/scheduled-order-run-1?space=ops',
+    `/work/runs/${firstRunRef}?space=${spaceId}`,
   );
+  await historyRunLink.click();
+  await expect(page).toHaveURL(new RegExp(`/work/runs/${firstRunRef}\\?space=${spaceId}$`));
+  await expect(page.getByRole('heading', { name: 'Run Detail' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Customer escalation digest' })).toBeVisible();
+  await expect(page.getByText(firstRunRef).first()).toBeVisible();
+  await expect(page.getByText(`Work evidence created from scheduled order ${orderId}.`, { exact: true })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Attempt summary' }).getByText('Athena', { exact: true })).toBeVisible();
+
+  await page.goto('/orders?space=lab');
+  await expect(page.getByRole('heading', { name: 'Orders', exact: true, level: 1 })).toBeVisible();
+  await expect(page.getByText('Customer escalation digest')).toHaveCount(0);
 
   await page.goto('/work/activity?space=ops');
-  await expect(page.getByRole('heading', { name: 'Activity' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Activity', exact: true, level: 1 })).toBeVisible();
   const activityEvent = page.getByRole('article', { name: 'Order executed from Cron' });
   await expect(activityEvent).toBeVisible();
   await expect(activityEvent).toContainText('A schedule order cron run completed.');
   await expect(activityEvent).toContainText('order.executed');
+
+  await page.goto('/work/activity?space=lab');
+  await expect(page.getByRole('heading', { name: 'Activity', exact: true, level: 1 })).toBeVisible();
+  await expect(page.getByText('Customer escalation digest')).toHaveCount(0);
+  await expect(page.getByText('A schedule order cron run completed.')).toHaveCount(0);
+  await expect(page.getByText('order.executed')).toHaveCount(0);
 
   await page.goto('/work/live?space=ops');
   await expect(page.getByRole('heading', { name: 'Live', exact: true })).toBeVisible();
@@ -211,6 +249,21 @@ test('E2E-38 scheduled order fires work evidence and pause blocks future runs', 
   await expect(liveRun).toBeVisible();
   await expect(liveRun).toContainText('Work evidence');
   await expect(liveRun).toContainText('Athena');
+  await expect(page.getByRole('link', { name: 'Open Customer escalation digest' })).toHaveAttribute(
+    'href',
+    `/work/runs/${firstRunRef}?task_id=task-${firstRunRef}&tickets_instance=tickets&space=${spaceId}`,
+  );
+
+  await page.goto('/work/live?space=lab');
+  await expect(page.getByRole('heading', { name: 'Live', exact: true })).toBeVisible();
+  await expect(page.getByRole('article', { name: 'Customer escalation digest Loop run' })).toHaveCount(0);
+  await expect(page.getByText(firstRunRef)).toHaveCount(0);
+
+  await page.goto(`/work/runs/${firstRunRef}?space=lab`);
+  await expect(page.getByRole('heading', { name: 'Run Detail' })).toBeVisible();
+  await expect(page.getByText('Run context needed')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Customer escalation digest' })).toHaveCount(0);
+  await expect(page.getByText(`Work evidence created from scheduled order ${orderId}.`)).toHaveCount(0);
 
   await page.goto(`/orders/${orderId}?space=ops`);
   await page.getByRole('button', { name: 'Suspend' }).click();
@@ -221,7 +274,7 @@ test('E2E-38 scheduled order fires work evidence and pause blocks future runs', 
 
   await expect(
     fireSchedule(page, {
-      runRef: 'scheduled-order-run-2',
+      runRef: secondRunRef,
       title: 'Second customer escalation digest',
       nowMs: nowMs + 10 * 60_000,
     }),
@@ -240,13 +293,18 @@ test('E2E-38 scheduled order fires work evidence and pause blocks future runs', 
   console.log(`screenshot: ${screenshotPath}`);
 
   expect(requests).toContain('/api/orders?space=ops');
+  expect(requests).toContain('/api/orders?space=lab');
   expect(requests).toContain(`/api/orders/${orderId}/enact?space=ops`);
   expect(requests).toContain(`/api/orders/${orderId}/suspend?space=ops`);
   expect(requests.filter((request) => request === '/api/fixtures/schedule-fire?space=ops')).toHaveLength(2);
   expect(requests).toContain(`/api/events?space=ops&subject_type=order&subject_id=${orderId}&limit=100`);
   expect(requests.some((request) => request.startsWith('/api/events?space=ops&limit='))).toBe(true);
+  expect(requests.some((request) => request.startsWith('/api/events?space=lab&limit='))).toBe(true);
   expect(
     requests.some((request) => request.startsWith('/api/instances/nulltickets/tickets/tickets') && request.includes('space=ops')),
+  ).toBe(true);
+  expect(
+    requests.some((request) => request.startsWith('/api/instances/nulltickets/tickets/tickets') && request.includes('space=lab')),
   ).toBe(true);
   expect(failedResponses).toEqual([]);
   expect(runtimeErrors.filter((entry) => !entry.includes('Failed to load resource'))).toEqual([]);
