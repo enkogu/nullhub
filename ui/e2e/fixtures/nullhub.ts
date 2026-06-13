@@ -709,7 +709,12 @@ async function eventsRoute(route: Route, options: NullHubFixtureOptions, request
   });
 }
 
-async function ordersRoute(route: Route, options: NullHubFixtureOptions, requestOrders: Record<string, unknown>[]) {
+async function ordersRoute(
+  route: Route,
+  options: NullHubFixtureOptions,
+  requestOrders: Record<string, unknown>[],
+  requestEvents: Record<string, unknown>[],
+) {
   recordRequest(route, options);
   if (options.ordersStatus && options.ordersStatus >= 400) {
     await fulfillJson(route, { error: 'Orders unavailable.' }, options.ordersStatus);
@@ -768,6 +773,7 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions, request
       return;
     }
     if (route.request().method() === 'GET' && !action) {
+      refreshFixtureOrderSafety(order, requestEvents);
       await fulfillJson(route, order);
       return;
     }
@@ -812,6 +818,21 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions, request
       }
       order.status = nextStatus;
       order.updated_at_ms = 1_780_000_020_000;
+      if (action === 'resume') {
+        appendFixtureEvent(requestEvents, {
+          space_id: space,
+          type: 'order.resumed',
+          source: 'nullhub',
+          subject_type: 'order',
+          subject_id: id,
+          title: `Order resumed: ${fixtureString(order.title)}`,
+          summary: 'Order was resumed and dispatcher safety counters were reset.',
+          severity: 'success',
+          created_at_ms: fixtureNumber(order.updated_at_ms, Date.now()),
+          payload: { order_id: id, action: 'resume' },
+        });
+      }
+      refreshFixtureOrderSafety(order, requestEvents);
       await fulfillJson(route, order);
       return;
     }
@@ -823,6 +844,7 @@ async function ordersRoute(route: Route, options: NullHubFixtureOptions, request
     const orderSpace = String(order.space_id ?? order.spaceId ?? '');
     return orderSpace === space;
   });
+  orders.forEach((order) => refreshFixtureOrderSafety(order, requestEvents));
   await fulfillJson(route, { orders });
 }
 
@@ -1186,6 +1208,181 @@ function appendFixtureTask(
   return task;
 }
 
+function executeFixtureDispatcherRun(input: {
+  space: string;
+  order: Record<string, unknown>;
+  triggerEvent: Record<string, unknown>;
+  events: Record<string, unknown>[];
+  tasks: Record<string, unknown>[];
+  title: string;
+  runRef: string;
+  taskId: string;
+  nowMs: number;
+  instance: string;
+  tier: string;
+  action: string;
+}) {
+  const orderId = fixtureString(input.order.id);
+  input.order.exec_count = fixtureNumber(input.order.exec_count ?? input.order.execCount, 0) + 1;
+  input.order.updated_at_ms = input.nowMs;
+  const task = appendFixtureTask(input.tasks, {
+    space: input.space,
+    title: input.title,
+    runRef: input.runRef,
+    taskId: input.taskId,
+    nowMs: input.nowMs,
+    instance: input.instance,
+    orderId,
+  });
+  const executed = appendFixtureEvent(input.events, {
+    space_id: input.space,
+    type: 'dispatcher.executed',
+    source: 'nullhub.dispatcher',
+    subject_type: 'order',
+    subject_id: orderId,
+    title: `Dispatcher executed: ${fixtureString(input.order.title)}`,
+    summary: `Order ${orderId} matched event ${input.triggerEvent.id} and created run ${input.runRef}.`,
+    severity: 'success',
+    evidence_ref: `artifact://${input.runRef}`,
+    created_at_ms: input.nowMs + 1,
+    payload: {
+      order_id: orderId,
+      trigger_event_id: input.triggerEvent.id,
+      tier: input.tier,
+      action: input.action,
+      run_ref: input.runRef,
+      agent: input.instance,
+    },
+  });
+  let safety = refreshFixtureOrderSafety(input.order, input.events);
+  const safetyRecord = fixtureRecord(safety);
+  let safetyEvent: Record<string, unknown> | null = null;
+  if (safetyRecord.probation) {
+    safetyEvent = appendFixtureEvent(input.events, {
+      space_id: input.space,
+      type: 'dispatcher.probation_progress',
+      source: 'nullhub.dispatcher',
+      subject_type: 'order',
+      subject_id: orderId,
+      title: `Dispatcher probation progress: ${fixtureString(input.order.title)}`,
+      summary: 'Probationary automatic execution succeeded; more safe executions are required before this Order is clear.',
+      severity: 'info',
+      created_at_ms: input.nowMs + 2,
+      payload: {
+        order_id: orderId,
+        trigger_event_id: input.triggerEvent.id,
+        tier: input.tier,
+        action: input.action,
+        safe_executions: safetyRecord.safe_executions,
+      },
+    });
+  } else {
+    safetyEvent = appendFixtureEvent(input.events, {
+      space_id: input.space,
+      type: 'dispatcher.probation_cleared',
+      source: 'nullhub.dispatcher',
+      subject_type: 'order',
+      subject_id: orderId,
+      title: `Dispatcher probation cleared: ${fixtureString(input.order.title)}`,
+      summary: 'Enough safe automatic executions completed; this Order is clear for automatic dispatch.',
+      severity: 'success',
+      created_at_ms: input.nowMs + 2,
+      payload: {
+        order_id: orderId,
+        trigger_event_id: input.triggerEvent.id,
+        tier: input.tier,
+        action: input.action,
+        safe_executions: safetyRecord.safe_executions,
+      },
+    });
+  }
+  safety = refreshFixtureOrderSafety(input.order, input.events);
+  return { task, event: executed, safety_event: safetyEvent, safety };
+}
+
+function appendFixtureBreakerApproval(input: {
+  approvals: Record<string, unknown>[];
+  events: Record<string, unknown>[];
+  order: Record<string, unknown>;
+  space: string;
+  circuitEvent: Record<string, unknown>;
+  nowMs: number;
+}) {
+  const orderId = fixtureString(input.order.id);
+  const targetRef = `order:${orderId}:circuit:${input.circuitEvent.id}`;
+  let approval = input.approvals.find((entry) => fixtureString(entry.target_ref ?? entry.targetRef) === targetRef);
+  if (approval) return approval;
+
+  approval = {
+    id: nextFixtureApprovalId(input.approvals),
+    space_id: input.space,
+    kind: 'failure',
+    queue: 'dispatcher',
+    target_ref: targetRef,
+    title: `Circuit breaker opened: ${fixtureString(input.order.title)}`,
+    summary:
+      'Three automatic dispatcher attempts failed. The order was suspended after the circuit opened; review the failure before resuming.',
+    status: 'pending',
+    feedback: '',
+    created_at_ms: input.nowMs,
+    decided_at_ms: 0,
+  };
+  input.approvals.unshift(approval);
+  appendFixtureEvent(input.events, {
+    space_id: input.space,
+    type: 'approval.created',
+    source: 'nullhub',
+    subject_type: 'approval',
+    subject_id: String(approval.id),
+    title: fixtureString(approval.title),
+    summary: 'Failure approval created',
+    severity: 'warning',
+    created_at_ms: input.nowMs,
+    payload: { order_id: orderId, circuit_event_id: input.circuitEvent.id },
+  });
+  return approval;
+}
+
+function executeApprovedDispatcherApproval(
+  approval: Record<string, unknown>,
+  orders: Record<string, unknown>[],
+  events: Record<string, unknown>[],
+  tasks: Record<string, unknown>[],
+) {
+  const dispatch = fixtureRecord(approval.dispatch);
+  const orderId = fixtureString(dispatch.order_id ?? dispatch.orderId);
+  if (!orderId) return null;
+
+  const space = fixtureString(approval.space_id ?? approval.spaceId);
+  const order = orders.find((entry) => {
+    const entryId = fixtureString(entry.id);
+    const orderSpace = fixtureString(entry.space_id ?? entry.spaceId);
+    return entryId === orderId && orderSpace === space;
+  });
+  const triggerEventId = fixtureNumber(dispatch.trigger_event_id ?? dispatch.triggerEventId, 0);
+  const triggerEvent = events.find((event) => fixtureNumber(event.id, 0) === triggerEventId);
+  if (!order || !triggerEvent || fixtureString(order.status) !== 'active') {
+    return { status: 'skipped' };
+  }
+
+  const requestedNowMs = fixtureNumber(dispatch.now_ms ?? dispatch.nowMs, Date.now());
+  const result = executeFixtureDispatcherRun({
+    space,
+    order,
+    triggerEvent,
+    events,
+    tasks,
+    title: fixtureString(dispatch.title) || fixtureString(order.title),
+    runRef: fixtureString(dispatch.run_ref ?? dispatch.runRef) || `trigger-run-${Date.now()}`,
+    taskId: fixtureString(dispatch.task_id ?? dispatch.taskId) || `task-${fixtureString(dispatch.run_ref ?? dispatch.runRef)}`,
+    nowMs: Math.max(Date.now(), requestedNowMs),
+    instance: fixtureString(dispatch.instance) || fixtureString(triggerAction(order).target) || 'Athena',
+    tier: fixtureString(dispatch.tier) || triggerTier(order),
+    action: fixtureString(dispatch.action) || fixtureString(triggerAction(order).type) || 'run_agent',
+  });
+  return { status: 'executed', ...result };
+}
+
 async function triggerFireRoute(
   route: Route,
   options: NullHubFixtureOptions,
@@ -1292,6 +1489,17 @@ async function triggerFireRoute(
         feedback: '',
         created_at_ms: nowMs + 1,
         decided_at_ms: 0,
+        dispatch: {
+          order_id: orderId,
+          trigger_event_id: triggerEvent.id,
+          tier,
+          action,
+          run_ref: runRef,
+          task_id: taskId,
+          title,
+          instance,
+          now_ms: nowMs + 3,
+        },
       };
       approvals.unshift(approval);
       appendFixtureEvent(events, {
@@ -1362,6 +1570,28 @@ async function triggerFireRoute(
         created_at_ms: nowMs + 2,
         payload: { order_id: orderId, trigger_event_id: triggerEvent.id, tier, action, circuit_open: true },
       });
+      order.status = 'suspended';
+      order.updated_at_ms = nowMs + 3;
+      appendFixtureEvent(events, {
+        space_id: space,
+        type: 'order.suspended',
+        source: 'nullhub',
+        subject_type: 'order',
+        subject_id: orderId,
+        title: `Order suspended: ${fixtureString(order.title)}`,
+        summary: 'Circuit breaker suspended the order after repeated automatic execution failures.',
+        severity: 'error',
+        created_at_ms: nowMs + 3,
+        payload: { order_id: orderId, trigger_event_id: triggerEvent.id, reason: 'dispatcher_circuit_opened' },
+      });
+      appendFixtureBreakerApproval({
+        approvals,
+        events,
+        order,
+        space,
+        circuitEvent: safetyEvent,
+        nowMs: nowMs + 4,
+      });
     } else if (safetyRecord.probation) {
       safetyEvent = appendFixtureEvent(events, {
         space_id: space,
@@ -1381,54 +1611,30 @@ async function triggerFireRoute(
     return;
   }
 
-  order.exec_count = fixtureNumber(order.exec_count ?? order.execCount, 0) + 1;
-  order.updated_at_ms = nowMs;
-  const task = appendFixtureTask(tasks, { space, title, runRef, taskId, nowMs, instance, orderId });
-  const executed = appendFixtureEvent(events, {
-    space_id: space,
-    type: 'dispatcher.executed',
-    source: 'nullhub.dispatcher',
-    subject_type: 'order',
-    subject_id: orderId,
-    title: `Dispatcher executed: ${fixtureString(order.title)}`,
-    summary: `Order ${orderId} matched event ${triggerEvent.id} and created run ${runRef}.`,
-    severity: 'success',
-    evidence_ref: `artifact://${runRef}`,
-    created_at_ms: nowMs + 1,
-    payload: { order_id: orderId, trigger_event_id: triggerEvent.id, tier, action, run_ref: runRef, agent: instance },
+  const result = executeFixtureDispatcherRun({
+    space,
+    order,
+    triggerEvent,
+    events,
+    tasks,
+    title,
+    runRef,
+    taskId,
+    nowMs,
+    instance,
+    tier,
+    action,
   });
-  safety = refreshFixtureOrderSafety(order, events);
-  const safetyRecord = fixtureRecord(safety);
-  let safetyEvent: Record<string, unknown> | null = null;
-  if (safetyRecord.probation) {
-    safetyEvent = appendFixtureEvent(events, {
-      space_id: space,
-      type: 'dispatcher.probation_progress',
-      source: 'nullhub.dispatcher',
-      subject_type: 'order',
-      subject_id: orderId,
-      title: `Dispatcher probation progress: ${fixtureString(order.title)}`,
-      summary: 'Probationary automatic execution succeeded; more safe executions are required before this Order is clear.',
-      severity: 'info',
-      created_at_ms: nowMs + 2,
-      payload: { order_id: orderId, trigger_event_id: triggerEvent.id, tier, action, safe_executions: safetyRecord.safe_executions },
-    });
-  } else {
-    safetyEvent = appendFixtureEvent(events, {
-      space_id: space,
-      type: 'dispatcher.probation_cleared',
-      source: 'nullhub.dispatcher',
-      subject_type: 'order',
-      subject_id: orderId,
-      title: `Dispatcher probation cleared: ${fixtureString(order.title)}`,
-      summary: 'Enough safe automatic executions completed; this Order is clear for automatic dispatch.',
-      severity: 'success',
-      created_at_ms: nowMs + 2,
-      payload: { order_id: orderId, trigger_event_id: triggerEvent.id, tier, action, safe_executions: safetyRecord.safe_executions },
-    });
-  }
-  safety = refreshFixtureOrderSafety(order, events);
-  await fulfillJson(route, { fired: true, status: 'executed', order, trigger_event: triggerEvent, event: executed, safety_event: safetyEvent, task, safety });
+  await fulfillJson(route, {
+    fired: true,
+    status: 'executed',
+    order,
+    trigger_event: triggerEvent,
+    event: result.event,
+    safety_event: result.safety_event,
+    task: result.task,
+    safety: result.safety,
+  });
 }
 
 async function approvalsRoute(
@@ -1465,6 +1671,9 @@ async function approvalDecideRoute(
   route: Route,
   options: NullHubFixtureOptions,
   approvals: Record<string, unknown>[],
+  orders: Record<string, unknown>[],
+  events: Record<string, unknown>[],
+  tasks: Record<string, unknown>[],
 ) {
   recordRequest(route, options);
   const url = new URL(route.request().url());
@@ -1492,6 +1701,9 @@ async function approvalDecideRoute(
   approval.status = decision;
   approval.feedback = feedback.trim();
   approval.decided_at_ms = Date.now();
+  if (decision === 'approved') {
+    approval.dispatch_result = executeApprovedDispatcherApproval(approval, orders, events, tasks);
+  }
   await fulfillJson(route, approval);
 }
 
@@ -2073,18 +2285,20 @@ export async function installNullHubFixtureRoutes(page: Page, options: NullHubFi
   await page.route('**/api/events**', (route) => eventsRoute(route, options, events));
   await page.route('**/nullhub-api/events**', (route) => eventsRoute(route, options, events));
   await page.route(/\/api\/orders(?:\/[^/?]+(?:\/[^/?]+)?)?(?:\?.*)?$/, (route) =>
-    ordersRoute(route, options, orders),
+    ordersRoute(route, options, orders, events),
   );
   await page.route(/\/nullhub-api\/orders(?:\/[^/?]+(?:\/[^/?]+)?)?(?:\?.*)?$/, (route) =>
-    ordersRoute(route, options, orders),
+    ordersRoute(route, options, orders, events),
   );
   await page.route(/\/api\/charter(?:\?.*)?$/, (route) => charterRoute(route, options, charters));
   await page.route(/\/nullhub-api\/charter(?:\?.*)?$/, (route) => charterRoute(route, options, charters));
   await page.route(/\/api\/approvals(?:\?.*)?$/, (route) => approvalsRoute(route, options, approvals));
   await page.route(/\/nullhub-api\/approvals(?:\?.*)?$/, (route) => approvalsRoute(route, options, approvals));
-  await page.route(/\/api\/approvals\/\d+\/decide(?:\?.*)?$/, (route) => approvalDecideRoute(route, options, approvals));
+  await page.route(/\/api\/approvals\/\d+\/decide(?:\?.*)?$/, (route) =>
+    approvalDecideRoute(route, options, approvals, orders, events, tasks),
+  );
   await page.route(/\/nullhub-api\/approvals\/\d+\/decide(?:\?.*)?$/, (route) =>
-    approvalDecideRoute(route, options, approvals),
+    approvalDecideRoute(route, options, approvals, orders, events, tasks),
   );
   await page.route('**/api/usage**', (route) => usageRoute(route, options));
   await page.route('**/nullhub-api/usage**', (route) => usageRoute(route, options));

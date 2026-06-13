@@ -199,46 +199,58 @@ test('E2E-47 trigger order fires event into Work and gates tiered execution thro
   await expect(page.getByTestId('inbox-pending-badge')).toContainText('1');
   await expectNonBlankMain(page, 'Inbox after gated trigger');
 
-  const executed = await fireTrigger(page, {
-    order_id: 'order-1',
-    event_type: 'work.ticket.created',
-    source: 'nulltickets',
-    subject_type: 'ticket',
-    subject_id: 'ticket-auto-1',
-    run_ref: 'trigger-run-auto-1',
-    title: 'Triage ticket event',
-    now_ms: nowMs + 2_000,
+  const gatedQuestion = page.getByRole('article', {
+    name: 'Question: Approve dispatcher run_agent: Gated ticket dispatcher',
   });
-  expect(executed).toMatchObject({
-    fired: true,
-    status: 'executed',
-    task: {
-      title: 'Triage ticket event',
-      latest_run: {
-        id: 'trigger-run-auto-1',
-        agent_id: 'Athena',
-      },
-    },
+  const approvalId = String(gated.approval.id);
+  const decideRequest = page.waitForRequest(
+    (request) => request.url().includes(`/approvals/${approvalId}/decide`) && request.method() === 'POST',
+    { timeout: 15_000 },
+  );
+  await gatedQuestion.getByLabel('Reply to the waiting run').fill('Approved for supervised ticket triage.');
+  await gatedQuestion.getByRole('button', { name: 'Send reply' }).click();
+
+  const request = await decideRequest;
+  expect(request.postDataJSON()).toMatchObject({
+    decision: 'approved',
+    feedback: 'Approved for supervised ticket triage.',
+  });
+  await expect(page.locator('[data-slot="question-card"]')).toHaveCount(0);
+
+  const approvedGatedOrder = await fetchOrder(page, 'gated-ticket-dispatcher');
+  expect(approvedGatedOrder).toMatchObject({
+    id: 'gated-ticket-dispatcher',
+    status: 'active',
+    exec_count: 1,
     safety: {
       status: 'probation',
       safe_executions: 1,
+      consecutive_failures: 0,
+    },
+  });
+  expect(tasks).toHaveLength(1);
+  expect(tasks[0]).toMatchObject({
+    title: 'Gated ticket triage',
+    latest_run: {
+      id: 'trigger-run-gated-1',
+      agent_id: 'Athena',
     },
   });
 
   await page.goto('/work/activity?space=ops');
   await expect(page.getByRole('heading', { name: 'Activity', level: 1 })).toBeVisible();
   await expect(page.getByText('Dispatcher approval requested: Gated ticket dispatcher')).toBeVisible();
-  await expect(page.getByText('Dispatcher executed: Ticket event dispatcher')).toBeVisible();
+  await expect(page.getByText('Dispatcher executed: Gated ticket dispatcher')).toBeVisible();
   await expect(page.getByText('work.ticket.created').first()).toBeVisible();
   await expectNonBlankMain(page, 'Activity after trigger execution');
 
   await page.goto('/work/live?space=ops');
   await expect(page.getByRole('heading', { name: 'Live', exact: true })).toBeVisible();
-  const liveRun = page.getByRole('article', { name: 'Triage ticket event Loop run' });
+  const liveRun = page.getByRole('article', { name: 'Gated ticket triage Loop run' });
   await expect(liveRun).toBeVisible();
   await expect(liveRun).toContainText('Work evidence');
   await expect(liveRun).toContainText('Athena');
-  await expect(page.getByRole('article', { name: 'Gated ticket triage Loop run' })).toHaveCount(0);
+  await expect(page.getByRole('article', { name: 'Triage ticket event Loop run' })).toHaveCount(0);
   await expectNonBlankMain(page, 'Live after trigger execution');
 
   const screenshotPath = testInfo.outputPath('trigger-order-journey.png');
@@ -247,8 +259,10 @@ test('E2E-47 trigger order fires event into Work and gates tiered execution thro
 
   expect(requests).toContain('/api/orders?space=ops');
   expect(requests).toContain('/api/orders/order-1/enact?space=ops');
-  expect(requests.filter((request) => request === '/api/fixtures/trigger-fire?space=ops')).toHaveLength(2);
+  expect(requests.filter((request) => request === '/api/fixtures/trigger-fire?space=ops')).toHaveLength(1);
   expect(requests).toContain('/api/approvals?space=ops&status=pending&limit=100');
+  expect(requests).toContain(`/api/approvals/${approvalId}/decide?space=ops`);
+  expect(requests).toContain('/api/orders/gated-ticket-dispatcher?space=ops');
   expect(requests.some((request) => request.startsWith('/api/events?space=ops&limit='))).toBe(true);
   expect(
     requests.some((request) => request.startsWith('/api/instances/nulltickets/tickets/tickets') && request.includes('space=ops')),
@@ -290,6 +304,7 @@ test('E2E-47 breaker flow opens the circuit and keeps Work surfaces nonblank', a
   await expect(page.getByRole('heading', { name: 'Orders', exact: true, level: 1 })).toBeVisible();
   await expectNonBlankMain(page, 'Orders before breaker fires');
 
+  let thirdFailure: FixtureRecord | null = null;
   for (const attempt of [1, 2, 3]) {
     const result = await fireTrigger(page, {
       order_id: 'breaker-trigger-order',
@@ -304,17 +319,28 @@ test('E2E-47 breaker flow opens the circuit and keeps Work surfaces nonblank', a
     });
     expect(result.status).toBe('failed');
     expect(result.safety.consecutive_failures).toBe(attempt);
+    if (attempt === 3) thirdFailure = result;
   }
-
-  const openOrder = await fetchOrder(page, 'breaker-trigger-order');
-  expect(openOrder.safety).toMatchObject({
-    status: 'circuit_open',
-    circuit_open: true,
-    consecutive_failures: 3,
-    failure_threshold: 3,
+  expect(thirdFailure).toMatchObject({
+    order: { status: 'suspended' },
+    safety_event: {
+      type: 'dispatcher.circuit_opened',
+    },
   });
 
-  const blocked = await fireTrigger(page, {
+  const openOrder = await fetchOrder(page, 'breaker-trigger-order');
+  expect(openOrder).toMatchObject({
+    status: 'suspended',
+    safety: {
+      status: 'inactive',
+      circuit_open: false,
+      consecutive_failures: 3,
+      failure_threshold: 3,
+    },
+  });
+  expect(openOrder.safety.circuit_opened_event_id).toBeGreaterThan(0);
+
+  const suspended = await fireTrigger(page, {
     order_id: 'breaker-trigger-order',
     event_type: 'work.ticket.failed',
     source: 'nulltickets',
@@ -324,36 +350,108 @@ test('E2E-47 breaker flow opens the circuit and keeps Work surfaces nonblank', a
     title: 'Breaker retry 4',
     now_ms: nowMs + 4_000,
   });
-  expect(blocked).toMatchObject({
+  expect(suspended).toMatchObject({
     fired: false,
-    status: 'circuit_open',
+    status: 'order_not_active',
+    order: {
+      status: 'suspended',
+    },
     safety: {
-      status: 'circuit_open',
-      circuit_open: true,
+      status: 'inactive',
+      circuit_open: false,
     },
   });
   expect(tasks).toHaveLength(0);
+
+  await page.goto('/inbox?space=ops');
+  await expect(page.getByRole('heading', { name: 'Inbox', level: 1 })).toBeVisible();
+  const failureCard = page.getByRole('article', { name: 'Failure: Circuit breaker opened: Breaker trigger order' });
+  await expect(failureCard).toBeVisible();
+  await expect(failureCard).toContainText('Three automatic dispatcher attempts failed.');
+  await expect(failureCard).toContainText('Run: order:breaker-trigger-order:circuit:');
+  await expect(page.getByTestId('inbox-pending-badge')).toContainText('1');
+  await expectNonBlankMain(page, 'Inbox after circuit breaker failure card');
+
+  await page.goto('/orders/breaker-trigger-order?space=ops');
+  await expect(page.getByRole('heading', { name: 'Breaker trigger order', level: 2 })).toBeVisible();
+  await expect(page.getByLabel('Order facts').getByText('Suspended', { exact: true })).toBeVisible();
+  await expect(page.getByText('order.suspended')).toBeVisible();
+  await page.getByRole('button', { name: 'Resume' }).click();
+  await expect(page.getByRole('dialog', { name: 'Resume order' })).toBeVisible();
+  await page.getByRole('button', { name: 'Resume order' }).click();
+  await expect(page.getByLabel('Order facts').getByText('Active', { exact: true })).toBeVisible();
+  await expect(page.getByText('order.resumed')).toBeVisible();
+
+  const resumedOrder = await fetchOrder(page, 'breaker-trigger-order');
+  expect(resumedOrder).toMatchObject({
+    status: 'active',
+    safety: {
+      status: 'probation',
+      circuit_open: false,
+      consecutive_failures: 0,
+      safe_executions: 0,
+    },
+  });
+
+  const recovered = await fireTrigger(page, {
+    order_id: 'breaker-trigger-order',
+    event_type: 'work.ticket.failed',
+    source: 'nulltickets',
+    subject_type: 'ticket',
+    subject_id: 'ticket-breaker-recovered',
+    run_ref: 'breaker-run-recovered',
+    title: 'Breaker recovered',
+    now_ms: nowMs + 5_000,
+  });
+  expect(recovered).toMatchObject({
+    fired: true,
+    status: 'executed',
+    order: {
+      status: 'active',
+      exec_count: 1,
+    },
+    task: {
+      title: 'Breaker recovered',
+      latest_run: {
+        id: 'breaker-run-recovered',
+        agent_id: 'Athena',
+      },
+    },
+    safety: {
+      status: 'probation',
+      circuit_open: false,
+      consecutive_failures: 0,
+      safe_executions: 1,
+    },
+  });
+  expect(tasks).toHaveLength(1);
 
   await page.goto('/work/activity?space=ops');
   await expect(page.getByRole('heading', { name: 'Activity', level: 1 })).toBeVisible();
   await expect(page.getByText('Dispatcher circuit opened: Breaker trigger order')).toBeVisible();
   await expect(page.getByText('Repeated automatic execution failures opened the circuit breaker')).toBeVisible();
-  await expect(page.getByText('Dispatcher circuit blocked: Breaker trigger order')).toBeVisible();
-  await expect(page.getByText('Circuit breaker is open; automatic execution was skipped.')).toBeVisible();
-  await expectNonBlankMain(page, 'Activity after circuit breaker opens');
+  await expect(page.getByText('Order suspended: Breaker trigger order')).toBeVisible();
+  await expect(page.getByText('Order resumed: Breaker trigger order')).toBeVisible();
+  await expect(page.getByText('Dispatcher executed: Breaker trigger order')).toBeVisible();
+  await expectNonBlankMain(page, 'Activity after breaker resume');
 
   await page.goto('/work/live?space=ops');
   await expect(page.getByRole('heading', { name: 'Live', exact: true })).toBeVisible();
-  await expect(page.getByText('Dispatcher circuit blocked: Breaker trigger order')).toBeVisible();
+  const recoveredRun = page.getByRole('article', { name: 'Breaker recovered Loop run' });
+  await expect(recoveredRun).toBeVisible();
+  await expect(recoveredRun).toContainText('Work evidence');
+  await expect(recoveredRun).toContainText('Athena');
   await expect(page.getByRole('article', { name: 'Breaker retry 4 Loop run' })).toHaveCount(0);
-  await expectNonBlankMain(page, 'Live after circuit breaker opens');
+  await expectNonBlankMain(page, 'Live after breaker resume');
 
   const screenshotPath = testInfo.outputPath('trigger-breaker-circuit.png');
   await page.screenshot({ path: screenshotPath, fullPage: true });
   console.log(`screenshot: ${screenshotPath}`);
 
-  expect(requests.filter((request) => request === '/api/fixtures/trigger-fire?space=ops')).toHaveLength(4);
+  expect(requests.filter((request) => request === '/api/fixtures/trigger-fire?space=ops')).toHaveLength(5);
   expect(requests).toContain('/api/orders/breaker-trigger-order?space=ops');
+  expect(requests).toContain('/api/orders/breaker-trigger-order/resume?space=ops');
+  expect(requests).toContain('/api/approvals?space=ops&status=pending&limit=100');
   expect(requests.some((request) => request.startsWith('/api/events?space=ops&limit='))).toBe(true);
   expect(failedResponses).toEqual([]);
   expect(runtimeErrors.filter((entry) => !entry.includes('Failed to load resource'))).toEqual([]);
