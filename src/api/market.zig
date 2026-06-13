@@ -604,7 +604,8 @@ fn isOrderLikeSeed(seed_kind: []const u8) bool {
 }
 
 fn isReferenceOnlySeed(seed_kind: []const u8) bool {
-    return std.mem.eql(u8, seed_kind, "provider") or
+    return std.mem.eql(u8, seed_kind, "space") or
+        std.mem.eql(u8, seed_kind, "provider") or
         std.mem.eql(u8, seed_kind, "mcp_server") or
         std.mem.eql(u8, seed_kind, "skill") or
         std.mem.eql(u8, seed_kind, "agent_profile");
@@ -2026,7 +2027,7 @@ fn validateManifestValue(value: std.json.Value) ValidationError!void {
     try requireArray(root, "extends", error.MissingExtends, error.InvalidExtends);
     try requireObject(root, "charter", error.MissingCharter, error.InvalidCharter);
 
-    if (containsForbiddenSecretValue(root)) return error.SecretValueNotAllowed;
+    try validateNoLiteralSecrets(value);
     try validateConfigSecrets(root.get("config").?.object);
     try validateSecretRefDeclarations(value);
 }
@@ -2070,32 +2071,51 @@ fn requireObject(
     }
 }
 
-fn containsForbiddenSecretValue(object: std.json.ObjectMap) bool {
-    var it = object.iterator();
-    while (it.next()) |entry| {
-        if (isForbiddenSecretKey(entry.key_ptr.*)) return true;
-        if (valueContainsForbiddenSecretValue(entry.value_ptr.*)) return true;
-    }
-    return false;
-}
-
-fn valueContainsForbiddenSecretValue(value: std.json.Value) bool {
-    return switch (value) {
-        .object => |object| containsForbiddenSecretValue(object),
-        .array => |array| blk: {
-            for (array.items) |item| {
-                if (valueContainsForbiddenSecretValue(item)) break :blk true;
-            }
-            break :blk false;
-        },
-        else => false,
-    };
-}
-
 fn isForbiddenSecretKey(key: []const u8) bool {
     return std.mem.eql(u8, key, "secret_value") or
         std.mem.eql(u8, key, "encrypted_secret_value") or
         std.mem.eql(u8, key, "encrypted_value");
+}
+
+fn validateNoLiteralSecrets(value: std.json.Value) ValidationError!void {
+    switch (value) {
+        .object => |object| {
+            var it = object.iterator();
+            while (it.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const child = entry.value_ptr.*;
+                if (isForbiddenSecretKey(key)) return error.SecretValueNotAllowed;
+                if (isSecretContractKey(key)) {
+                    try validateNoLiteralSecrets(child);
+                    continue;
+                }
+                if (isSecretishKey(key)) {
+                    try validateSecretSlotValue(child);
+                    continue;
+                }
+                try validateNoLiteralSecrets(child);
+            }
+        },
+        .array => |array| {
+            for (array.items) |item| try validateNoLiteralSecrets(item);
+        },
+        else => {},
+    }
+}
+
+fn isSecretContractKey(key: []const u8) bool {
+    return std.mem.eql(u8, key, "secret_ref") or
+        std.mem.eql(u8, key, "secrets") or
+        std.mem.eql(u8, key, "required_secrets");
+}
+
+fn validateSecretSlotValue(value: std.json.Value) ValidationError!void {
+    const object = switch (value) {
+        .object => |raw| raw,
+        else => return error.SecretValueNotAllowed,
+    };
+    try validateSecretRefObject(object);
+    try validateNoLiteralSecrets(value);
 }
 
 fn validateConfigSecrets(config: std.json.ObjectMap) ValidationError!void {
@@ -2369,6 +2389,13 @@ test "market manifest requires secret refs for secret declarations" {
     try std.testing.expectError(error.SecretValueNotAllowed, validateManifestJson(allocator, "{\"id\":\"example.literal-secret\",\"name\":\"Literal secret\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[{\"kind\":\"secret_ref\",\"name\":\"api\",\"value\":\"literal\"}],\"contributes\":[],\"config\":{},\"seeds\":[],\"extends\":[],\"charter\":{}}"));
 }
 
+test "market manifest rejects literal secret-like install keys" {
+    const allocator = std.testing.allocator;
+    try std.testing.expectError(error.SecretValueNotAllowed, validateManifestJson(allocator, "{\"id\":\"example.provider-literal\",\"name\":\"Provider literal\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[{\"kind\":\"provider\",\"provider\":\"openrouter\",\"api_key\":\"sk-literal\"}],\"extends\":[],\"charter\":{}}"));
+    try std.testing.expectError(error.SecretValueNotAllowed, validateManifestJson(allocator, "{\"id\":\"example.channel-literal\",\"name\":\"Channel literal\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[{\"kind\":\"channel\",\"channel_type\":\"telegram\",\"config\":{\"bot_token\":\"literal-token\"}}],\"extends\":[],\"charter\":{}}"));
+    try validateManifestJson(allocator, "{\"id\":\"example.channel-ref\",\"name\":\"Channel ref\",\"version\":\"1.0.0\",\"scale\":\"component\",\"requires\":[],\"contributes\":[],\"config\":{},\"seeds\":[{\"kind\":\"channel\",\"channel_type\":\"telegram\",\"config\":{\"bot_token\":{\"secret_ref\":\"channels.telegram.ops.bot_token\"}}}],\"extends\":[],\"charter\":{}}");
+}
+
 test "market catalog handler fails when builtin catalog directory is missing" {
     const resp = blk: {
         const body = renderManifestDirectory(std.testing.allocator, "/tmp/nullhub-definitely-missing-market-catalog", false) catch {
@@ -2558,7 +2585,7 @@ test "market export supports selection kit and single component" {
     }
 }
 
-test "market exported manifest round trips through fresh space library listing" {
+test "market exported manifest round trips through fresh space install" {
     const allocator = std.testing.allocator;
     var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
     defer fixture.deinit();
@@ -2567,6 +2594,8 @@ test "market exported manifest round trips through fresh space library listing" 
     var state = state_mod.State.init(allocator, state_path);
     defer state.deinit();
 
+    _ = try state.addSpace(.{ .id = "ops", .name = "Ops", .kind = "workspace", .stage = "active" });
+    _ = try state.addSpace(.{ .id = "fresh", .name = "Fresh", .kind = "workspace", .stage = "active" });
     var order = try orders_mod.create(allocator, fixture.paths, "ops", .{
         .id = "portable-order",
         .title = "Portable Order",
@@ -2594,18 +2623,167 @@ test "market exported manifest round trips through fresh space library listing" 
     defer allocator.free(exported);
     try validateManifestJson(allocator, exported);
 
-    const fresh_dir = try fixture.paths.spacePackageLibraryDir(allocator, "fresh");
-    defer allocator.free(fresh_dir);
-    try std_compat.fs.makePathAbsolute(fresh_dir);
-    const fresh_path = try fixture.paths.spacePackageLibraryManifest(allocator, "fresh", "export.ops.portable");
-    defer allocator.free(fresh_path);
-    try durable_file.writeTextFileAtomically(allocator, fresh_path, std.mem.trim(u8, exported, " \t\r\n"));
+    const install_body = try std.fmt.allocPrint(allocator, "{{\"manifest\":{s}}}", .{std.mem.trim(u8, exported, " \t\r\n")});
+    defer allocator.free(install_body);
+    const install = handleInstall(allocator, fixture.paths, &state, "/api/market/install?space=fresh", install_body, 6000);
+    defer allocator.free(install.body);
+    try std.testing.expectEqualStrings("201 Created", install.status);
+    try std.testing.expect(std.mem.indexOf(u8, install.body, "\"kind\":\"space\"") != null);
+
+    var fresh_order = try orders_mod.get(allocator, fixture.paths, "fresh", "portable-order");
+    defer fresh_order.deinit(allocator);
+    try std.testing.expectEqualStrings("Portable Order", fresh_order.title);
 
     const installed = handleInstalled(allocator, fixture.paths, "/api/market/installed?space=fresh");
     defer allocator.free(installed.body);
     try std.testing.expectEqualStrings("200 OK", installed.status);
     try std.testing.expect(std.mem.indexOf(u8, installed.body, "\"id\":\"export.ops.portable\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, installed.body, "Portable Order") != null);
+}
+
+test "market install rejects literal provider api key before persisting" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    const resp = handleInstall(
+        allocator,
+        fixture.paths,
+        &state,
+        "/api/market/install?space=ops",
+        \\{
+        \\  "manifest": {
+        \\    "id": "test.literal-provider-secret",
+        \\    "name": "Literal Provider Secret",
+        \\    "version": "1.0.0",
+        \\    "scale": "component",
+        \\    "requires": [],
+        \\    "contributes": [],
+        \\    "config": {},
+        \\    "seeds": [
+        \\      { "kind": "provider", "provider": "openrouter", "name": "OpenRouter", "api_key": "sk-literal-provider" }
+        \\    ],
+        \\    "extends": [],
+        \\    "charter": {}
+        \\  }
+        \\}
+    ,
+        6100,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    try std.testing.expectEqualStrings("{\"error\":\"invalid package manifest\"}", resp.body);
+    try std.testing.expectEqual(@as(usize, 0), state.eventsList().len);
+
+    const manifest_path = try fixture.paths.spacePackageLibraryManifest(allocator, "ops", "test.literal-provider-secret");
+    defer allocator.free(manifest_path);
+    try std.testing.expectError(error.FileNotFound, std_compat.fs.readFileAbsolute(allocator, manifest_path, max_manifest_bytes));
+}
+
+test "market install rejects literal channel bot token before persisting" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    const resp = handleInstall(
+        allocator,
+        fixture.paths,
+        &state,
+        "/api/market/install?space=ops",
+        \\{
+        \\  "manifest": {
+        \\    "id": "test.literal-channel-secret",
+        \\    "name": "Literal Channel Secret",
+        \\    "version": "1.0.0",
+        \\    "scale": "component",
+        \\    "requires": [],
+        \\    "contributes": [],
+        \\    "config": {},
+        \\    "seeds": [
+        \\      {
+        \\        "kind": "channel",
+        \\        "channel_type": "telegram",
+        \\        "account": "@ops",
+        \\        "config": {
+        \\          "bot_token": "literal-bot-token",
+        \\          "chat_id": "123"
+        \\        }
+        \\      }
+        \\    ],
+        \\    "extends": [],
+        \\    "charter": {}
+        \\  }
+        \\}
+    ,
+        6200,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    try std.testing.expectEqualStrings("{\"error\":\"invalid package manifest\"}", resp.body);
+    try std.testing.expectEqual(@as(usize, 0), state.savedChannels().len);
+    try std.testing.expectEqual(@as(usize, 0), state.eventsList().len);
+
+    const manifest_path = try fixture.paths.spacePackageLibraryManifest(allocator, "ops", "test.literal-channel-secret");
+    defer allocator.free(manifest_path);
+    try std.testing.expectError(error.FileNotFound, std_compat.fs.readFileAbsolute(allocator, manifest_path, max_manifest_bytes));
+}
+
+test "market install rejects literal secrets from library source before applying" {
+    const allocator = std.testing.allocator;
+    var fixture = try @import("../test_helpers.zig").TempPaths.init(allocator);
+    defer fixture.deinit();
+    const state_path = try fixture.paths.state(allocator);
+    defer allocator.free(state_path);
+    var state = state_mod.State.init(allocator, state_path);
+    defer state.deinit();
+
+    const library_dir = try fixture.paths.spacePackageLibraryDir(allocator, "ops");
+    defer allocator.free(library_dir);
+    try std_compat.fs.makePathAbsolute(library_dir);
+    var library = try std_compat.fs.openDirAbsolute(library_dir, .{});
+    defer library.close();
+    try writeManifest(library, "test.library-literal-secret.json",
+        \\{
+        \\  "id": "test.library-literal-secret",
+        \\  "name": "Library Literal Secret",
+        \\  "version": "1.0.0",
+        \\  "scale": "component",
+        \\  "requires": [],
+        \\  "contributes": [],
+        \\  "config": {},
+        \\  "seeds": [
+        \\    {
+        \\      "kind": "channel",
+        \\      "channel_type": "telegram",
+        \\      "account": "@ops",
+        \\      "config": {
+        \\        "bot_token": "literal-library-token"
+        \\      }
+        \\    }
+        \\  ],
+        \\  "extends": [],
+        \\  "charter": {}
+        \\}
+    );
+
+    const resp = handleInstall(
+        allocator,
+        fixture.paths,
+        &state,
+        "/api/market/install?space=ops",
+        "{\"package_id\":\"test.library-literal-secret\",\"source\":\"library\"}",
+        6300,
+    );
+    try std.testing.expectEqualStrings("400 Bad Request", resp.status);
+    try std.testing.expectEqualStrings("{\"error\":\"invalid package manifest\"}", resp.body);
+    try std.testing.expectEqual(@as(usize, 0), state.savedChannels().len);
+    try std.testing.expectEqual(@as(usize, 0), state.eventsList().len);
 }
 
 test "market install dry run reports blast radius and required secrets without mutation" {
