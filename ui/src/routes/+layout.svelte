@@ -1,6 +1,7 @@
 <script lang="ts">
   import '../app.css';
   import '../shadcn.css';
+  import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { onMount, untrack } from 'svelte';
   import AppSidebar from '$lib/components/AppSidebar.svelte';
@@ -62,6 +63,7 @@
     { test: (path) => path.startsWith('/team/capabilities'), title: 'Capabilities', section: 'Team' },
     { test: (path) => path.startsWith('/team/instances'), title: 'Instances', section: 'Team' },
     { test: (path) => path.startsWith('/team'), title: 'Team' },
+    { test: (path) => path.startsWith('/spaces/new'), title: 'New Space', section: 'Spaces' },
     { test: (path) => path.startsWith('/market/install'), title: 'Install Component', section: 'Market' },
     { test: (path) => path.startsWith('/market/components'), title: 'Components', section: 'Market' },
     { test: (path) => path.startsWith('/market/loops'), title: 'Loop Marketplace', section: 'Market' },
@@ -170,14 +172,7 @@
   }
 
   async function handleCreateSpace() {
-    const name = window.prompt('New space name')?.trim();
-    if (!name) return;
-
-    try {
-      await spacesStore.createSpace({ name });
-    } catch (error) {
-      console.error(error);
-    }
+    await goto('/spaces/new');
   }
 
   function isEditableTarget(target: EventTarget | null): boolean {
@@ -228,6 +223,7 @@
     <Sidebar.Provider class="app-shell">
       <AppSidebar
         {activeSpaceId}
+        selectedSpaceName={spacesStore.selectedSpace?.name ?? undefined}
         onSpaceChange={handleSpaceChange}
         onCreateSpace={handleCreateSpace}
       >

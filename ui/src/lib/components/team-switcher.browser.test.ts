@@ -84,6 +84,19 @@ test('renders loading, empty, and error states', async () => {
   await expect.element(error.getByText('Spaces down.')).toBeVisible();
 });
 
+test('uses the selected Space name while overview rows refresh', async () => {
+  const screen = await render(TeamSwitcher, {
+    props: {
+      rows,
+      state: 'ready',
+      selectedSpaceId: 'launch-room',
+      selectedSpaceName: 'Launch Room',
+    },
+  });
+
+  await expect.element(screen.getByRole('button', { name: /Launch Room Selected Space/ })).toBeVisible();
+});
+
 test('renders the dropdown error retry action as a keyboard-selectable menu item', async () => {
   const listSpaceOverviews = vi.fn<SpacesApi['listSpaceOverviews']>().mockResolvedValue(rows);
   const api = { listSpaceOverviews } as unknown as SpacesApi;

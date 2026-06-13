@@ -117,11 +117,10 @@ test('primary shell controls reach all product sections in fixture mode', async 
   await expect(page).toHaveURL(/(?:\?|&)space=lab(?:&|$)/);
   await expect(page.getByRole('button', { name: /Lab 0 pending/ })).toBeVisible();
 
-  page.once('dialog', (dialog) => dialog.accept('Launch Room'));
   await page.getByRole('button', { name: /Lab 0 pending/ }).click();
   await page.getByRole('menuitem', { name: 'New space' }).click();
-  await expect(page).toHaveURL(/(?:\?|&)space=launch-room(?:&|$)/);
-  await expect(page.getByRole('button', { name: /Launch Room 0 pending/ })).toBeVisible();
+  await expect(page).toHaveURL(/\/spaces\/new$/);
+  await expect(page.getByRole('heading', { name: 'New Space' })).toBeVisible();
 
   const screenshotPath = testInfo.outputPath('shell-all-sections-fixture.png');
   await page.screenshot({ path: screenshotPath, fullPage: true });

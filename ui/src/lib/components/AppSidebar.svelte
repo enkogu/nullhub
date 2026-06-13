@@ -162,6 +162,7 @@
 		pollHubStatus = true,
 		spaces = fallbackSpaces,
 		activeSpaceId,
+		selectedSpaceName,
 		spaceRows,
 		spaceSwitcherState,
 		spaceSwitcherError = null,
@@ -175,6 +176,7 @@
 		pollHubStatus?: boolean;
 		spaces?: SpaceOption[];
 		activeSpaceId?: string;
+		selectedSpaceName?: string;
 		spaceRows?: SpaceOverviewRowModel[];
 		spaceSwitcherState?: SpaceSwitcherState;
 		spaceSwitcherError?: unknown;
@@ -331,6 +333,7 @@
 					state={spaceSwitcherState}
 					error={spaceSwitcherError}
 					selectedSpaceId={selectedSwitcherSpaceId}
+					{selectedSpaceName}
 					onSelectSpace={selectSpace}
 					onSelectAll={selectAllSpaces}
 					onCreateSpace={onCreateSpace}

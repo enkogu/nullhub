@@ -25,6 +25,7 @@
 		state: stateProp = rows ? "ready" : "idle",
 		error = null,
 		selectedSpaceId = null,
+		selectedSpaceName,
 		defaultOpen = false,
 		usageWindow = "7d",
 		onSelectSpace,
@@ -40,6 +41,7 @@
 		state?: SpaceSwitcherState;
 		error?: unknown;
 		selectedSpaceId?: SpaceSelection;
+		selectedSpaceName?: string;
 		defaultOpen?: boolean;
 		usageWindow?: "24h" | "7d" | "30d" | "all";
 		onSelectSpace?: (spaceId: string) => void;
@@ -56,9 +58,16 @@
 	let localState = $state<SpaceSwitcherState>("idle");
 	let localError = $state<unknown>(null);
 	let localSelectedSpaceId = $state<SpaceSelection>(null);
+	let missingSelectionReloaded = $state<SpaceSelection | undefined>(undefined);
 	let selectedRow = $derived(localRows.find((row) => row.space.id === localSelectedSpaceId) ?? null);
-	let triggerTitle = $derived(selectedRow?.space.name ?? "All spaces");
-	let triggerDetail = $derived(selectedRow ? `${selectedRow.aggregate.pendingCount} pending` : `${localRows.length} spaces`);
+	let triggerTitle = $derived(selectedRow?.space.name ?? selectedSpaceName ?? "All spaces");
+	let triggerDetail = $derived(
+		selectedRow
+			? `${selectedRow.aggregate.pendingCount} pending`
+			: localSelectedSpaceId
+				? "Selected Space"
+				: `${localRows.length} spaces`,
+	);
 	let isLoading = $derived(localState === "idle" || localState === "loading");
 	let dataState = $derived(
 		(isLoading ? "loading" : localState === "error" ? "error" : localRows.length ? "populated" : "empty") as DataStateKind,
@@ -75,6 +84,20 @@
 
 	$effect(() => {
 		localSelectedSpaceId = selectedSpaceId;
+	});
+
+	$effect(() => {
+		if (rows || !localSelectedSpaceId || localState === "loading") return;
+		if (localRows.some((row) => row.space.id === localSelectedSpaceId)) return;
+		if (missingSelectionReloaded === localSelectedSpaceId) return;
+		missingSelectionReloaded = localSelectedSpaceId;
+		void loadOverviews();
+	});
+
+	$effect(() => {
+		if (!localSelectedSpaceId || localRows.some((row) => row.space.id === localSelectedSpaceId)) {
+			missingSelectionReloaded = undefined;
+		}
 	});
 
 	$effect(() => {
