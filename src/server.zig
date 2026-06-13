@@ -1764,6 +1764,13 @@ pub const Server = struct {
         }
 
         // Market Packages API — local built-in catalog and per-space installed package library.
+        if (market_api.isInstallPath(target)) {
+            if (std.mem.eql(u8, method, "POST")) {
+                const resp = market_api.handleInstall(allocator, self.paths, self.state, target, body, std_compat.time.milliTimestamp());
+                return .{ .status = resp.status, .content_type = resp.content_type, .body = resp.body };
+            }
+            return .{ .status = "405 Method Not Allowed", .content_type = "application/json", .body = "{\"error\":\"method not allowed\"}" };
+        }
         if (market_api.isExportPath(target)) {
             if (std.mem.eql(u8, method, "POST")) {
                 const resp = market_api.handleExport(allocator, self.paths, self.state, target, body, std_compat.time.milliTimestamp());
@@ -4261,6 +4268,48 @@ test "route GET market catalog and installed package APIs" {
         defer allocator.free(events.body);
         try std.testing.expectEqualStrings("200 OK", events.status);
         try std.testing.expect(std.mem.indexOf(u8, events.body, "\"type\":\"package.exported\"") != null);
+    }
+
+    {
+        const installed = ctx.route(
+            allocator,
+            "POST",
+            "/api/market/install?space=ops",
+            \\{
+            \\  "manifest": {
+            \\    "id": "route.install.package",
+            \\    "name": "Route Install Package",
+            \\    "version": "1.0.0",
+            \\    "scale": "kit",
+            \\    "requires": [],
+            \\    "contributes": [
+            \\      { "kind": "order_template", "name": "Route Install Order" }
+            \\    ],
+            \\    "config": {},
+            \\    "seeds": [
+            \\      { "kind": "order", "id": "route-install-order", "title": "Route Install Order", "order_kind": "loop", "content": "Installed through market route." }
+            \\    ],
+            \\    "extends": [],
+            \\    "charter": {}
+            \\  }
+            \\}
+            ,
+        );
+        defer allocator.free(installed.body);
+        try std.testing.expectEqualStrings("201 Created", installed.status);
+        try std.testing.expect(std.mem.indexOf(u8, installed.body, "\"package_id\":\"route.install.package\"") != null);
+
+        const order = ctx.route(allocator, "GET", "/api/orders/route-install-order?space=ops", "");
+        defer allocator.free(order.body);
+        try std.testing.expectEqualStrings("200 OK", order.status);
+        try std.testing.expect(std.mem.indexOf(u8, order.body, "nullhub-package-source") != null);
+        try std.testing.expect(std.mem.indexOf(u8, order.body, "route.install.package") != null);
+
+        const events = ctx.route(allocator, "GET", "/api/events?space=ops&type=package.installed", "");
+        defer allocator.free(events.body);
+        try std.testing.expectEqualStrings("200 OK", events.status);
+        try std.testing.expect(std.mem.indexOf(u8, events.body, "\"type\":\"package.installed\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, events.body, "route.install.package") != null);
     }
 }
 
