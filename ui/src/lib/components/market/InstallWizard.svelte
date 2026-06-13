@@ -86,36 +86,43 @@
   let dependenciesComplete = $derived(dependencyRequirements.length === 0 || dependenciesAcknowledged);
   let staffingReady = $derived(staffingComplete(staffingRoles, staffingMap, agentsState));
   let installPayload = $derived(pkg && targetSpaceId ? buildPayload(pkg) : null);
+  let previewComplete = $derived(Boolean(targetSpaceId && previewAccepted));
+  let connectComplete = $derived(allSecretsConfirmed && dependenciesComplete);
+  let configureComplete = $derived(Boolean(configName.trim()));
   let steps: WizardShellStep[] = $derived([
     {
       id: "preview",
       title: "Preview",
       description: "Space target, package contents, blast radius.",
-      completed: Boolean(targetSpaceId && previewAccepted),
+      completed: previewComplete,
     },
     {
       id: "connect",
       title: "Connect",
       description: "Secret refs and dependencies.",
-      completed: allSecretsConfirmed && dependenciesComplete,
+      completed: connectComplete,
+      disabled: !previewComplete,
     },
     {
       id: "staff",
       title: "Staff",
       description: "Role to agent ownership.",
       completed: staffingReady,
+      disabled: !previewComplete || !connectComplete,
     },
     {
       id: "configure",
       title: "Configure",
       description: "Install name and activation policy.",
-      completed: Boolean(configName.trim()),
+      completed: configureComplete,
+      disabled: !previewComplete || !connectComplete || !staffingReady,
     },
     {
       id: "enact",
       title: "Enact",
       description: "Final review before go-live.",
       completed: enactAccepted,
+      disabled: !previewComplete || !connectComplete || !staffingReady || !configureComplete,
     },
   ]);
   $effect(() => {
@@ -166,8 +173,8 @@
   function selectedAgent(agentId: string) {
     return agents.find((agent) => agent.id === agentId);
   }
-  function validateStep(step: WizardShellStep) {
-    return validateInstallStep(step.id as InstallWizardStepId, {
+  function validateInstallStepId(stepId: InstallWizardStepId) {
+    return validateInstallStep(stepId, {
       selectedSpaceId: targetSpaceId || null,
       previewAccepted,
       secretConfirmations,
@@ -177,7 +184,20 @@
       staffingMap,
       configName,
       enactAccepted,
-    }) || true;
+    });
+  }
+  function validateStep(step: WizardShellStep) {
+    return validateInstallStepId(step.id as InstallWizardStepId) || true;
+  }
+  function validateAllInstallGates(): string {
+    for (const stepId of ["preview", "connect", "staff", "configure", "enact"] as InstallWizardStepId[]) {
+      const message = validateInstallStepId(stepId);
+      if (message) {
+        const title = steps.find((step) => step.id === stepId)?.title ?? stepId;
+        return `${title}: ${message}`;
+      }
+    }
+    return "";
   }
   function buildPayload(source: PackageManifest): InstallPayload {
     return {
@@ -197,9 +217,14 @@
     };
   }
   async function enactInstall() {
-    if (!installPayload) return;
     submitError = "";
     submitMessage = "";
+    const validationError = validateAllInstallGates();
+    if (validationError) {
+      submitError = validationError;
+      return;
+    }
+    if (!installPayload) return;
     try {
       await onEnact?.(installPayload);
       submitMessage = `${pkg?.name || "Package"} install plan is staged for ${selectedSpace?.name || targetSpaceId}.`;

@@ -58,6 +58,49 @@ test("walks the five-step install wizard and stages a package payload", async ()
   await expect.element(screen.getByText("Built-in Loop Templates install plan is staged for Operations.")).toBeVisible();
 });
 
+test("blocks rail navigation from skipping incomplete install gates", async () => {
+  const onEnact = vi.fn();
+  const screen = await render(InstallWizard, {
+    pkg: marketPackages[2],
+    spaces,
+    selectedSpaceId: "ops",
+    agents,
+    onEnact,
+  });
+
+  await expect.element(screen.getByRole("button", { name: /Connect/ })).toBeDisabled();
+  await expect.element(screen.getByRole("button", { name: /Staff/ })).toBeDisabled();
+  await expect.element(screen.getByRole("button", { name: /Configure/ })).toBeDisabled();
+  await expect.element(screen.getByRole("button", { name: /Enact/ })).toBeDisabled();
+
+  await screen.getByLabelText("Accept install preview").click();
+  await screen.getByRole("button", { name: /Connect/ }).click();
+  await expect.element(screen.getByRole("heading", { name: "Connect" })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: /Staff/ })).toBeDisabled();
+  await expect.element(screen.getByRole("button", { name: /Enact/ })).toBeDisabled();
+  await expect.element(screen.getByRole("button", { name: "Stage install" })).not.toBeInTheDocument();
+  expect(onEnact).not.toHaveBeenCalled();
+});
+
+test("revalidates prior gates before staging from the final step", async () => {
+  const onEnact = vi.fn();
+  const screen = await render(InstallWizard, {
+    pkg: marketPackages[2],
+    spaces,
+    selectedSpaceId: "ops",
+    agents,
+    initialStepId: "enact",
+    onEnact,
+  });
+
+  await expect.element(screen.getByRole("heading", { name: "Enact" })).toBeVisible();
+  await screen.getByLabelText("Confirm enactment review").click();
+  await screen.getByRole("button", { name: "Stage install" }).click();
+
+  expect(onEnact).not.toHaveBeenCalled();
+  await expect.element(screen.getByText("Preview: Review and accept the preview before continuing.")).toBeVisible();
+});
+
 test("renders loading, empty, error, and staffing states", async () => {
   const loading = await render(InstallWizard, { state: "loading" });
   expect(loading.container.textContent).toContain("Loading install wizard");
