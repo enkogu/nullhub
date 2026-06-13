@@ -1,171 +1,243 @@
 <script lang="ts">
-  import { page } from '$app/stores';
-  import { goto } from '$app/navigation';
-  import AddExistingDialog from '$lib/components/AddExistingDialog.svelte';
-  import WizardRenderer from '$lib/components/WizardRenderer.svelte';
-  import { api, type StandaloneInfo } from '$lib/api/client';
-  import { instanceRoute } from '$lib/nullstack/path';
-  import { Card } from '$lib/components/ui/card';
-  import { Button } from '$lib/components/ui/button';
+  import { goto } from "$app/navigation";
+  import { page } from "$app/stores";
+  import { onMount } from "svelte";
+  import AddExistingDialog from "$lib/components/AddExistingDialog.svelte";
+  import InstallWizard from "$lib/components/market/InstallWizard.svelte";
+  import { api, packagesApi, spacesApi, type PackageManifest, type Space, type StandaloneInfo } from "$lib/api/client";
+  import { normalizePackageManifest } from "$lib/api/packages";
+  import { selectedSpaceFromEnvironment } from "$lib/api/spaces";
+  import { instanceRoute } from "$lib/nullstack/path";
+  import { Button } from "$lib/components/ui/button";
+  import { Card } from "$lib/components/ui/card";
+  import type { DataStateKind } from "$lib/components/DataState.svelte";
+  import { agentOptionsFromStatus, type InstallAgentOption, type InstallPayload } from "$lib/components/market/installWizard";
 
-  let componentName = $derived($page.params.component);
-  let wizardData = $state<any>(null);
-  let wizardError = $state('');
-  let selectedVersion = $state('latest');
-  let wizardRequestSeq = 0;
+  const componentNames: Record<string, string> = {
+    nullclaw: "NullClaw",
+    nullboiler: "NullBoiler",
+    nulltickets: "NullTickets",
+    nullwatch: "NullWatch",
+  };
+
+  let packageKey = $derived($page.params.component || "");
+  let pkg = $state<PackageManifest | null>(null);
+  let installed = $state(false);
+  let spaces = $state<Space[]>([]);
+  let selectedSpaceId = $state<string | null | undefined>(undefined);
+  let loading = $state(true);
+  let error = $state<unknown>(null);
+  let agents = $state<InstallAgentOption[]>([]);
+  let agentsLoading = $state(false);
+  let agentsError = $state<unknown>(null);
   let standalone = $state<StandaloneInfo | null>(null);
   let standaloneRequestSeq = 0;
   let dialogOpen = $state(false);
-  let dialogError = $state('');
+  let dialogError = $state("");
   let dialogImporting = $state(false);
-  let wizardSteps = $derived(
-    (wizardData?.wizard?.steps || wizardData?.steps || []).filter((step: any) => {
-      if (step.id === 'gateway_port') return false;
-      if (step.id === 'port') return componentName !== 'nullclaw';
-      return true;
-    }),
+  let stagedPayload = $state<InstallPayload | null>(null);
+  let routeState = $derived<DataStateKind>(
+    error ? "error" : loading ? "loading" : pkg ? "populated" : "empty",
   );
-  let displayName = $derived(
-    typeof wizardData?.display_name === 'string' && wizardData.display_name.length > 0
-      ? wizardData.display_name
-      : defaultDisplayName(componentName),
+  let agentsState = $derived<DataStateKind>(
+    agentsError ? "error" : agentsLoading && agents.length === 0 ? "loading" : agents.length === 0 ? "empty" : "populated",
   );
+  let componentName = $derived(componentNameForPackage(pkg, packageKey));
+  let displayName = $derived(componentName ? componentNames[componentName] || componentName : "");
   let existingButtonLabel = $derived(
-    standalone?.already_imported ? 'Add Another Existing' : 'Add Existing',
+    standalone?.already_imported ? "Add Another Existing" : "Add Existing",
   );
 
-  $effect(() => {
-    const comp = componentName;
-    const version = selectedVersion;
-    const requestSeq = ++wizardRequestSeq;
-    wizardData = null;
-    wizardError = '';
-    api.getWizard(comp, version).then((data) => {
-      if (requestSeq !== wizardRequestSeq) return;
-      if (data?.error) {
-        wizardError = data.error;
+  onMount(() => {
+    void loadInstallPage();
+  });
+
+  async function loadInstallPage() {
+    loading = true;
+    error = null;
+    stagedPayload = null;
+    selectedSpaceId = selectedSpaceFromEnvironment();
+    try {
+      const [catalog, spaceList] = await Promise.all([
+        packagesApi.listCatalogPackages(),
+        spacesApi.listSpaces().catch(() => [] as Space[]),
+      ]);
+      spaces = withSelectedSpaceFallback(spaceList, selectedSpaceId);
+      pkg = resolvePackage(catalog.packages, packageKey);
+      if (pkg && selectedSpaceId) {
+        try {
+          const installedList = await packagesApi.listInstalledPackages({ spaceId: selectedSpaceId });
+          installed = installedList.packages.some((candidate) => candidate.id === pkg?.id);
+        } catch {
+          installed = false;
+        }
       } else {
-        wizardData = data;
+        installed = false;
       }
-    }).catch((e) => {
-      if (requestSeq !== wizardRequestSeq) return;
-      wizardError = (e as Error).message;
+      await refreshAgents();
+      if (componentNameForPackage(pkg, packageKey)) {
+        await refreshStandalone(componentNameForPackage(pkg, packageKey));
+      }
+    } catch (err) {
+      error = err;
+      pkg = null;
+      installed = false;
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function refreshAgents() {
+    agentsLoading = true;
+    agentsError = null;
+    try {
+      agents = agentOptionsFromStatus(await api.getStatus());
+    } catch (err) {
+      agents = [];
+      agentsError = err;
+    } finally {
+      agentsLoading = false;
+    }
+  }
+
+  function withSelectedSpaceFallback(spaceList: Space[], selected: string | null | undefined): Space[] {
+    if (!selected || spaceList.some((space) => space.id === selected)) return spaceList;
+    return [{ id: selected, name: selected, kind: "workspace", stage: "active" }, ...spaceList];
+  }
+
+  function resolvePackage(packages: PackageManifest[], key: string): PackageManifest | null {
+    const direct = packages.find((candidate) => candidate.id === key);
+    if (direct) return direct;
+    const byComponent = packages.find((candidate) => componentNameForPackage(candidate, key) === key);
+    if (byComponent) return byComponent;
+    return fallbackComponentPackage(key);
+  }
+
+  function componentNameForPackage(source: PackageManifest | null, fallback = ""): string {
+    const configured = typeof source?.config?.component === "string" ? source.config.component : "";
+    const target = configured || (source?.scale === "component" ? source.installTarget.split(".")[0] : "");
+    if (target && componentNames[target]) return target;
+    return componentNames[fallback] ? fallback : "";
+  }
+
+  function fallbackComponentPackage(component: string): PackageManifest | null {
+    const display = componentNames[component];
+    if (!display) return null;
+    return normalizePackageManifest({
+      id: `builtin.${component}-component`,
+      name: `${display} Component`,
+      version: "local",
+      scale: "component",
+      summary: `Base managed ${display} component for the selected Space.`,
+      requires: component === "nullclaw"
+        ? [{ kind: "secret_ref", name: "model_provider", secret_ref: "providers.default.api_key" }]
+        : [],
+      contributes: [{ kind: "team_capability", name: `${component}-runtime` }],
+      config: { component, install_target: `${component}.default` },
+      seeds: [],
+      extends: [],
+      charter: {
+        mission: `Run one managed ${display} component.`,
+        autonomy_bounds: ["Use configured Space settings and secret refs only"],
+        metrics: ["runtime_health"],
+      },
     });
-  });
-
-  $effect(() => {
-    const comp = componentName;
-    dialogOpen = false;
-    dialogError = '';
-    standalone = null;
-    void refreshStandalone(comp);
-  });
-
-  function defaultDisplayName(component: string) {
-    const names: Record<string, string> = {
-      nullclaw: 'NullClaw',
-      nullboiler: 'NullBoiler',
-      nulltickets: 'NullTickets',
-      nullwatch: 'NullWatch',
-    };
-    return names[component] || component;
   }
 
   async function refreshStandalone(component: string): Promise<StandaloneInfo | null> {
     const requestSeq = ++standaloneRequestSeq;
+    if (!component) {
+      standalone = null;
+      return null;
+    }
     try {
       const data = await api.getStandalone(component);
-      if (requestSeq === standaloneRequestSeq && component === componentName) {
-        standalone = data;
-      }
+      if (requestSeq === standaloneRequestSeq && component === componentName) standalone = data;
       return data;
-    } catch (e) {
-      if (requestSeq === standaloneRequestSeq && component === componentName) {
-        standalone = { standalone: false };
-      }
-      console.error(e);
+    } catch {
+      if (requestSeq === standaloneRequestSeq && component === componentName) standalone = { standalone: false };
       return null;
     }
   }
 
   async function openExistingDialog() {
-    const comp = componentName;
-    dialogError = '';
-    if (!standalone) {
-      await refreshStandalone(comp);
-    }
+    if (!componentName) return;
+    dialogError = "";
+    if (!standalone) await refreshStandalone(componentName);
     dialogOpen = true;
   }
 
   function closeDialog() {
     if (dialogImporting) return;
     dialogOpen = false;
-    dialogError = '';
+    dialogError = "";
   }
 
   async function handleExistingSubmit(payload: { path?: string; name?: string }) {
-    const comp = componentName;
+    if (!componentName) return;
     dialogImporting = true;
-    dialogError = '';
+    dialogError = "";
     try {
-      const result = await api.importInstance(comp, payload);
+      const result = await api.importInstance(componentName, payload);
       dialogOpen = false;
-      await goto(instanceRoute(comp, result?.instance || payload.name || 'default'));
-    } catch (e) {
-      dialogError = (e as Error).message;
+      await goto(instanceRoute(componentName, result?.instance || payload.name || "default"));
+    } catch (err) {
+      dialogError = (err as Error).message;
     } finally {
       dialogImporting = false;
     }
   }
 
-  function handleVersionChange(version: string) {
-    selectedVersion = version || 'latest';
+  function stageInstall(payload: InstallPayload) {
+    stagedPayload = payload;
   }
-
 </script>
 
-<div class="wizard-page">
-  <Card class="mb-4 flex-row items-center justify-between gap-4 px-5">
-    <div class="min-w-0">
-      <div class="text-sm font-medium text-foreground">Already have {displayName}</div>
-      <div class="existing-detail mt-1 text-sm text-muted-foreground">
-        {#if standalone?.standalone && standalone.standalone_path}
-          {#if standalone.already_imported}
-            Default install is already added.
+<div class="install-page">
+  {#if componentName && displayName}
+    <Card class="flex-row items-center justify-between gap-4 px-5">
+      <div class="min-w-0">
+        <div class="text-sm font-medium text-foreground">Already have {displayName}</div>
+        <div class="existing-detail mt-1 text-sm text-muted-foreground">
+          {#if standalone?.standalone && standalone.standalone_path}
+            {#if standalone.already_imported}
+              Default install is already added.
+            {:else}
+              Default install detected at <code>{standalone.standalone_path}</code>
+            {/if}
           {:else}
-            Default install detected at <code>{standalone.standalone_path}</code>
+            Add a local {displayName} home.
           {/if}
-        {:else}
-          Add a local {displayName} home.
-        {/if}
+        </div>
       </div>
-    </div>
-    <Button
-      variant="outline"
-      class="shrink-0"
-      onclick={openExistingDialog}
-      disabled={dialogImporting}
-    >
-      {existingButtonLabel}
-    </Button>
-  </Card>
-
-  {#if wizardError}
-    <Card class="items-center px-5 text-center">
-      <p class="text-sm text-foreground">{wizardError}</p>
-      <div>
-        <Button variant="outline" onclick={() => goto('/market')}>Back</Button>
-      </div>
+      <Button
+        variant="outline"
+        class="shrink-0"
+        onclick={openExistingDialog}
+        disabled={dialogImporting}
+      >
+        {existingButtonLabel}
+      </Button>
     </Card>
-  {:else if wizardData}
-    <WizardRenderer
-      component={componentName}
-      steps={wizardSteps}
-      onVersionChange={handleVersionChange}
-      onComplete={() => goto('/')}
-    />
-  {:else}
-    <p class="text-sm text-muted-foreground">Loading wizard...</p>
+  {/if}
+
+  <InstallWizard
+    {pkg}
+    {installed}
+    state={routeState}
+    {error}
+    {spaces}
+    {selectedSpaceId}
+    {agents}
+    {agentsState}
+    {agentsError}
+    onRetry={() => void loadInstallPage()}
+    onRefreshAgents={() => void refreshAgents()}
+    onEnact={stageInstall}
+  />
+
+  {#if stagedPayload}
+    <p class="sr-only" aria-live="polite">Install plan staged for {stagedPayload.spaceId}.</p>
   {/if}
 </div>
 
@@ -181,7 +253,12 @@
 />
 
 <style>
-  .wizard-page { max-width: 600px; margin: 0 auto; }
+  .install-page {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    max-width: 1120px;
+  }
 
   .existing-detail {
     overflow-wrap: anywhere;
@@ -194,12 +271,12 @@
   }
 
   @media (max-width: 640px) {
-    .wizard-page :global([data-slot="card"]:first-child) {
+    .install-page :global([data-slot="card"]:first-child) {
       flex-direction: column;
       align-items: stretch;
     }
 
-    .wizard-page :global([data-slot="card"]:first-child [data-slot="button"]) {
+    .install-page :global([data-slot="card"]:first-child [data-slot="button"]) {
       width: 100%;
     }
   }

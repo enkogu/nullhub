@@ -41,7 +41,10 @@ test('market catalog renders populated package grid, filters, and package detail
   await expect(page.getByRole('heading', { name: 'MCP Server Starters' })).toBeVisible();
   await expect(page.getByText('providers.search.api_key')).toBeVisible();
   await expect(page.getByText('Install impact')).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Install into Space' })).toBeDisabled();
+  await expect(page.getByRole('link', { name: 'Install into Space' })).toHaveAttribute(
+    'href',
+    '/market/install/builtin.mcp-server-starters',
+  );
 
   const screenshotPath = testInfo.outputPath('market-detail.png');
   await page.screenshot({ path: screenshotPath, fullPage: true });
