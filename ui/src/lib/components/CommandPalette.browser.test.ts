@@ -65,6 +65,21 @@ test("selects navigation commands", async () => {
 	expect(navigate).toHaveBeenCalledWith("/work");
 });
 
+test("selects the New space capture action", async () => {
+	const onCreateSpace = vi.fn();
+	const screen = await render(CommandPalette, {
+		open: true,
+		navigate: vi.fn<CommandPaletteNavigate>(),
+		createTask: vi.fn<CommandPaletteCreateTask>(),
+		onCreateSpace,
+	});
+
+	await screen.getByText("New space", { exact: true }).click();
+	await nextFrame();
+
+	expect(onCreateSpace).toHaveBeenCalledTimes(1);
+});
+
 test("filters and activates navigation commands from the keyboard", async () => {
 	const navigate = vi.fn<CommandPaletteNavigate>();
 	const screen = await render(CommandPalette, {
